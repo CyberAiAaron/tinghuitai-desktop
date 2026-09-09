@@ -10,6 +10,7 @@ const execFileP = util.promisify(execFile);
 const WebSocket = require('ws');
 const http = require('http');
 const journal = require('./session-journal');
+const assistantCore = require('../web/assistant-core');
 const Busboy = require('busboy');
 
 const settings = require('./config');
@@ -67,6 +68,8 @@ function larkPush() { /* No automatic external messages in the standalone editio
 
 const SESSIONS = new Map();  // sessionId -> Session
 
+  function repeatedASR(text){return typeof text==='string'&&text.length>=80&&/(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}/u.test(text);}
+
 class Session {
   constructor(id, startMsg, env) {
     this.id = id || ('s-' + Date.now());
@@ -101,7 +104,7 @@ class Session {
     SESSIONS.set(this.id, this);
     log(`session start ${this.id} src=${this.source}`);
   }
-  checkpoint(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,uiLang:this.uiLang,notes:this.notes||'',summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});}}
+  checkpoint(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,uiLang:this.uiLang,notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
   applyTranscriptEdits(edits) {
     if(!Array.isArray(edits))return;
     for(const edit of edits.slice(0,1000)){
@@ -147,10 +150,10 @@ class Session {
     if (p.msgType === ERROR_RESPONSE) { log('volc ERROR ' + p.errorCode); this.broadcast({ type: 'error', message: `火山错误 ${p.errorCode}` }); return; }
     const utts = p.json && p.json.result && p.json.result.utterances; if (!Array.isArray(utts)) return;
     for (const u of utts) {
-      const sp = (u.additions && u.additions.speaker) || u.speaker;   // 火山流式目前不给；留着以防端点升级
+      const sp = u.additions?.speaker_id ?? u.additions?.speaker ?? u.speaker_id ?? u.speaker;
       const text = u.text || '';
       const out = { type: u.definite ? 'final' : 'partial', text };
-      if (sp) out.speaker = String(sp);
+      if(sp!==undefined&&sp!==null&&String(sp).trim()!=='')out.speaker=String(sp);
       if (u.definite) {
         if (!text) continue;
         if (this.isDuplicateFinal(u, text)) { log('dedup final skip ' + this.id); continue; }
@@ -193,8 +196,8 @@ class Session {
     if (this.triaging || this.finalized || (this.charsSinceTriage < 60 || this.transcript.length <= this.lastTriageIndex) || !this.transcript.length) return;
     this.triaging = true; const t0 = Date.now();
     try {
-      const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
-      const recent = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n');
+      const contextVersion=this.brief;const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
+      const recent = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).filter(x=>!repeatedASR(x.text)).map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n');
       const existed = JSON.stringify({ highlights: this.highlights.slice(-20), todos: this.todos.slice(-20), factchecks: this.factchecks.slice(-20) });
       // 语言锁三重（实测：只在开头插一句会被后面的中文 triage prompt + 中文转写盖过 → 前置 + 末尾强指令 + user 提醒）
       const enUI = this.uiLang === 'en';
@@ -207,7 +210,7 @@ class Session {
       const sys = langHead + this.buildBriefBlock() + (this.triagePrompt || '你是会议实时助手，从转写提取 highlights/todos/factchecks，只输出 JSON。') + langTail;
       const userReminder = enUI ? '\n\n(Reminder: write all text/claim/note fields in English.)' : '';
       const raw = await deepseek(this.env, sys, `【项目核心记忆】\n${this.context.slice(0, 3000)}\n\n【已有条目】${existed}\n\n【最新转写】\n${recent}${userReminder}`, 700);
-      if (!raw) { this.triaging = false; return; }
+      if (!raw || this.brief!==contextVersion) { this.triaging = false; return; }
       let j = null; try { j = JSON.parse(raw.replace(/^```json?|```$/g, '').trim()); } catch (e) {}
       if (j) { this.lastTriageIndex=endIndex; this.charsSinceTriage=Math.max(0,this.charsSinceTriage-inputChars);
         const fresh=(items,old,key)=>{const seen=new Set(old.map(x=>require('./work-hub').norm(x[key])));return (Array.isArray(items)?items:[]).filter(x=>{if(!x||!x[key]||/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x[key]))return false;const k=require('./work-hub').norm(x[key]);if(seen.has(k))return false;seen.add(k);return true;});};
@@ -387,7 +390,7 @@ const server = http.createServer(async (req, res) => {
   // Hub mutations require same-origin JSON; no credential-bearing wildcard CORS.
   if (u.pathname.replace(/^\/asr-relay/,'').startsWith('/hub')) { await workHub.route(req,res,u,authed); return; }
   if (req.method === 'GET' && (p === '/tinghuitai' || p.startsWith('/tinghuitai/'))) { return serveStatic(req, res, p); }
-  if (req.method === 'GET' && p.endsWith('/health')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, app:'tinghuitai-desktop', mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>['error','partial'].includes(j.status)).length })); }
+  if (req.method === 'GET' && p.endsWith('/health')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, app:'tinghuitai-desktop', assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>['error','partial'].includes(j.status)).length })); }
   if (req.method === 'GET' && p.endsWith('/export-state')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(buildExportState())); }
   if (req.method === 'POST' && p.endsWith('/audio')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({error:'首版未安装离线音频转写。请使用实时转写或导入文字。'})); }
   if (req.method === 'POST' && p.endsWith('/session')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } let body = '', big = false; req.on('data', c => { body += c; if (body.length > 5e6) { big = true; req.destroy(); } }); req.on('end', () => { if (big) { res.writeHead(413); return res.end('too large'); } const ok = saveOfflineSession(body); log('offline session ' + (ok ? 'saved' : 'FAIL')); res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok })); }); return; }
@@ -436,7 +439,14 @@ wss.on('connection', (ws, req) => {
         else { session = new Session(sid, msg, env); session.addClient(ws); session.connectVolc(); }
         session.applyTranscriptEdits(msg.transcriptEdits);
         ws.__session = session;
+        ws.send(JSON.stringify(session.snapshot()));
       } else if (msg.type === 'notes') { if(session)session.notes=String(msg.notes||'').slice(0,20000); } else if (msg.type === 'uiLanguage') { if (session) session.uiLang=msg.language==='en'?'en':'zh'; } else if (msg.type === 'names') { if (session) session.setNames(msg.names); }
+      else if(msg.type==='assistantPatch'){
+        if(!session||session.finalized||role!=='speaker'||isView){ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,error:'当前连接不能修改此会议'}));return;}
+        if(typeof msg.requestId!=='string'||msg.requestId.length>80||!Array.isArray(msg.patches)||msg.patches.length>80||typeof msg.brief!=='string'||msg.brief.length>30000){ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,error:'修改内容格式无效'}));return;}
+        const result=assistantCore.apply(session,msg.patches);session.brief=msg.brief;const saved=session.checkpoint();
+        ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,applied:result.applied,skipped:result.skipped,saved}));
+      }
       else if (msg.type === 'spk') { if (session) session.applySpk(msg); }
       else if (msg.type === 'end') { if (session) {if(typeof msg.notes==='string')session.notes=msg.notes.slice(0,20000);session.applyTranscriptEdits(msg.transcriptEdits);session.browserGapSeconds=Math.max(0,Math.min(Number(msg.browserGapSeconds)||0,86400));session.finalize('end 帧');} }
     } else if (session && role === 'speaker') { session.sendAudio(resamplePCM16(data, rate, 16000)); }

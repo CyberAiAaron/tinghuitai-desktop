@@ -1,7 +1,7 @@
 {
-  "name": "听会台",
-  "short_name": "听会台",
-  "description": "开会时放桌上：实时转写、要点待办、待核查。",
+  "name": "Meeting LiveMate",
+  "short_name": "LiveMate",
+  "description": "Your live meeting companion — by Aaron",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -10,7 +10,17 @@
   "theme_color": "#0f1412",
   "lang": "zh-CN",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }
