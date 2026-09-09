@@ -1,0 +1,68 @@
+/* theme.css — 听会台换肤：对齐 work.html / work-style.css（Space Grotesk、白卡、#c8102e 红主色、14px 圆角、极浅分隔线）
+   只改字体/颜色/圆角/边框/间距；不改 display / grid / position，不碰 JS 切换的 active / open / live / warn / hidden 语义。
+   Claude 全权维护（claims.md）。加载顺序：index.html 内联 <style> → work-style.css → 本文件。 */
+:root{--bg:#f6f6f7;--panel:#ffffff;--panel-2:#f0f0f3;--line:#e5e5e8;--text:#202124;--muted:#76767c;--faint:#a4a4ab;--live:#c8102e;--live-ink:#ffffff;--hl:#1f5fbf;--todo:#0f8f6f;--check:#c2472c;--ok:#1f8f4c;--warn:#b07600;--conf:#c62828;--s1:#c8102e;--s2:#1f5fbf;--s3:#0f8f6f;--s4:#c2472c;--s5:#7b3fbf;--s6:#a06b00;--font:'Space Grotesk',-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;--mono:'Space Mono',ui-monospace,Menlo,monospace;color-scheme:light}
+@media (prefers-color-scheme: dark){:root{color-scheme:light}}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;-webkit-font-smoothing:antialiased;font-synthesis:none}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid #c8102e66;outline-offset:3px}
+.hdr{background:#fff;border-bottom:1px solid var(--line);padding:12px 16px;gap:10px}
+.brand{font-size:19px;font-weight:650;letter-spacing:-.2px}
+.brand small{font:10px var(--mono);letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-top:5px}
+.clock{font-family:var(--mono);font-size:20px;color:var(--text)}
+.pill{background:var(--panel-2);border:0;color:var(--muted);font-size:12px;padding:5px 11px;letter-spacing:0}
+.pill.live{background:var(--live);color:#fff;font-weight:600}
+.pill.view{background:#eaf1fb;color:var(--hl)}
+.btn{border:1px solid #dedee3;background:#fff;color:var(--text);border-radius:10px;padding:10px 16px;font-size:14px;font-weight:500}
+.btn:hover{border-color:#a4a4ab}
+.btn.primary{background:var(--live);border-color:var(--live);color:#fff;font-weight:600}
+.btn.danger{background:var(--check);border-color:var(--check);color:#fff;font-weight:600}
+.btn.sm{font-size:13px;padding:8px 12px}
+.btn.icon{padding:8px 11px}
+.btn[disabled]{opacity:.5}
+a.btn{display:inline-flex;align-items:center}
+.seg{border:0;background:var(--panel-2);border-radius:10px;height:34px;padding:3px}
+.seg button{border-radius:8px;color:var(--muted);font-size:13px;padding:0 12px;line-height:28px}
+.seg button[aria-selected="true"]{background:#252527;color:#fff;font-weight:600}
+.tabs{gap:4px;background:var(--panel-2);border-radius:10px;padding:4px}
+.tabs button{border:0;background:none;color:var(--muted);border-radius:8px;font-size:13px;padding:9px 6px}
+.tabs button[aria-selected="true"]{background:#fff;color:var(--text);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.count{font-family:var(--mono);font-size:11px;background:var(--panel-2);border:0;color:var(--muted);border-radius:6px;padding:1px 6px}
+.tabs button[aria-selected="true"] .count{background:#eeeef1;color:var(--text)}
+.pane{background:#fff;border:1px solid #e6e6e9;border-radius:14px}
+.pane h2{font:11px var(--mono);letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);padding:12px 14px;border-bottom:1px solid #eeeef0}
+.pane h2 i{border-radius:3px}
+.notice{background:#fff;border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:13px;padding:10px 14px}
+.notice.warn{border-color:var(--live);color:var(--text)}
+.scroll{padding:12px 14px}
+.tr{font-family:var(--font);font-size:14px;line-height:1.6;color:#262629}
+.tr time{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.tr .interim{color:var(--muted)}
+.spk{font-size:11px;border-radius:6px;border:1px solid var(--line);color:var(--muted)}
+#ime{border:1px solid #dedee3;border-radius:9px;background:#fff}
+.jump{background:var(--live);color:#fff;box-shadow:0 4px 14px rgba(200,16,46,.25)}
+.card{background:#fff;border:1px solid #e6e6e9;border-radius:12px;padding:12px 14px}
+.card .k{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.card .v{color:var(--muted);font-size:12px}
+.card.conf{background:#fdf3f4}
+.verdict{font-family:var(--mono);font-size:11px;border-radius:6px}
+.empty{color:var(--muted);font-size:13px;line-height:1.7}
+.ftr{background:#fff;border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));gap:8px}
+.ftr .fdiv{background:var(--line)}
+.sheet{background:#fff;border-top:1px solid #dedee3;border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.12)}
+.sheet h3{font:11px var(--mono);letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);padding:14px 16px;border-bottom:1px solid #eeeef0}
+.sheet .body{padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+.summary{font-size:14px;line-height:1.65;color:#262629}
+.hist button,.mode-opt{background:#fff;border:1px solid #dedee3;border-radius:10px;color:var(--text);font-size:13px;padding:11px 12px}
+.hist button:hover,.mode-opt:hover{border-color:#a4a4ab}
+.mode-opt[aria-selected="true"]{border-color:#202124;background:#fafafa}
+.hist button span,.mode-opt small{color:var(--muted);font-family:var(--mono);font-size:11px}
+.grp{font-size:11px;letter-spacing:1.2px;color:var(--muted);font-family:var(--mono);font-weight:400;text-transform:uppercase}
+.scrim{background:rgba(0,0,0,.3);backdrop-filter:blur(3px)}
+dialog{background:#fff;border:1px solid #dedee3;border-radius:18px;padding:24px;color:#252527}
+dialog::backdrop{background:#0005;backdrop-filter:blur(3px)}
+dialog h2{font-size:18px;margin:0 0 16px}
+.field label{font-size:13px;color:#666;letter-spacing:0}
+.field .hint{font-size:12px;color:var(--muted)}
+select,input[type=text],input[type=password],input[type=number],textarea{border:1px solid #dedee3;background:#fff;border-radius:9px;padding:11px 12px;font-size:14px;color:#222}
+.row{gap:10px;margin-top:20px}
+#ver{color:var(--faint)}
