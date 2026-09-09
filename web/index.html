@@ -253,10 +253,24 @@ dialog h2{margin:0 0 12px;font-size:16px}
     </section>
   </main>
 
-  <footer class="ftr"><button class="btn sm" id="b-hist" data-i18n="b_hist">历史会议</button><button class="btn sm" id="b-notes">我的笔记</button><button class="btn sm" id="mk-doc">会议档案</button><button class="btn sm" id="b-sum" data-i18n="b_sum">本场纪要</button><button class="btn sm" type="button" id="meeting-more" aria-haspopup="dialog" aria-controls="meeting-more-dialog"><span id="meeting-more-label">更多</span></button><button class="btn sm" id="recording-recovery">录音备份 / Audio backups</button><span id="recording-safety-status" role="status" style="flex-basis:100%;grid-column:1/-1;font-size:12px"></span></footer>
+  <footer class="ftr"><button class="btn sm" id="b-hist" data-i18n="b_hist">历史会议</button><button class="btn sm" id="b-notes">我的笔记</button><button class="btn sm" id="mk-doc">会议档案</button><button class="btn sm" id="b-sum" data-i18n="b_sum">本场纪要</button><button class="btn sm" type="button" id="meeting-more" aria-haspopup="dialog" aria-controls="meeting-more-dialog"><span id="meeting-more-label">更多</span></button><button class="btn sm" id="recording-recovery">录音备份 / Audio backups</button><span style="flex:1"></span><button class="btn sm" type="button" id="b-feedback" aria-haspopup="dialog">反馈 / 联系开发者</button><span id="recording-safety-status" role="status" style="flex-basis:100%;grid-column:1/-1;font-size:12px"></span></footer>
 </div>
 
 <div class="scrim" id="scrim" hidden></div>
+
+<dialog id="dlg-feedback" aria-label="改动建议与问题反馈">
+  <h2>反馈给开发者</h2>
+  <p class="hint" style="margin:0 0 10px">说说遇到的问题或想要的改动。反馈直接发到 Aaron 的邮箱，由他决定修什么、怎么改；不会自动改动你的程序或数据。</p>
+  <div class="field"><label for="fb-text">问题或建议</label><textarea id="fb-text" rows="5" maxlength="4000" placeholder="例：线上会开到 40 分钟后英文转写停了，重新开始才恢复。"></textarea></div>
+  <div class="field"><label for="fb-shot">截图（可选，也可以直接粘贴到上面的文字框里）</label><input type="file" id="fb-shot" accept="image/*"><div class="hint" id="fb-shot-hint">邮件客户端不能自动带附件：选了截图会先保存到本机，发送时把它拖进邮件即可。</div></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <button class="btn primary" type="button" id="fb-mail">用邮件发送</button>
+    <button class="btn" type="button" id="fb-copy">复制反馈内容</button>
+    <button class="btn" type="button" id="fb-close">关闭</button>
+    <span id="fb-msg" style="font-size:12px;color:var(--muted)"></span>
+  </div>
+  <p class="hint" style="margin:14px 0 0">联系开发者：<a id="fb-mailto" href="mailto:rangerAaronlol@gmail.com">rangerAaronlol@gmail.com</a> <button class="btn sm" type="button" id="fb-copy-mail">复制邮箱</button></p>
+</dialog>
 <dialog id="dlg-fix">
   <h2 data-i18n="fix_title">改这一条</h2>
   <div class="field"><label data-i18n="fix_text">内容</label><textarea id="fix-text" rows="3"></textarea></div>
@@ -511,7 +525,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
   scrim.onclick = closeSheets;
   document.querySelectorAll('.sheet [data-close]').forEach(b => b.onclick = closeSheets);
   $('#b-sum').onclick = () => openSheet('#sh-sum');
-  $('#b-hist').onclick = () => { renderHist(); openSheet('#sh-hist'); };
+  $('#b-hist').onclick = () => { renderHist(); openSheet('#sh-hist'); syncMeetingList().then(changed => { if (changed && $('#sh-hist').classList.contains('open')) renderHist(); }); };
   const MODE_OPTS_ZH = [
     ['asr','线下会','使用手机或电脑收录现场声音。'],
     ['asr-tab','线上会','收录会议声音和你的发言；开始时选择会议窗口并共享音频。'],
@@ -548,6 +562,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
       let n = 0;
       (d.sessions||[]).forEach(x => { if (x && x.id && !have.has(x.id)) { state.sessions.push(normalizeSession(x)); n++; } });
       if (n) persist();
+      await syncMeetingList();
       renderHist();
       const m2 = $('#hist-msg'); if (m2) m2.textContent = n ? ((T('pull_ok')||'找回 ') + n + (T('pull_ok2')||' 场。')) : (T('pull_none')||'Mac 上没有这台设备缺的场次。');
     } catch(e){ const m2 = $('#hist-msg'); if (m2) m2.textContent = (T('pull_fail')||'找不回：') + (e.message||e) + (T('pull_fail2')||'（Mac 在线吗？）'); }
@@ -584,6 +599,19 @@ dialog h2{margin:0 0 12px;font-size:16px}
     } catch(e){ hint.textContent = String(e.message||e); }
   }
   $('#gear').onclick = () => { window.open('setup.html', 'tinghuitai-service-settings', 'popup,width=720,height=860'); };
+  // ===== 反馈 / 联系开发者（独立版）：所有内容只发到开发者邮箱，处置权在开发者 =====
+  const FB_MAIL='rangerAaronlol@gmail.com';
+  let fbShot=null;
+  const fbContext=()=>`\n\n—\nMeeting LiveMate 独立版 · ${new Date().toLocaleString('zh-CN')}\n${navigator.userAgent}\n界面语言 ${ui} · 会议模式 ${(el.lang&&el.lang.value)||'-'} · 当前${running?'录音中':'未录音'}`;
+  const fbBody=()=>($('#fb-text').value.trim()||'（未填写文字）')+(fbShot?`\n[已保存截图 ${fbShot.name}，请拖入邮件附件]`:'')+fbContext();
+  $('#b-feedback').onclick=()=>{$('#fb-msg').textContent='';$('#dlg-feedback').showModal();$('#fb-text').focus();};
+  $('#fb-close').onclick=()=>$('#dlg-feedback').close();
+  $('#fb-shot').onchange=e=>{const f=e.target.files&&e.target.files[0];fbShot=f?{name:f.name,file:f}:null;$('#fb-shot-hint').textContent=f?`已选 ${f.name}，发送时会先保存到本机。`:'邮件客户端不能自动带附件：选了截图会先保存到本机，发送时把它拖进邮件即可。';};
+  $('#fb-text').addEventListener('paste',e=>{const it=[...(e.clipboardData?.items||[])].find(x=>x.type.startsWith('image/'));if(!it)return;const f=it.getAsFile();if(!f)return;fbShot={name:'截图-'+Date.now()+'.png',file:f};$('#fb-shot-hint').textContent='已粘贴一张截图，发送时会先保存到本机。';});
+  const fbSaveShot=()=>{if(!fbShot)return;const a=document.createElement('a');a.href=URL.createObjectURL(fbShot.file);a.download=fbShot.name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500);};
+  $('#fb-mail').onclick=()=>{const body=fbBody();fbSaveShot();const subject='[Meeting LiveMate 反馈] '+($('#fb-text').value.trim().slice(0,40)||'问题反馈');location.href='mailto:'+FB_MAIL+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body.slice(0,1800));$('#fb-msg').textContent=body.length>1800?'已打开邮件；内容较长，请再点「复制反馈内容」粘贴全文。':'已打开邮件客户端。';};
+  $('#fb-copy').onclick=async()=>{try{await navigator.clipboard.writeText(fbBody());$('#fb-msg').textContent='已复制，可粘贴到邮件或飞书。';}catch(e){$('#fb-msg').textContent='复制失败：'+(e.message||e);}};
+  $('#fb-copy-mail').onclick=async()=>{try{await navigator.clipboard.writeText(FB_MAIL);$('#fb-msg').textContent='邮箱已复制。';}catch(e){}};
   $('#meeting-preferences').onclick = () => { $('#meeting-more-dialog').close(); openSettings(); };
   $('#s-provider').onchange = e => { const pr = PRESET[e.target.value]; $('#f-base').hidden = e.target.value!=='openai'; $('#s-base').value = pr.base; $('#s-quick').value = pr.quick; $('#s-model').value = pr.model; };
   $('#s-cancel').onclick = () => dlg.close();
@@ -644,6 +672,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
   function assistantClose(){$('#assistant-panel').hidden=true;$('#b-assistant').setAttribute('aria-expanded','false');assistantTrigger?.focus();}
   $('#assistant-close').onclick=assistantClose;
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#assistant-panel').hidden){e.preventDefault();assistantClose();}});
+  $('#assistant-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('#assistant-form').requestSubmit();}});
   $('#assistant-form').onsubmit=async e=>{e.preventDefault();if(assistantBusy)return;const message=$('#assistant-input').value.trim(),s=cur;if(!message)return;if(!s){assistantSay('先开始一场会议，或打开历史会议。');return;}assistantBusy=true;$('#assistant-send').disabled=true;$('#assistant-input').value='';assistantSay('你：'+message);assistantSay('正在看本场内容…');
     try{
       const snap=A.snapshot(s);const raw=await llm(A.prompt(message,snap,effectiveBrief(s),ui==='en'),'full');const result=parseJSON(raw);
@@ -711,18 +740,38 @@ dialog h2{margin:0 0 12px;font-size:16px}
   el.tr.addEventListener('click', e => { const s = e.target.closest('.spk'); if (!s || !s.dataset.spk) return; const id = s.dataset.spk; $('#spk-label').textContent = spkName(id) + (T('spk_all')||'（全场生效）'); $('#spk-name').value = ((cur&&cur.names&&cur.names[id])||state.names[id]||''); $('#dlg-spk').dataset.id = id; $('#dlg-spk').showModal(); setTimeout(()=>$('#spk-name').focus(),50); });
   $('#spk-cancel').onclick = () => $('#dlg-spk').close();
   $('#spk-save').onclick = () => { const id = $('#dlg-spk').dataset.id, nm = $('#spk-name').value.trim(); if (cur) { cur.names = cur.names||{}; if (nm) cur.names[id] = nm; else delete cur.names[id]; } if (nm) state.names[id] = nm; persist(); $('#dlg-spk').close(); render(); sendNames(); };
+  // 主题标题/参会人来自 Mac 的 /meeting-list（会后流水线生成），合并进本机 state 后持久化；Mac 不在线时用已缓存的。
+  async function syncMeetingList(){
+    if (!cfg.relayToken && !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return false;
+    try {
+      const r = await fetch(relayBase()+'/meeting-list?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(5000)});
+      if (!r.ok) return false;
+      const d = await r.json(); const byId = new Map((d.sessions||[]).map(x=>[String(x.id), x])); let changed = false;
+      for (const s of state.sessions) { const m = byId.get(String(s.id)); if (!m) continue;
+        if (m.topicTitle && m.topicTitle !== s.topicTitle) { s.topicTitle = m.topicTitle; changed = true; }
+        if (Array.isArray(m.participants) && JSON.stringify(m.participants) !== JSON.stringify(s.participants||[])) { s.participants = m.participants; changed = true; } }
+      if (changed) persist();
+      return changed;
+    } catch(e) { return false; }
+  }
   function renderHist(){
     const all = [...state.sessions].sort((a,b)=>b.start-a.start).slice(0,30);
     const msg = $('#hist-msg') ? $('#hist-msg').outerHTML : '';
+    const dfmt = sec => { sec=Math.max(0,sec); const h=Math.floor(sec/3600); return (h?h+':':'')+String(Math.floor(sec%3600/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0'); };
     el.hist.innerHTML = msg + (all.length ? all.map(s=>{
-      const dur = fmt(Math.round(((s.end||s.transcript.length&&s.transcript[s.transcript.length-1].at||s.start)-s.start)/1000));
+      const dur = dfmt(Math.round(((s.end||s.transcript.length&&s.transcript[s.transcript.length-1].at||s.start)-s.start)/1000));
       const n = s.transcript.length, hl = (s.highlights||[]).length + (s.todos||[]).length, ck = (s.factchecks||[]).length;
       const tag = s.end ? '' : ' · <b>未结束</b>';
-      return `<button data-id="${s.id}">${esc(s.title||('会议 '+hms(s.start).slice(0,5)))}<span>${new Date(s.start).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})} · ${dur} · ${n} 句 · 要点 ${hl} · 核查 ${ck}${s.pendingUpload?' · 待回传':''}${tag}</span></button>`;
+      const ppl = Array.isArray(s.participants) && s.participants.length ? ' · ' + esc(s.participants.join('、')) : '';
+      const head = s.topicTitle || s.title || ('会议 '+hms(s.start).slice(0,5));
+      return `<button data-id="${s.id}" title="${s.end?(ui==='en'?'Open in a new window':'在新窗口打开这场会议'):''}"><b style="font-weight:600">${esc(head)}</b>${s.topicTitle&&s.title&&s.title!==s.topicTitle?`<span style="margin-left:0;display:block;color:var(--faint)">${esc(s.title.slice(0,40))}</span>`:''}<span style="display:block;margin-left:0;margin-top:3px">${new Date(s.start).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})} · ${dur} · ${n} 句 · 要点 ${hl} · 核查 ${ck}${ppl}${s.pendingUpload?' · 待回传':''}${tag}${s.end?' · ↗':''}</span></button>`;
     }).join('') : `<div class="empty">${T('e_hist')||'这台设备上还没有场次。点右上角「从 Mac 找回」。'}</div>`);
     el.hist.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+      const picked = state.sessions.find(s=>s.id===b.dataset.id);
+      // 已结束的场次：新窗口打开独立详情页，可同时开多个，录音进行中也能看；未结束的仍走本页恢复流程。
+      if (picked && picked.end) { window.open('archive.html?id='+encodeURIComponent(picked.id), '_blank', 'noopener'); return; }
       if (running) { note(T('histRunning')||'这场进行中，结束后再看历史。', true); return; }
-      cur = state.sessions.find(s=>s.id===b.dataset.id);
+      cur = picked;
       if (cur && !cur.end) { cur.end = cur.transcript.length ? cur.transcript[cur.transcript.length-1].at : Date.now(); cur.title = cur.title || ('会议 ' + hms(cur.start).slice(0,5)); persist(); note(T('histFixed')||'这场之前没正常结束，已按最后一句话的时间补上结束时间，可以导出了。'); }
       resetSigs(); stickBottom = true; render(); closeSheets();
     });

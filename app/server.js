@@ -29,6 +29,7 @@ const PENDING_DIR = path.join(DATA,'pending');
 const AUDIO_DIR = path.join(DATA,'audio');
 const RECONNECT_GRACE_MS = 10 * 60000;   // 断线 10 分钟内重连续场
 const SILENCE_END_MS = 12 * 60000;       // 12 分钟无 final 收尾
+const QUEUE_MAX_SEC = 600;               // 火山断线期间最多缓存 10 分钟音频，重连后回灌补转
 
 function log(m) { try { fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} }
 // 本地免 token：⚠️ tailscale serve/funnel 是本机反代，会把外网请求也转发到 127.0.0.1，光看 remoteAddress 会把 funnel 流量误判成本地——
@@ -126,7 +127,7 @@ class Session {
     const headers = { 'X-Api-App-Key': this.env.VOLC_APP_KEY, 'X-Api-Access-Key': this.env.VOLC_ACCESS_KEY, 'X-Api-Resource-Id': this.env.VOLC_RESOURCE_ID || 'volc.seedasr.sauc.duration', 'X-Api-Connect-Id': crypto.randomUUID(), 'X-Api-Sequence': '-1' };
     this.seq=1;
     this.volcWs = new WebSocket(url, { headers });
-    this.volcWs.on('open', () => { log('volc open ' + this.id); this.sendConfig();for(const b of this.queuedAudio)this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, b, this.seq++, false));this.queuedAudio=[];this.queuedAudioBytes=0; });
+    this.volcWs.on('open', () => { log('volc open ' + this.id); this.sendConfig(); this.drainQueuedAudio(); });
     this.volcWs.on('message', (d) => this.onVolc(d));
     this.volcWs.on('unexpected-response', (req, res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { log(`volc http ${res.statusCode}`); this.broadcast({ type: 'error', message: `火山握手 ${res.statusCode}` }); }); });
     this.volcWs.on('error', (e) => { log('volc err ' + e.message); this.broadcast({ type: 'error', message: '火山连接错误' }); });
@@ -134,8 +135,27 @@ class Session {
       log('volc closed ' + c + ' ' + this.id);
       if (this.finalized) return;
       this.stalled = true; this.broadcast({ type: 'stall', reason: '火山连接断开' });
-      setTimeout(() => { if (!this.finalized) { log('volc reconnect attempt ' + this.id); this.seq = 1; this.connectVolc(); } }, 2000);   // 每条新连接 seq 归 1，沿用旧计数会被火山拒（同 2026-09-04 实测坑）
+      const delay = this.volcRetryDelay(); if (delay > 2000) log('volc retry backoff ' + delay + 'ms ' + this.id);
+      setTimeout(() => { if (!this.finalized) { log('volc reconnect attempt ' + this.id); this.seq = 1; this.connectVolc(); } }, delay);   // 每条新连接 seq 归 1，沿用旧计数会被火山拒（同 2026-09-04 实测坑）
     });
+  }
+  // 断线期间的音频最多缓存 QUEUE_MAX_SEC 秒（与 10 分钟续场宽限对齐），重连后按字节预算（4 倍实时 = 每 100ms 12800 B）回灌火山，当场补齐转写；
+  // 回灌期间新到音频继续排队（sendAudio 里 !draining 判断）以保序；超出上限的部分才留给会后本地补转。
+  drainQueuedAudio() {
+    if (this.draining) return;
+    if (!this.queuedAudio.length) return;
+    const sec = Math.round(this.queuedAudioBytes / 32000);
+    log('volc backfill start ' + sec + 's ' + this.id); if (sec >= 5) this.broadcast({ type: 'error', message: `火山已重连，正在补传断线期间 ${sec} 秒音频…` });
+    this.draining = setInterval(() => {
+      if (this.finalized || !this.volcWs || this.volcWs.readyState !== WebSocket.OPEN) { clearInterval(this.draining); this.draining = null; return; }
+      let budget = 16000 * 2 * 4 / 10;
+      while (budget > 0 && this.queuedAudio.length) {
+        let b = this.queuedAudio[0];
+        if (b.length > budget) { const head = b.subarray(0, budget), rest = b.subarray(budget); this.queuedAudio[0] = rest; b = head; } else this.queuedAudio.shift();
+        this.queuedAudioBytes -= b.length; budget -= b.length; this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, b, this.seq++, false));
+      }
+      if (!this.queuedAudio.length) { clearInterval(this.draining); this.draining = null; this.queuedAudioBytes = 0; log('volc backfill done ' + this.id); if (sec >= 5) this.broadcast({ type: 'error', message: '断线期间的音频已补传完成。' }); }
+    }, 100);
   }
   sendConfig() {
     const hw = (Array.isArray(this.startMsg.hotwords) ? this.startMsg.hotwords : []).slice(0, 15).map(w => ({ word: String(w) }));
@@ -144,10 +164,10 @@ class Session {
     const cfg = { user: { uid: 'tinghuitai' }, audio: { format: 'pcm', codec: 'raw', rate: 16000, bits: 16, channel: 1 }, request: req };
     this.volcWs.send(buildFrame(FULL_CLIENT_REQUEST, POS_SEQ, cfg, this.seq++, true)); log('volc config sent ' + this.id);
   }
-  sendAudio(pcm16k) { if(this.finalized)return;this.lastAudioTs=Date.now(); if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) { this.audioSaveError='Mac 录音写入失败，请导出浏览器录音备份。';log('audio write fail ' + e.message);this.broadcast({type:'error',message:'Mac 录音写入失败，请导出浏览器录音备份。'}); } } if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN) this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, pcm16k, this.seq++, false)); else {this.queuedAudio.push(Buffer.from(pcm16k));this.queuedAudioBytes+=pcm16k.length;while(this.queuedAudioBytes>16000*2*30){const dropped=this.queuedAudio.shift().length;this.queuedAudioBytes-=dropped;this.transcriptionGapSeconds+=dropped/32000;}if(this.transcriptionGapSeconds>0&&!this.gapWarned){this.gapWarned=true;this.broadcast({type:'error',message:this.audioSaveError?'实时转写存在缺口，Mac录音也未完整保存；请导出浏览器录音备份补转。':'实时转写存在缺口，原始录音仍保存；会后将尝试本地补转。'});}} }
+  sendAudio(pcm16k) { if(this.finalized)return;this.lastAudioTs=Date.now(); if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) { this.audioSaveError='Mac 录音写入失败，请导出浏览器录音备份。';log('audio write fail ' + e.message);this.broadcast({type:'error',message:'Mac 录音写入失败，请导出浏览器录音备份。'}); } } if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN && !this.draining) this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, pcm16k, this.seq++, false)); else {this.queuedAudio.push(Buffer.from(pcm16k));this.queuedAudioBytes+=pcm16k.length;while(this.queuedAudioBytes>16000*2*QUEUE_MAX_SEC){const dropped=this.queuedAudio.shift().length;this.queuedAudioBytes-=dropped;this.transcriptionGapSeconds+=dropped/32000;}if(this.transcriptionGapSeconds>0&&!this.gapWarned){this.gapWarned=true;this.broadcast({type:'error',message:this.audioSaveError?'实时转写存在缺口，Mac录音也未完整保存；请导出浏览器录音备份补转。':'实时转写存在缺口，原始录音仍保存；会后将尝试本地补转。'});}} }
   onVolc(d) {
     let p; try { p = parseFrame(d); } catch (e) { return; }
-    if (p.msgType === ERROR_RESPONSE) { log('volc ERROR ' + p.errorCode); this.broadcast({ type: 'error', message: `火山错误 ${p.errorCode}` }); return; }
+    if (p.msgType === ERROR_RESPONSE) { log('volc ERROR ' + p.errorCode); this.broadcast({ type: 'error', message: `火山错误 ${p.errorCode}` }); this.volcFailStreak = (this.volcFailStreak || 0) + 1; this.dropVolc('error ' + p.errorCode); return; }
     const utts = p.json && p.json.result && p.json.result.utterances; if (!Array.isArray(utts)) return;
     for (const u of utts) {
       const sp = u.additions?.speaker_id ?? u.additions?.speaker ?? u.speaker_id ?? u.speaker;
@@ -157,7 +177,7 @@ class Session {
       if (u.definite) {
         if (!text) continue;
         if (this.isDuplicateFinal(u, text)) { log('dedup final skip ' + this.id); continue; }
-        this.broadcast(out);
+        this.broadcast(out); this.volcFailStreak = 0;
         const at = Math.round((Date.now() - this.startTs) / 1000); this.transcript.push({ at, t: fmtClock(at), speaker: out.speaker || '', text }); this.charsSinceTriage += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
       } else {
         this.broadcast(out);
@@ -174,11 +194,23 @@ class Session {
     this.dedupSeen.set(key, now);
     return false;
   }
+  // 火山 ERROR（如 45000081 会话已结束）后不关 socket，readyState 仍 OPEN，音频会一直进死会话。
+  // 这里只负责把失效连接立刻退出可发送状态（不节流）；重试节奏由 close 分支的退避统一调度。
+  dropVolc(reason) {
+    if (this.finalized || !this.volcWs) return;
+    const w = this.volcWs; if (w.__dropped) return; w.__dropped = true;
+    log('volc drop (' + reason + ') ' + this.id);
+    try { w.close(); } catch (e) {}
+    setTimeout(() => { try { if (w.readyState !== WebSocket.CLOSED) w.terminate(); } catch (e) {} }, 3000);
+  }
+  volcRetryDelay() { const n = Math.min(Math.max((this.volcFailStreak || 0) - 1, 0), 5); return Math.min(60000, 2000 * Math.pow(2, n)); }   // 首次 2s，连续失败 4s,8s,…,60s；收到 final 归零
   checkStall() {
     if (this.finalized) return;
     const silentMs = Date.now() - this.lastFinalTs;
     if (silentMs > 90000) {
       if (!this.stalled) { this.stalled = true; this.broadcast({ type: 'stall', reason: '90秒未收到新的转写结果' }); log('stall (silence) ' + this.id); }
+      // 音频仍在到达、火山连接看似 OPEN 却长期无结果：上游会话多半已死。此路径 60 秒节流，避免和 ERROR 分支重复。
+      if (this.lastAudioTs && Date.now() - this.lastAudioTs < 10000 && this.volcWs && this.volcWs.readyState === WebSocket.OPEN && Date.now() - (this.lastWatchdogDrop || 0) > 60000) { this.lastWatchdogDrop = Date.now(); this.dropVolc('silent while audio flowing'); }
     } else if (this.stalled) { this.stalled = false; this.broadcast({ type: 'stall_clear' }); log('stall clear ' + this.id); }
   }
   setNames(names) { this.names = Object.assign({}, this.names, names || {}); this.broadcast({ type: 'names', names: this.names }); log('names ' + this.id + ' ' + Object.keys(this.names).length); }
@@ -236,6 +268,8 @@ class Session {
   async finalize(reason) {
     if (this.finalized) return; this.finalized = true;
     clearInterval(this.triageTimer); clearInterval(this.endTimer); clearInterval(this.stallTimer); if (this.graceTimer) clearTimeout(this.graceTimer);
+    if (this.draining) { clearInterval(this.draining); this.draining = null; }
+    if (this.queuedAudioBytes > 0) { this.transcriptionGapSeconds += this.queuedAudioBytes / 32000; log('volc queue left at end ' + Math.round(this.queuedAudioBytes / 32000) + 's -> gap ' + this.id); this.queuedAudio = []; this.queuedAudioBytes = 0; }   // 未来得及回灌的音频计入缺口，会后本地补转
     this.endVolc();
     await new Promise(resolve=>setTimeout(resolve,1500));
     this.checkpoint(); clearInterval(this.journalTimer); await this.closeAudio();
@@ -278,6 +312,9 @@ function buildExportState() {
   const unique=new Map();for(const s of sessions){const old=unique.get(s.id);if(!old||(s._fileUpdated||0)>=(old._fileUpdated||0))unique.set(s.id,s);}const merged=[...unique.values()].map(({_fileUpdated,...s})=>s);merged.sort((a,b)=>String(a.start).localeCompare(String(b.start)));
   return { v: 1, sessions:merged };
 }
+
+const TITLES_PATH = path.join(process.env.THT_PIPELINE_DIR || path.join(DATA, 'state', 'meeting-pipeline'), '..', 'meeting-titles.json');
+function readTitles() { try { return JSON.parse(fs.readFileSync(TITLES_PATH, 'utf8')) || {}; } catch (e) { return {}; } }
 
 function saveOfflineSession(body) {
   try { const s = JSON.parse(body); const dir = path.join(DATA,'exports'); fs.mkdirSync(dir, { recursive: true }); const ts = String(s.start || new Date().toISOString()).replace(/[-:TZ.]/g, '').slice(0, 12); const title = String(s.title || '听会台离线场次').replace(/[\/\\:*?"<>|\n]/g, '_').slice(0, 40); fs.mkdirSync(PENDING_DIR, { recursive: true }); if(typeof s.id!=='string'||!s.id||s.id.length>100)throw Error('Invalid session id');const f=path.join(PENDING_DIR,'offline-'+crypto.createHash('sha256').update(s.id).digest('hex').slice(0,24)+'.json');journal.write(f,s); if (s.transcript?.length) { meetingPipeline.enqueue(s); } fs.writeFileSync(path.join(dir, `听会台_${ts}_${title}_离线回传.json`), JSON.stringify(s, null, 1)); return true; } catch (e) { log('saveOffline fail ' + e.message); return false; }
@@ -384,8 +421,14 @@ function recoveryNeeded(){if(!fs.existsSync(startupRecoveryDir))return 0;return 
 const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
-  if(req.method==='GET'&&p.endsWith('/meeting-result')){if(!authed){res.writeHead(401);return res.end('unauthorized');}const result=meetingPipeline.result(u.searchParams.get('id'));res.writeHead(result?200:404,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(result||{}));}
+  if(req.method==='GET'&&p.endsWith('/meeting-result')){if(!authed){res.writeHead(401);return res.end('unauthorized');}const rid=u.searchParams.get('id');let result=meetingPipeline.result(rid);if(!result){const pend=buildExportState().sessions.find(s=>String(s.id)===String(rid));if(pend)result={...pend,source:pend.source||'',archiveNote:'尚未经过会后整理，显示原始记录'};}if(result){const t=readTitles()[String(rid)]||{};if(!result.topicTitle&&t.topicTitle)result.topicTitle=t.topicTitle;if(!result.participants)result.participants=t.participants||[];}res.writeHead(result?200:404,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(result||{}));}
   if(req.method==='POST'&&p.endsWith('/meeting-retry')){if(!authed){res.writeHead(401);return res.end('unauthorized');}let body='';req.on('data',d=>{body+=d;if(body.length>2000)req.destroy();});req.on('end',()=>{try{const job=meetingPipeline.retry(JSON.parse(body).id);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(job));}catch(e){res.writeHead(400);res.end(e.message);}});return;}
+  // 历史场次轻量清单：不带转写正文；topicTitle/participants 来自 meeting-titles.json（会后流水线与 backfill-titles.py 写入）。
+  if(req.method==='GET'&&p.endsWith('/meeting-list')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    const titles=readTitles();const jobs=new Map(meetingPipeline.list().map(j=>[String(j.sessionId),j]));
+    const rows=buildExportState().sessions.map(s=>{const t=titles[String(s.id)]||{};const j=jobs.get(String(s.id))||{};const start=typeof s.start==='number'?s.start:Date.parse(s.start)||0;const last=(s.transcript||[]).length?(s.transcript[s.transcript.length-1].at||0):0;const endTs=s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)||0):(last>1e11?last:(last?start+last*1000:0));
+      return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',participants:t.participants||[],start,end:endTs||null,durationSec:endTs&&start?Math.max(0,Math.round((endTs-start)/1000)):0,transcriptCount:(s.transcript||[]).length,highlightCount:(s.highlights||[]).length,todoCount:(s.todos||[]).length,factcheckCount:(s.factchecks||[]).length,hasSummary:!!s.summary,recoveryStatus:s.recoveryStatus||'',archive:{status:j.status||'',url:j.url||''}};}).sort((a,b)=>b.start-a.start);
+    res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({v:1,sessions:rows}));}
   if(req.method==='GET'&&p.endsWith('/meeting-status')){if(!authed){res.writeHead(401);return res.end('unauthorized');}res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({jobs:meetingPipeline.list()}));}
   // Hub mutations require same-origin JSON; no credential-bearing wildcard CORS.
   if (u.pathname.replace(/^\/asr-relay/,'').startsWith('/hub')) { await workHub.route(req,res,u,authed); return; }

@@ -1,1 +1,41 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>会议全文与总结</title><script src="bootstrap.js"></script><style>body{max-width:860px;padding:24px;margin:auto;font:17px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;color:#1d1d1f}pre{white-space:pre-wrap;font:inherit}small{color:#777}button{padding:10px}a{color:#c8102e}</style></head><body><a href="index.html">← 听会台</a><h1 id="title">正在读取会议…</h1><button id="download">下载全文与总结</button><h2>智能总结 · 待核对</h2><pre id="summary"></pre><h2>逐字稿</h2><div id="transcript"></div><script src="archive.js"></script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>会议详情</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap">
+<link rel="stylesheet" href="theme.css?v=2">
+<style>
+body{margin:0;padding:0 0 60px}
+.top{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid var(--line,#e5e5e8);padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.top h1{font-size:20px;font-weight:650;margin:0;flex:1;min-width:200px;letter-spacing:-.2px}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px}
+.meta{font:12px var(--mono,ui-monospace,Menlo,monospace);color:var(--muted,#76767c);display:flex;gap:14px;flex-wrap:wrap;margin:0 0 16px}
+.meta b{color:var(--text,#202124);font-weight:500}
+.grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.pane{padding:0;overflow:hidden}
+.pane h2{margin:0}
+.pane .scroll{max-height:70vh;overflow:auto}
+.tr p{margin:0 0 10px;font-size:14px;line-height:1.6}
+.tr time{margin-right:8px}
+.spk{display:inline-block;padding:0 6px;margin-right:6px;font-size:11px}
+.orig{display:block;color:var(--muted,#76767c);font-size:12px;margin:-6px 0 10px 54px}
+.card{margin:0 0 8px}
+.card .k{margin-right:8px}
+.chip{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--panel-2,#f0f0f3);font-size:12px;color:var(--muted,#76767c)}
+.summary{white-space:pre-wrap;font-size:14px;line-height:1.65}
+.empty{padding:12px 14px}
+</style></head><body>
+<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="download">下载全文与总结</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
+<div class="wrap">
+<div class="meta" id="meta"></div>
+<div class="grid">
+  <div>
+    <div class="pane" style="margin-bottom:14px"><h2>智能总结 · 待核对</h2><div class="scroll"><div class="summary" id="summary"></div></div></div>
+    <div class="pane"><h2>逐字稿 <span class="count" id="c-tr"></span></h2><div class="scroll tr" id="transcript"></div></div>
+  </div>
+  <div>
+    <div class="pane" style="margin-bottom:14px"><h2>要点 <span class="count" id="c-hl"></span></h2><div class="scroll" id="highlights"></div></div>
+    <div class="pane" style="margin-bottom:14px"><h2>待办 <span class="count" id="c-td"></span></h2><div class="scroll" id="todos"></div></div>
+    <div class="pane"><h2>待核查 <span class="count" id="c-ck"></span></h2><div class="scroll" id="factchecks"></div></div>
+  </div>
+</div>
+</div>
+<script src="archive.js?v=2"></script></body></html>
