@@ -6,7 +6,7 @@
 
 - [给 AI 的安装入口](AI-SETUP.md)
 - [你需要准备什么：语音转写和 AI 助手](RAY.md)
-- [下载完整源码安装包](tinghuitai-desktop-v0.3.0.zip)
+- [下载完整源码安装包](tinghuitai-desktop-v0.3.1.zip)
 
 本仓库用 ZIP 分发完整源码与安装器，程序不在仓库根目录。不要直接在根目录运行 npm；先解压安装包，再按其中的 AI-SETUP.md 操作。GitHub 的 Code → Download ZIP 会多套一层，仍需解压里面的听会台安装包。
 

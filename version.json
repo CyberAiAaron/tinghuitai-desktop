@@ -1,9 +1,9 @@
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "released": "2026-09-10",
-  "zip": "tinghuitai-desktop-v0.3.0.zip",
-  "sha256": "39cb33e73c87f2959048b277a6f2b59af9a936e3fb73352beea47e39a3445666",
-  "size": 212256,
-  "notes": "免 API Key 接入向导、录音管理看板、补充材料与图片理解、要点按结论分组、语种自动识别、新图标",
+  "zip": "tinghuitai-desktop-v0.3.1.zip",
+  "sha256": "fc028674f4edb27808d880967cda96ddf81d5106b26d7b91bac9342c39c4bfde",
+  "size": 216467,
+  "notes": "新增应用内一键更新；免 Key 接入向导；录音管理看板；新图标",
   "min_macos": 13
 }
