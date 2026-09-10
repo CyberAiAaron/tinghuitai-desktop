@@ -43,7 +43,7 @@ class MacAsr {
       });
       this.timeout=setTimeout(()=>{
         if(!this.ready&&!this.dead) this.onResult({type:'fatal',text:'本机转写没连上。第一次用要先在弹出的窗口点「允许」；如果没看到弹窗，去「系统设置 → 隐私与安全性 → 语音识别」里打开「听会台转写」。'});
-      },20000);
+      },10000);
     });
   }
   onExit(){

@@ -159,7 +159,19 @@ class Session {
   }
   onMacResult(r) {
     if (this.finalized) return;
-    if (r.type === 'fatal') { log('mac-asr fatal: ' + r.text); this.broadcast({type:'error',message:r.text}); return; }
+    if (r.type === 'fatal') {
+      log('mac-asr fatal: ' + r.text);
+      // 本机转写起不来就别让整场会哑掉：有火山凭据就当场切过去，用户什么都不用做。
+      if (this.hasKey && !this.macFellBack) {
+        this.macFellBack = true;
+        try { this.mac && this.mac.stop(); } catch (e) {}
+        this.mac = null;
+        this.broadcast({type:'error',message:'本机转写没起来（'+r.text+'）已自动改用火山，这场不受影响。'});
+        this.connectVolc();
+        return;
+      }
+      this.broadcast({type:'error',message:r.text}); return;
+    }
     if (r.type === 'note') { log('mac-asr note: ' + r.text); return; }
     const text = (r.text || '').trim();
     if (!text) return;
