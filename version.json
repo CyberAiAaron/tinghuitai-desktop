@@ -1,9 +1,9 @@
 {
-  "version": "0.3.4",
+  "version": "0.3.5",
   "released": "2026-09-10",
-  "zip": "tinghuitai-desktop-v0.3.4.zip",
-  "sha256": "b66c9551b26f76e23f6396b2d95e05307862173dee4ca9230808abd4063d9035",
-  "size": 221277,
-  "notes": "检查更新挪到顶栏；要点和待办新增「让它先做」，助手直接出可执行方案",
+  "zip": "tinghuitai-desktop-v0.3.5.zip",
+  "sha256": "23ef2c9a1b415df6f639187389ad2d4c2bfd44fba8f13c9135a31bd9429eeedf",
+  "size": 221700,
+  "notes": "窄屏改页签布局；检查更新移到右下角",
   "min_macos": 13
 }
