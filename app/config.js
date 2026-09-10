@@ -4,7 +4,7 @@ const dataDir=path.resolve(process.env.THT_DATA_DIR||path.join(os.homedir(),'Lib
 process.env.THT_DATA_DIR=dataDir;
 process.umask(0o077);fs.mkdirSync(dataDir,{recursive:true,mode:0o700});
 const file=path.join(dataDir,'settings.json');
-const defaults={LLM_PROVIDER:'',VOLC_APP_KEY:'',VOLC_ACCESS_KEY:'',VOLC_RESOURCE_ID:'volc.seedasr.sauc.duration',DEEPSEEK_API_KEY:'',LLM_BASE_URL:'https://api.deepseek.com',LLM_MODEL:'deepseek-chat',ARCHIVE_TARGET:'local',THT_ARCHIVE_OWNER_ID:''};
+const defaults={PRESET_VERSION:'',LLM_PROVIDER:'',VOLC_APP_KEY:'',VOLC_ACCESS_KEY:'',VOLC_RESOURCE_ID:'volc.seedasr.sauc.duration',DEEPSEEK_API_KEY:'',LLM_BASE_URL:'https://api.deepseek.com',LLM_MODEL:'deepseek-chat',ARCHIVE_TARGET:'local',THT_ARCHIVE_OWNER_ID:''};
 function load(){const j=JSON.parse(fs.readFileSync(file,'utf8'));if(!j.RELAY_TOKEN)throw Error('本机配置不完整，请恢复 settings.json');return {...defaults,...j};}
 function save(j){const temp=file+'.tmp';fs.writeFileSync(temp,JSON.stringify(j,null,2),{mode:0o600});fs.chmodSync(temp,0o600);fs.renameSync(temp,file);}
 // 首次启动：如果安装包里带了 preset.json（Aaron 给家人预配好的凭据），就用它开箱即用。
@@ -19,15 +19,25 @@ function readPreset(){
   return {};
 }
 // 首装：直接带上 preset。
-// 已经装过一次的（settings.json 已存在、但凭据还空着）：把 preset 补进去，不覆盖用户自己填过的值。
+// 已装过的：空着的字段补上；preset 版本号变了（换了新的服务凭据），把 preset 里给的那几项一起更新——
+// 这样换包就能换掉过期或要换的凭据，不必让人手动删配置。用户自己额外填的其他字段一律不动。
+function applyPreset(cur){
+  const preset=readPreset(); if(!Object.keys(preset).length) return null;
+  const ver=preset.PRESET_VERSION||''; delete preset.PRESET_VERSION;
+  const bumped=ver && cur.PRESET_VERSION!==ver;
+  const patch={};
+  for(const k of Object.keys(preset)) if(bumped || !cur[k]) patch[k]=preset[k];
+  if(ver && cur.PRESET_VERSION!==ver) patch.PRESET_VERSION=ver;
+  return Object.keys(patch).length?patch:null;
+}
 if(!fs.existsSync(file)){
-  save({...defaults,...readPreset(),RELAY_TOKEN:crypto.randomBytes(32).toString('hex')});
+  const p=readPreset(); const ver=p.PRESET_VERSION||''; delete p.PRESET_VERSION;
+  save({...defaults,...p,...(ver?{PRESET_VERSION:ver}:{}),RELAY_TOKEN:crypto.randomBytes(32).toString('hex')});
 }else{
   try{
     const cur=JSON.parse(fs.readFileSync(file,'utf8'));
-    const preset=readPreset(); const add={};
-    for(const k of Object.keys(preset)) if(!cur[k]) add[k]=preset[k];
-    if(Object.keys(add).length) save({...cur,...add});
+    const patch=applyPreset(cur);
+    if(patch) save({...cur,...patch});
   }catch(e){}
 }
 module.exports={dataDir,file,load,save,defaults};

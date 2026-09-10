@@ -484,6 +484,16 @@ const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
   if(req.method==='GET'&&p.endsWith('/meeting-result')){if(!authed){res.writeHead(401);return res.end('unauthorized');}const rid=u.searchParams.get('id');let result=meetingPipeline.result(rid);if(!result){const pend=buildExportState().sessions.find(s=>String(s.id)===String(rid));if(pend)result={...pend,source:pend.source||'',archiveNote:'尚未经过会后整理，显示原始记录'};}if(result){const t=readTitles()[String(rid)]||{};if(!result.topicTitle&&t.topicTitle)result.topicTitle=t.topicTitle;if(!result.participants)result.participants=t.participants||[];}res.writeHead(result?200:404,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(result||{}));}
+  // ===== 应用更新：查新版 / 一键更新（只换程序文件，凭据与会议数据不动） =====
+  if(req.method==='GET'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    require('./updater').check().then(r=>{res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(r&&{ok:r.ok,current:r.current,latest:r.latest,hasUpdate:r.hasUpdate,notes:r.notes,released:r.released,error:r.error}));})
+      .catch(e=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
+    return;}
+  if(req.method==='POST'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再更新'}));}
+    require('./updater').apply(m=>log('update: '+m)).then(r=>{log('update done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r}));})
+      .catch(e=>{log('update fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
+    return;}
   // ===== 补充材料：用户手动上传的图片/PDF，作为本场资料参与理解与归档 =====
   if(req.method==='GET'&&p.endsWith('/assets')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
     const id=u.searchParams.get('id')||'';const name=u.searchParams.get('name')||'';

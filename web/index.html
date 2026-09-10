@@ -124,6 +124,9 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .sheet h3 button{margin-left:auto}
 .sheet .body{overflow:auto;padding:12px 14px calc(12px + env(safe-area-inset-bottom))}
 .summary{white-space:pre-wrap;font-size:14px;line-height:1.65}
+#upd{position:fixed;right:16px;bottom:16px;z-index:60;display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,.14);font-size:13px;max-width:min(92vw,420px)}
+#upd-txt{line-height:1.5}
+#upd button{flex:none}
 .bd-filters{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
 .hist .bd-filters button,.hist .bd-card button{display:inline-block;width:auto;margin:0;text-align:center}
 .bd-chip{font:11px var(--mono);padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);cursor:pointer}
@@ -313,6 +316,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
     <div style="display:flex;gap:8px;align-items:center"><input type="text" id="fix-wrong" placeholder="听成了"><span>→</span><input type="text" id="fix-right" placeholder="其实是"></div></div>
   <div class="row"><button class="btn danger" id="fix-del" data-i18n="fix_del">删掉这条</button><button class="btn" id="fix-cancel" data-i18n="cancel">取消</button><button class="btn primary" id="fix-save" data-i18n="save">保存</button></div>
 </dialog>
+<div id="upd" hidden><span id="upd-txt"></span><button class="btn sm primary" id="upd-go" type="button">更新</button><button class="btn sm" id="upd-x" type="button" aria-label="以后再说">×</button></div>
 <div id="ver" style="position:fixed;right:6px;bottom:2px;font-size:10px;color:var(--muted);opacity:.5;pointer-events:none;z-index:5">v5.3 · 09-09</div>
 <div class="sheet" id="sh-sum"><h3><span data-i18n="sh_sum">收尾总结</span> <button class="btn sm" data-close data-i18n="close">收起</button></h3><div class="body"><div class="summary" id="sum"><span class="empty">结束后会出现在这里。</span></div></div></div>
 <div class="sheet" id="sh-mode"><h3><span data-i18n="sh_mode">开会方式</span> <span style="flex:1"></span><button class="btn sm" data-close data-i18n="close">收起</button></h3><div class="body">
@@ -1849,6 +1853,44 @@ ${cur.factchecks.length?`<h2>${ui==='en'?'To verify':'待核查'} · ${cur.factc
   $('#mk-doc').onclick=()=>{if(!toggleDialog('#meeting-archive'))return;renderArchive();$('#meeting-archive').showModal();refreshArchive();};
   $('#archive-current').onclick=async()=>{const b=$('#archive-current');b.disabled=true;try{if(await archiveTo('local',true))await refreshArchive();}finally{b.disabled=running;}};
   $('#b-notes').onclick=()=>{if(!toggleDialog('#meeting-notes'))return;loadAssets();renderAnalysis();if(!cur){note(archiveEnglish()?'Start a meeting first.':'开始听会后即可记笔记。');return;}$('#personal-notes').value=cur.notes||'';$('#notes-title').textContent=archiveEnglish()?'Material':'补充材料';$('#notes-hint').textContent=archiveEnglish()?'Saved on this device as you type. Notes taken during the meeting are archived with it; the transcript stays unchanged.':'随手记重点。笔记自动保存在本机，会中笔记随会议归档；不会改写原话。';$('#meeting-notes').showModal();};
+  // ===== 有新版就在右下角提示，点一下就地更新（只换程序，凭据和会议不动）=====
+  (function updater(){
+    const bar=$('#upd'); if(!bar) return;
+    const skipKey='tht-skip-version';
+    let latest='';
+    const show=(txt,canGo)=>{ $('#upd-txt').textContent=txt; $('#upd-go').hidden=!canGo; bar.hidden=false; };
+    $('#upd-x').onclick=()=>{ try{ if(latest) localStorage.setItem(skipKey,latest); }catch(e){} bar.hidden=true; };
+    $('#upd-go').onclick=async()=>{
+      const go=$('#upd-go'), x=$('#upd-x');
+      go.disabled=true; x.disabled=true;
+      show(ui==='en'?'Updating…':'正在更新，别关页面…',true);
+      try{
+        const r=await fetch(relayBase()+'/update?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(300000)});
+        const j=await r.json();
+        if(!j.ok) throw new Error(j.error||('HTTP '+r.status));
+        show(ui==='en'?('Updated to '+j.version+'. Quit and reopen 启动.command.'):('已更新到 '+j.version+'。关掉这个页面，重新双击「启动.command」就好。'),false);
+        $('#upd-x').disabled=false;
+      }catch(e){
+        show((ui==='en'?'Update failed: ':'没更新成：')+(e.message||e),true);
+        go.disabled=false; x.disabled=false;
+      }
+    };
+    async function check(){
+      if(!macOnline) return;
+      try{
+        const r=await fetch(relayBase()+'/update?token='+encodeURIComponent(cfg.relayToken||''),{cache:'no-store',signal:AbortSignal.timeout(20000)});
+        const j=await r.json();
+        if(!j.ok||!j.hasUpdate) return;
+        latest=j.latest;
+        let skipped=''; try{ skipped=localStorage.getItem(skipKey)||''; }catch(e){}
+        if(skipped===latest) return;
+        show((ui==='en'?('New version '+j.latest+' is available. '):('有新版本 '+j.latest+'。'))+(j.notes?j.notes.slice(0,60):''),true);
+      }catch(e){}
+    }
+    setTimeout(check,8000);                 // 开页面 8 秒后悄悄查一次
+    setInterval(check,6*60*60*1000);        // 之后每 6 小时查一次
+  })();
+
   // ===== 补充材料：图片 / PDF 上传，存在 Mac 上，会中助手用 Read 打开来看 =====
   const assetMsg = m => { const e=$('#asset-msg'); if(e) e.textContent = m||''; };
   const assetUrl = (id,name) => relayBase()+'/assets?id='+encodeURIComponent(id)+'&name='+encodeURIComponent(name)+'&token='+encodeURIComponent(cfg.relayToken||'');
