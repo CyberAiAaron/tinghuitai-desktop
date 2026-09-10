@@ -73,10 +73,32 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .pane{background:var(--panel);border:1px solid var(--line);border-radius:14px;min-height:0;display:none;flex-direction:column;overflow:hidden}
 .pane.active{display:flex}
 /* 横屏 / 桌面：三栏并排。纯 CSS 判定，不依赖任何 JS 事件 */
-@media (min-width:900px), (min-width:700px) and (orientation:landscape){
+@media (min-width:1100px){
   .tabs{display:none}
   .main{grid-template-columns:1.25fr 1fr 1fr}
   .pane{display:flex}
+}
+
+/* ===== 中等宽度（横屏手机 / 小平板 700–1100px）：单栏 + 页签，别把三栏挤成面条 ===== */
+@media (max-width:1099px){
+  .hdr{flex-wrap:wrap;row-gap:6px;padding:8px 10px}
+  .hdr .brand small{display:none}
+  .hdr .spacer{display:none}
+  .hdr .btn,.hdr .seg{flex:0 0 auto}
+  .hdr .btn.primary,.hdr .btn.danger{margin-left:auto}
+  .main{padding:8px 10px}
+  .tabs button{font-size:13px;padding:10px 6px}
+  .pane .scroll{padding:10px 12px}
+}
+@media (max-width:1099px) and (orientation:landscape){
+  .hdr{position:sticky;top:0;z-index:60}
+  .ftr{position:sticky;bottom:0;background:var(--bg)}
+}
+@media (max-width:900px){
+  .ftr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  .ftr>.btn{padding:10px 6px;font-size:12px;min-height:44px;min-width:0}
+  .ftr .spacer,.ftr .fdiv{display:none}
+  #meeting-more{margin-left:0}
 }
 .pane h2{margin:0;padding:10px 12px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);flex:none}
 .pane h2 i{width:8px;height:8px;border-radius:2px;display:inline-block}
@@ -261,7 +283,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
     <div class="clock" id="clock">00:00</div>
     <span class="pill" id="status">待机</span>
     <div class="spacer"></div>
-    <button class="btn icon" id="m-update" title="检查更新">检查更新</button><button class="btn icon" id="mode-chip" title="开会方式">开会方式</button>
+    <button class="btn icon" id="mode-chip" title="开会方式">开会方式</button>
     <div class="seg" id="ui-lang" role="group" aria-label="界面语言 / UI language"><button type="button" data-ui="zh" aria-selected="true">中文</button><button type="button" data-ui="en" aria-selected="false">EN</button></div>
     <a class="btn" href="work.html" id="work-link" data-i18n="work_hub">工作台</a><button class="btn" id="b-tasks"><span data-i18n="tasks">待办</span> <span id="task-count">0</span></button><button class="btn" id="b-assistant" aria-expanded="false" aria-controls="assistant-panel">My AI</button><button class="btn icon" id="gear" aria-label="设置">⚙︎</button>
     <button class="btn primary" id="start" data-i18n="start">开始听会</button>
@@ -293,7 +315,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
     </section>
   </main>
 
-  <footer class="ftr"><button class="btn sm" id="b-resume" hidden>继续上一场</button><button class="btn sm" id="b-hist" data-i18n="b_hist">历史会议</button><button class="btn sm" id="b-notes">补充材料</button><button class="btn sm" id="mk-doc">会议档案</button><button class="btn sm" id="b-sum" data-i18n="b_sum">本场纪要</button><button class="btn sm" type="button" id="meeting-more" aria-haspopup="dialog" aria-controls="meeting-more-dialog"><span id="meeting-more-label">更多</span></button><button class="btn sm" id="recording-recovery">录音备份 / Audio backups</button><span style="flex:1"></span><button class="btn sm" type="button" id="b-feedback" aria-haspopup="dialog">反馈 / 联系开发者</button><span id="recording-safety-status" role="status" style="flex-basis:100%;grid-column:1/-1;font-size:12px"></span></footer>
+  <footer class="ftr"><button class="btn sm" id="b-resume" hidden>继续上一场</button><button class="btn sm" id="b-hist" data-i18n="b_hist">历史会议</button><button class="btn sm" id="b-notes">补充材料</button><button class="btn sm" id="mk-doc">会议档案</button><button class="btn sm" id="b-sum" data-i18n="b_sum">本场纪要</button><button class="btn sm" type="button" id="meeting-more" aria-haspopup="dialog" aria-controls="meeting-more-dialog"><span id="meeting-more-label">更多</span></button><button class="btn sm" id="recording-recovery">录音备份 / Audio backups</button><span style="flex:1"></span><button class="btn sm" type="button" id="m-update" title="检查更新">检查更新</button><button class="btn sm" type="button" id="b-feedback" aria-haspopup="dialog">反馈 / 联系开发者</button><span id="recording-safety-status" role="status" style="flex-basis:100%;grid-column:1/-1;font-size:12px"></span></footer>
 </div>
 
 <div class="scrim" id="scrim" hidden></div>
