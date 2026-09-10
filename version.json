@@ -1,9 +1,9 @@
 {
-  "version": "0.4.0",
+  "version": "0.4.1",
   "released": "2026-09-10",
-  "zip": "tinghuitai-desktop-v0.4.0.zip",
-  "sha256": "2f015b21d63ffcf5d3c1756f8f93441ca4b66f91c8ea41415e87e1597710489b",
-  "size": 259256,
-  "notes": "设置页重做（更短、中英双语）；新增本机转写选项；更新可回滚",
+  "zip": "tinghuitai-desktop-v0.4.1.zip",
+  "sha256": "4c4e10360bff6e3631293ffec58adfcb5c73fbfbc975ab03a21ad16435291219",
+  "size": 259587,
+  "notes": "本机转写起不来时自动改用火山，不会整场没字幕",
   "min_macos": 13
 }
