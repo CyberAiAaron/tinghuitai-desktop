@@ -1,9 +1,9 @@
 {
-  "version": "0.3.2",
+  "version": "0.3.4",
   "released": "2026-09-10",
-  "zip": "tinghuitai-desktop-v0.3.2.zip",
-  "sha256": "65417dab12b905ead35f83fb175f9c923df2fd4231c29e85992af799823eec1b",
-  "size": 216705,
-  "notes": "应用内一键更新；免 Key 接入向导；录音管理看板；补充材料与图片理解；新图标",
+  "zip": "tinghuitai-desktop-v0.3.4.zip",
+  "sha256": "b66c9551b26f76e23f6396b2d95e05307862173dee4ca9230808abd4063d9035",
+  "size": 221277,
+  "notes": "检查更新挪到顶栏；要点和待办新增「让它先做」，助手直接出可执行方案",
   "min_macos": 13
 }

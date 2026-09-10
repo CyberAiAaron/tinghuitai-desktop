@@ -82,4 +82,13 @@ async function apply(log=()=>{}){
   log('更新完成');
   return {updated:true,version:man.version,from:info.current};
 }
-module.exports={check,apply,localVersion};
+async function fetchChangelog(){
+  for(const src of SOURCES){
+    try{
+      const j=JSON.parse(String(await fetchFile(src,'CHANGELOG.json')));
+      if(j&&Array.isArray(j.items)) return j.items;
+    }catch(e){}
+  }
+  return [];
+}
+module.exports={check,apply,localVersion,fetchChangelog};

@@ -441,7 +441,7 @@ const STATIC_MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/j
 // 页面本身也曾只能从 funnel 拿——tailscaled 一死，中转活着也打不开页面；这条把静态资源挪进中转自身，
 // 让 Mac 本机全链路（页面+WS）不碰隧道，funnel 只服务手机端。
 function serveStatic(req, res, p) {
-  let rel;try{rel=decodeURIComponent(p.replace(/^\/tinghuitai\/?/, ''))||'index.html';}catch{res.writeHead(400);return res.end('invalid path');}
+  let rel;try{rel=decodeURIComponent(p.replace(/^\/tinghuitai\/?/, '')).split('?')[0]||'index.html';}catch{res.writeHead(400);return res.end('invalid path');}
   const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js']);
   if(!allowed.has(rel)){res.writeHead(404);return res.end('not found');}
   const full = path.join(STATIC_DIR, rel);
@@ -484,6 +484,14 @@ const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
   if(req.method==='GET'&&p.endsWith('/meeting-result')){if(!authed){res.writeHead(401);return res.end('unauthorized');}const rid=u.searchParams.get('id');let result=meetingPipeline.result(rid);if(!result){const pend=buildExportState().sessions.find(s=>String(s.id)===String(rid));if(pend)result={...pend,source:pend.source||'',archiveNote:'尚未经过会后整理，显示原始记录'};}if(result){const t=readTitles()[String(rid)]||{};if(!result.topicTitle&&t.topicTitle)result.topicTitle=t.topicTitle;if(!result.participants)result.participants=t.participants||[];}res.writeHead(result?200:404,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(result||{}));}
+  // 更新日志：先读本机的，读不到再去公开仓库拿
+  if(req.method==='GET'&&p.endsWith('/changelog')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    const local=path.join(__dirname,'..','CHANGELOG.json');
+    const send=j=>{res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
+    try{ const j=JSON.parse(fs.readFileSync(local,'utf8')); if(j&&Array.isArray(j.items)) return send({ok:true,items:j.items}); }catch(e){}
+    require('./updater').fetchChangelog().then(items=>send({ok:!!(items&&items.length),items:items||[]}))
+      .catch(e=>send({ok:false,items:[],error:String(e.message||e)}));
+    return;}
   // ===== 应用更新：查新版 / 一键更新（只换程序文件，凭据与会议数据不动） =====
   if(req.method==='GET'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
     require('./updater').check().then(r=>{res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(r&&{ok:r.ok,current:r.current,latest:r.latest,hasUpdate:r.hasUpdate,notes:r.notes,released:r.released,error:r.error}));})
