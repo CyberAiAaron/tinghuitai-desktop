@@ -1,9 +1,9 @@
 {
-  "version": "0.3.3",
+  "version": "0.3.4",
   "released": "2026-09-10",
-  "zip": "tinghuitai-desktop-v0.3.3.zip",
-  "sha256": "dc36a3249f517e5616c74f88cad0f87e3518071ffa90e509cdf0b34daba746cf",
-  "size": 219028,
-  "notes": "新增常驻「检查更新」入口与更新日志；修好图标不刷新",
+  "zip": "tinghuitai-desktop-v0.3.4.zip",
+  "sha256": "b66c9551b26f76e23f6396b2d95e05307862173dee4ca9230808abd4063d9035",
+  "size": 221277,
+  "notes": "检查更新挪到顶栏；要点和待办新增「让它先做」，助手直接出可执行方案",
   "min_macos": 13
 }
