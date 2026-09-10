@@ -1,5 +1,5 @@
 // Cache only the application shell, never sessions, credentials or API responses.
-const CACHE='tinghuitai-desktop-v65';
+const CACHE='tinghuitai-desktop-v66';
 const ASSETS=['./','./index.html','./recording-safety.js?v=1','./work.html','./work.js?v=6','./work-style.css?v=5','./theme.css?v=2','./manifest.json','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('tinghuitai-desktop-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

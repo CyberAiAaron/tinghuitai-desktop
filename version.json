@@ -1,9 +1,9 @@
 {
-  "version": "0.3.5",
+  "version": "0.3.6",
   "released": "2026-09-10",
-  "zip": "tinghuitai-desktop-v0.3.5.zip",
-  "sha256": "23ef2c9a1b415df6f639187389ad2d4c2bfd44fba8f13c9135a31bd9429eeedf",
-  "size": 221700,
-  "notes": "窄屏改页签布局；检查更新移到右下角",
+  "zip": "tinghuitai-desktop-v0.3.6.zip",
+  "sha256": "07ec7acb2c4ce546ff6065ddd61058b7f491a2cb6c99adae568aeafef6f5c7f2",
+  "size": 221856,
+  "notes": "模型名字显示修正；首次设置页编号修正",
   "min_macos": 13
 }

@@ -741,7 +741,8 @@ dialog h2{margin:0 0 12px;font-size:16px}
   const effectiveBrief=(s=cur)=>[briefText,assistantContext(s)].filter(Boolean).join('\n');
   function assistantIdentity(config,online){
     if(!config.key)return online?'My DeepSeek':'My AI';
-    if(config.provider==='anthropic')return 'My Claude';
+    if(config.provider==='anthropic'||config.provider==='claude')return 'My Claude';
+    if(config.provider==='codex')return 'My GPT';
     if(config.provider==='deepseek')return 'My DeepSeek';
     const model=String(config.model||'').toLowerCase();
     if(model.includes('claude'))return 'My Claude';
@@ -752,7 +753,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
     return 'My AI';
   }
   let serverModelIdentity='My AI';
-  fetch('/setup').then(r=>r.ok?r.json():null).then(c=>{if(c){serverModelIdentity=assistantIdentity({key:'server-held',model:c.model||'',provider:''},true);updateAssistantIdentity();}}).catch(()=>{});
+  fetch('/setup').then(r=>r.ok?r.json():null).then(c=>{if(c){serverModelIdentity=assistantIdentity({key:'server-held',model:c.model||'',provider:c.provider||''},true);updateAssistantIdentity();}}).catch(()=>{});
   function updateAssistantIdentity(){const name=serverModelIdentity;$('#b-assistant').textContent=name;$('#assistant-name').textContent=name;$('#assistant-panel').setAttribute('aria-label',name);}
   const assistantPending=new Map();let assistantBusy=false,assistantUndo=null,assistantLastRule='',assistantTrigger=null;
   const A=window.LiveMateCore;
