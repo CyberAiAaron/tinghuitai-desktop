@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.aaron.tinghuitai.localasr</string>
+<key>CFBundleName</key><string>听会台转写</string>
+<key>CFBundleDisplayName</key><string>听会台转写</string>
+<key>CFBundleExecutable</key><string>transcriber</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>LSBackgroundOnly</key><true/>
+<key>NSSpeechRecognitionUsageDescription</key><string>听会台用它把会议语音在本机转成文字，不上传。</string>
+<key>NSMicrophoneUsageDescription</key><string>听会台需要麦克风来听会议。</string>
+</dict></plist>

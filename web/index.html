@@ -444,6 +444,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
   <div style="display:flex;gap:10px;align-items:center;margin:14px 0 0;flex-wrap:wrap">
     <button class="btn primary" id="upd-do" type="button" hidden>立即更新</button>
     <button class="btn sm" id="upd-recheck" type="button">重新检查</button>
+    <button class="btn sm" id="upd-back" type="button" hidden>回到上一版</button>
     <span class="msg" id="upd-state"></span>
   </div>
   <details class="more" style="margin-top:14px"><summary>更新日志</summary><div id="upd-log" style="font-size:13px;line-height:1.7;color:var(--muted)"></div></details>
@@ -825,7 +826,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
       const first = sigHl === '';
       sigHl = nHl;
       // 卡片结构与点击改/删（data-fix）保持不变；分组只是在外面套一层小标题和 1a/1b 编号
-      const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:(x.at?hms(x.at).slice(0,5):'')}</span><div>${esc(tt(x.text))}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让助手先做出方案">${ui==='en'?'Draft it':'让它先做'}</button></div></div>`;
+      const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:(x.at?hms(x.at).slice(0,5):'')}</span><div>${esc(tt(x.text))}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}${x.k==='todo'?`<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button>`:''}</div></div>`;
       const letters = 'abcdefghijklmnopqrstuvwxyz';
       keepScroll(el.hl, () => {
         el.hl.innerHTML = !items.length ? `<div class="empty">${T('e_hl')||'约 40 秒分析一次。冲突用红条；待办在右上角单独查看。'}</div>`
@@ -1694,7 +1695,7 @@ highlights：要点/决定，一句话一条（若与「项目核心记忆」里
   }
   function renderMeetingTasks(){
     const tasks=cur?.todos||[];$('#task-count').textContent=tasks.filter(t=>!t.done).length;
-    $('#meeting-tasks').innerHTML=tasks.length?tasks.map((t,i)=>`<div class="meeting-task"><input type="checkbox" aria-label="${esc(tt(t.text))}" data-task-index="${i}" ${t.done?'checked':''}><div><div class="${t.done?'completed':''}">${esc(tt(t.text))}</div><small>${esc(tt(t.owner||''))}</small>${t.how?`<p>${esc(tt(t.how))}</p>`:''}<button class="ask-claude" type="button" data-ask="${esc(t.text)}" title="让助手先做出方案">${ui==='en'?'Draft it':'让它先做'}</button><button class="btn sm" data-fix="todo" data-key="${esc(t.text)}">${ui==='en'?'Edit':'编辑'}</button></div></div>`).join(''):`<p class="empty">${ui==='en'?'No action items yet.':'还没有待办。'}</p>`;
+    $('#meeting-tasks').innerHTML=tasks.length?tasks.map((t,i)=>`<div class="meeting-task"><input type="checkbox" aria-label="${esc(tt(t.text))}" data-task-index="${i}" ${t.done?'checked':''}><div><div class="${t.done?'completed':''}">${esc(tt(t.text))}</div><small>${esc(tt(t.owner||''))}</small>${t.how?`<p>${esc(tt(t.how))}</p>`:''}<button class="ask-claude" type="button" data-ask="${esc(t.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button><button class="btn sm" data-fix="todo" data-key="${esc(t.text)}">${ui==='en'?'Edit':'编辑'}</button></div></div>`).join(''):`<p class="empty">${ui==='en'?'No action items yet.':'还没有待办。'}</p>`;
   }
   async function saveToHub(){if(!cur?.transcript.length){note(ui==='en'?'No meeting content yet.':'本场还没有内容。',true);return;}try{await hubAPI('session',{session:cur});note(ui==='en'?'Saved. Open Workspace to review tasks.':'已收进工作台，可在那里确认待办和关联项目。');$('#task-sync-status').textContent=ui==='en'?'Saved to workspace':'已收进工作台';}catch(e){note(e.message,true);$('#task-sync-status').textContent=e.message;}}
   $('#save-hub').onclick=saveToHub;$('#tasks-to-hub').onclick=saveToHub;
@@ -1901,7 +1902,7 @@ ${cur.factchecks.length?`<h2>${ui==='en'?'To verify':'待核查'} · ${cur.factc
   $('#mk-doc').onclick=()=>{if(!toggleDialog('#meeting-archive'))return;renderArchive();$('#meeting-archive').showModal();refreshArchive();};
   $('#archive-current').onclick=async()=>{const b=$('#archive-current');b.disabled=true;try{if(await archiveTo('local',true))await refreshArchive();}finally{b.disabled=running;}};
   $('#b-notes').onclick=()=>{if(!toggleDialog('#meeting-notes'))return;loadAssets();renderAnalysis();if(!cur){note(archiveEnglish()?'Start a meeting first.':'开始听会后即可记笔记。');return;}$('#personal-notes').value=cur.notes||'';$('#notes-title').textContent=archiveEnglish()?'Material':'补充材料';$('#notes-hint').textContent=archiveEnglish()?'Saved on this device as you type. Notes taken during the meeting are archived with it; the transcript stays unchanged.':'随手记重点。笔记自动保存在本机，会中笔记随会议归档；不会改写原话。';$('#meeting-notes').showModal();};
-  // ===== 「让它先做」：把这条要点/待办交给助手，先出一份可执行的方案，你只要点确认 =====
+  // ===== 「给我的 Agent 先做做看」：只挂在待办上，交给助手先出一版可执行方案，你只要点确认 =====
   let draftBusy=false;
   async function draftFor(text){
     if(!cur){ note(ui==='en'?'Start a meeting first.':'先开始一场会。',true); return; }
@@ -2018,10 +2019,25 @@ ${cur.factchecks.length?`<h2>${ui==='en'?'To verify':'待核查'} · ${cur.factc
         }else{
           body.innerHTML='<div>'+(ui==='en'?'You are on the latest version.':'已经是最新版本了。')+'</div>';
         }
+        const back=$('#upd-back');
+        if(info.prev){ back.hidden=false; back.textContent=(ui==='en'?'Roll back to ':'回到 ')+info.prev; }
+        else back.hidden=true;
       }catch(e){ now.textContent=(ui==='en'?'Check failed: ':'没查成：')+(e.message||e); }
     }
     $('#m-update').onclick=()=>{ closeSheets(); $('#meeting-more-dialog').close(); $('#upd-dlg').showModal(); load(); renderLog(); };
     $('#upd-recheck').onclick=load;
+    $('#upd-back').onclick=async()=>{
+      const back=$('#upd-back'), st=$('#upd-state');
+      if(!confirm(ui==='en'?'Roll back to the previous version? Your settings and meetings are not touched.':'回到上一版？你的凭据和会议记录不会动。')) return;
+      back.disabled=true; st.textContent=ui==='en'?'Rolling back…':'正在回退…';
+      try{
+        const r=await fetch(relayBase()+'/update-rollback?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(300000)});
+        const j=await r.json();
+        if(!j.ok) throw new Error(j.error||('HTTP '+r.status));
+        st.textContent=(ui==='en'?('Back on '+j.version+'. Quit and reopen 启动.command.'):('已回到 '+j.version+'。关掉页面，重新双击「启动.command」就好。'));
+        back.hidden=true;
+      }catch(e){ st.textContent=(ui==='en'?'Failed: ':'没回成：')+(e.message||e); back.disabled=false; }
+    };
     $('#upd-do').onclick=async()=>{
       const doBtn=$('#upd-do'), st=$('#upd-state');
       doBtn.disabled=true; st.textContent=ui==='en'?'Updating, keep this page open…':'正在更新，别关这个页面…';

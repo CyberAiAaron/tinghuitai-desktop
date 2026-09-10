@@ -9,7 +9,29 @@ const SOURCES=REPOS.flatMap(r=>[
   {kind:'raw', base:`https://raw.githubusercontent.com/${r}/main/`},
   {kind:'api', base:`https://api.github.com/repos/${r}/contents/`},
 ]);
-const KEEP=new Set(['preset.json','node_modules','.git','version-state.json']);
+const KEEP=new Set(['preset.json','node_modules','.git','version-state.json','.prev']);
+// 回滚：更新前把即将被覆盖的文件整份留一份在 .prev，用户点「回到上一版」就搬回来
+const PREV=path.join(ROOT,'.prev');
+function snapshot(fromVersion,names){
+  fs.rmSync(PREV,{recursive:true,force:true}); fs.mkdirSync(PREV,{recursive:true});
+  for(const name of names){ const from=path.join(ROOT,name); if(fs.existsSync(from)) fs.cpSync(from,path.join(PREV,name),{recursive:true}); }
+  fs.writeFileSync(path.join(PREV,'.version'),String(fromVersion||''));
+}
+function prevVersion(){ try{ return fs.readFileSync(path.join(PREV,'.version'),'utf8').trim(); }catch(e){ return ''; } }
+async function rollback(log=()=>{}){
+  const v=prevVersion(); if(!v) throw new Error('没有可回退的版本');
+  log('正在回到 '+v);
+  for(const name of fs.readdirSync(PREV)){
+    if(name==='.version') continue;
+    const to=path.join(ROOT,name);
+    fs.rmSync(to,{recursive:true,force:true});
+    fs.cpSync(path.join(PREV,name),to,{recursive:true});
+    if(name.endsWith('.command')){try{fs.chmodSync(to,0o755);}catch(e){}}
+  }
+  fs.rmSync(PREV,{recursive:true,force:true});
+  log('已回到 '+v+'，请重启听会台');
+  return {version:v};
+}
 const localVersion=()=>{try{return JSON.parse(fs.readFileSync(path.join(ROOT,'package.json'),'utf8')).version||'0.0.0';}catch(e){return '0.0.0';}};
 const cmp=(a,b)=>{const p=s=>String(s).split('.').map(n=>parseInt(n,10)||0);const x=p(a),y=p(b);for(let i=0;i<3;i++){if((x[i]||0)>(y[i]||0))return 1;if((x[i]||0)<(y[i]||0))return -1;}return 0;};
 
@@ -68,6 +90,9 @@ async function apply(log=()=>{}){
   await new Promise((res,rej)=>execFile('/usr/bin/unzip',['-q','-o',zipPath,'-d',tmp],e=>e?rej(new Error('解压失败')):res()));
   const src=fs.existsSync(path.join(tmp,'app'))?tmp:path.join(tmp,fs.readdirSync(tmp).find(n=>fs.existsSync(path.join(tmp,n,'app')))||'');
   if(!fs.existsSync(path.join(src,'app'))) throw new Error('包结构不对，未更新');
+  const names=fs.readdirSync(src).filter(n=>!KEEP.has(n)&&n!=='p.zip');
+  log('备份当前版本，万一不对可以回退');
+  try{ snapshot(info.current,names); }catch(e){ log('备份没做成，继续更新：'+e.message); }
   log('替换程序文件');
   for(const name of fs.readdirSync(src)){
     if(KEEP.has(name)||name==='p.zip') continue;
@@ -91,4 +116,4 @@ async function fetchChangelog(){
   }
   return [];
 }
-module.exports={check,apply,localVersion,fetchChangelog};
+module.exports={check,apply,localVersion,fetchChangelog,rollback,prevVersion};

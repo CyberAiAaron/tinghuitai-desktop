@@ -148,6 +148,31 @@ class Session {
   removeClient(ws) { this.clients.delete(ws); }
   broadcast(o) { const s = JSON.stringify(o); for (const c of this.clients) { try { if (c.readyState === WebSocket.OPEN) c.send(s); } catch (e) {} } }
   snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names } }; }
+  // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
+  connectAsr() {
+    if ((this.env.ASR_PROVIDER || 'volc') !== 'mac') return this.connectVolc();
+    const {MacAsr, available} = require('./mac-asr');
+    if (!available()) { this.broadcast({type:'error',message:'本机转写不可用，这场改用火山。'}); return this.connectVolc(); }
+    this.mac = new MacAsr(this.lang || 'zh', r => this.onMacResult(r), m => log(m));
+    this.mac.start();
+    this.broadcast({type:'note',message:'这场用本机转写（离线，无说话人区分）'});
+  }
+  onMacResult(r) {
+    if (this.finalized) return;
+    if (r.type === 'fatal') { log('mac-asr fatal: ' + r.text); this.broadcast({type:'error',message:r.text}); return; }
+    if (r.type === 'note') { log('mac-asr note: ' + r.text); return; }
+    const text = (r.text || '').trim();
+    if (!text) return;
+    if (r.type === 'final') {
+      if (this.isDuplicateFinal({}, text)) return;
+      this.broadcast({type:'final', text});
+      const at = Math.round((Date.now() - this.startTs) / 1000);
+      this.transcript.push({at, t: fmtClock(at), speaker: '', text});
+      this.charsSinceTriage += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
+    } else {
+      this.broadcast({type:'partial', text});
+    }
+  }
   connectVolc() {
     if (!this.hasKey) { this.broadcast({ type: 'error', message: '中转已就绪，等火山 key' }); return; }
     if (this.volcWs && (this.volcWs.readyState === WebSocket.OPEN || this.volcWs.readyState === WebSocket.CONNECTING)) return; // 续场：火山连接还在就复用
@@ -195,7 +220,7 @@ class Session {
     const cfg = { user: { uid: 'tinghuitai' }, audio, request: req };
     this.volcWs.send(buildFrame(FULL_CLIENT_REQUEST, POS_SEQ, cfg, this.seq++, true)); log('volc config sent ' + this.id);
   }
-  sendAudio(pcm16k) { if(this.finalized)return;this.lastAudioTs=Date.now(); if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) { this.audioSaveError='Mac 录音写入失败，请导出浏览器录音备份。';log('audio write fail ' + e.message);this.broadcast({type:'error',message:'Mac 录音写入失败，请导出浏览器录音备份。'}); } } if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN && !this.draining) this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, pcm16k, this.seq++, false)); else {this.queuedAudio.push(Buffer.from(pcm16k));this.queuedAudioBytes+=pcm16k.length;while(this.queuedAudioBytes>16000*2*QUEUE_MAX_SEC){const dropped=this.queuedAudio.shift().length;this.queuedAudioBytes-=dropped;this.transcriptionGapSeconds+=dropped/32000;}if(this.transcriptionGapSeconds>0&&!this.gapWarned){this.gapWarned=true;this.broadcast({type:'error',message:this.audioSaveError?'实时转写存在缺口，Mac录音也未完整保存；请导出浏览器录音备份补转。':'实时转写存在缺口，原始录音仍保存；会后将尝试本地补转。'});}} }
+  sendAudio(pcm16k) { if(this.finalized)return;this.lastAudioTs=Date.now(); if(this.mac){ if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) {} } this.mac.write(pcm16k); return; } if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) { this.audioSaveError='Mac 录音写入失败，请导出浏览器录音备份。';log('audio write fail ' + e.message);this.broadcast({type:'error',message:'Mac 录音写入失败，请导出浏览器录音备份。'}); } } if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN && !this.draining) this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, pcm16k, this.seq++, false)); else {this.queuedAudio.push(Buffer.from(pcm16k));this.queuedAudioBytes+=pcm16k.length;while(this.queuedAudioBytes>16000*2*QUEUE_MAX_SEC){const dropped=this.queuedAudio.shift().length;this.queuedAudioBytes-=dropped;this.transcriptionGapSeconds+=dropped/32000;}if(this.transcriptionGapSeconds>0&&!this.gapWarned){this.gapWarned=true;this.broadcast({type:'error',message:this.audioSaveError?'实时转写存在缺口，Mac录音也未完整保存；请导出浏览器录音备份补转。':'实时转写存在缺口，原始录音仍保存；会后将尝试本地补转。'});}} }
   onVolc(d) {
     let p; try { p = parseFrame(d); } catch (e) { return; }
     if (p.msgType === ERROR_RESPONSE) { log('volc ERROR ' + p.errorCode); this.broadcast({ type: 'error', message: `火山错误 ${p.errorCode}` }); this.volcFailStreak = (this.volcFailStreak || 0) + 1; this.dropVolc('error ' + p.errorCode); return; }
@@ -304,6 +329,11 @@ class Session {
     if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.closeSync(this.audioFd); } catch (e) {} this.audioFd = null; }
   }
   async finalize(reason) {
+    if (this.finalized || this.finalizing) return;
+    this.finalizing = true;
+    // 本机转写的最后一句是在 endAudio 之后才回来的，必须在 finalized 置位「之前」等它，
+    // 否则 onMacResult 会被 finalized 挡掉，整场最后一句话就没了。
+    if (this.mac) { try { await this.mac.drain(); } catch (e) {} this.mac = null; }
     if (this.finalized) return; this.finalized = true;
     clearInterval(this.triageTimer); clearInterval(this.endTimer); clearInterval(this.stallTimer); if (this.graceTimer) clearTimeout(this.graceTimer);
     if (this.draining) { clearInterval(this.draining); this.draining = null; }
@@ -494,13 +524,19 @@ const server = http.createServer(async (req, res) => {
     return;}
   // ===== 应用更新：查新版 / 一键更新（只换程序文件，凭据与会议数据不动） =====
   if(req.method==='GET'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
-    require('./updater').check().then(r=>{res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(r&&{ok:r.ok,current:r.current,latest:r.latest,hasUpdate:r.hasUpdate,notes:r.notes,released:r.released,error:r.error}));})
+    require('./updater').check().then(r=>{res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(r&&{ok:r.ok,current:r.current,latest:r.latest,hasUpdate:r.hasUpdate,notes:r.notes,released:r.released,error:r.error,prev:require('./updater').prevVersion()}));})
       .catch(e=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     return;}
   if(req.method==='POST'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
     if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再更新'}));}
     require('./updater').apply(m=>log('update: '+m)).then(r=>{log('update done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r}));})
       .catch(e=>{log('update fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
+    return;}
+  // 回到上一版：更新前留的那份原样搬回来
+  if(req.method==='POST'&&p.endsWith('/update-rollback')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再回退'}));}
+    require('./updater').rollback(m=>log('rollback: '+m)).then(r=>{log('rollback done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r}));})
+      .catch(e=>{log('rollback fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     return;}
   // ===== 补充材料：用户手动上传的图片/PDF，作为本场资料参与理解与归档 =====
   if(req.method==='GET'&&p.endsWith('/assets')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
@@ -637,9 +673,9 @@ wss.on('connection', (ws, req) => {
           session.startMsg.hotwords = newHotwords;
           const newLang = (msg.lang === 'en' || msg.lang === 'zh') ? msg.lang : '';
           if (newLang !== session.lang || hotwordsChanged) { session.lang = newLang; if (session.volcWs) { try { session.volcWs.close(); } catch (e) {} session.volcWs = null; session.seq = 1; } }   // 热词变了也要重连火山，sendConfig() 才会带上新热词；seq 必须归 1——火山每条新连接自己的序号从 1 计，沿用旧计数会被拒（2026-09-04 实测 45000000 seq mismatch）
-          session.addClient(ws); session.connectVolc(); log('续场 ' + sid);
+          session.addClient(ws); session.connectAsr(); log('续场 ' + sid);
         }
-        else { session = new Session(sid, msg, env); session.addClient(ws); session.connectVolc(); }
+        else { session = new Session(sid, msg, env); session.addClient(ws); session.connectAsr(); }
         session.applyTranscriptEdits(msg.transcriptEdits);
         ws.__session = session;
         ws.send(JSON.stringify(session.snapshot()));

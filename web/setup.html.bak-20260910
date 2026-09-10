@@ -1,0 +1,35 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>听会台 · 首次设置</title><script src="bootstrap.js"></script><style>body{font:16px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#f5f5f7;color:#1d1d1f;margin:0}main{max-width:560px;margin:48px auto;background:white;padding:32px;border-radius:24px}h1{margin:0 0 12px}p{line-height:1.65;color:#606068}label{display:block;margin:20px 0 8px}input{box-sizing:border-box;width:100%;padding:12px;border:1px solid #d2d2d7;border-radius:10px;font:inherit}button,.button{display:inline-block;margin:24px 8px 0 0;padding:12px 18px;border:0;border-radius:12px;background:#c8102e;color:white;font:inherit;cursor:pointer;text-decoration:none}a{color:#b4102e}details{margin-top:24px}#message{white-space:pre-line}button:disabled{opacity:.55;cursor:wait}button#test,.button{background:#f0f0f2;color:#1d1d1f}input:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid #2877d4;outline-offset:3px}h2{margin-top:32px;font-size:21px}small{color:#73737a}@media(max-width:640px){main{margin:12px;padding:24px}}.pick{border:1px solid #e5e5e8;border-radius:14px;padding:14px 16px;margin:0 0 10px;background:#fff}
+.pick-t{font-weight:650;font-size:15px;display:flex;align-items:center;gap:8px}
+.pick-d{color:#76767c;font-size:13px;line-height:1.6;margin:6px 0 0}
+.pick-a{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}
+.pick-m{font-size:13px;margin:8px 0 0;line-height:1.6}
+.pick-m.ok{color:#2f7d4f}.pick-m.bad{color:#b3261e}
+.tag{font:11px ui-monospace,Menlo,monospace;padding:2px 8px;border-radius:999px;border:1px solid #e5e5e8;color:#76767c;font-weight:400}
+.tag.ok{color:#2f7d4f;border-color:#2f7d4f}
+.guide{margin:8px 0 0;padding-left:20px;font-size:13px;line-height:1.9;color:#3a3a3f}
+.guide a{color:#c8102e}
+</style></head><body><main><h1>准备好，就能开始听会</h1><p>准备两项：火山语音应用凭证，以及你自己的大模型 API。直接在下面填写，不用编辑配置文件。会议保存在这台 Mac；语音会发给火山，文字会发给你配置的模型服务。</p><form id="setup-form"><h2>1. 语音转写</h2><p><a href="https://console.volcengine.com/speech/app" target="_blank" rel="noopener">打开火山语音控制台 ↗</a><br><small>开通大模型流式语音识别后，在应用详情里复制下方两项。这里填语音应用的凭证，不是火山方舟模型 Key，也不是通用云账号 AK/SK。</small></p><p><small>火山官方列出流式语音识别 <strong>20 小时免费试用额度</strong>；是否可领取、有效期及适用服务以你的控制台为准，用完后按供应商计费。<a href="https://www.volcengine.com/product/ark" target="_blank" rel="noopener">查看官方额度 ↗</a></small></p><label for="app">App Key / APP ID（按语音控制台）</label><input id="app" name="VOLC_APP_KEY" type="password" autocomplete="off"><label for="access">Access Key / Access Token（语音应用）</label><input id="access" name="VOLC_ACCESS_KEY" type="password" autocomplete="off"><section class="step" id="ai-step">
+  <h2>2. 谁来帮你总结</h2>
+  <p class="hint">三条路，挑一条就行。推荐第一条：如果你电脑上已经装了 Codex 或 Claude，直接用它，不用申请、不用付钱。</p>
+  <div class="pick" id="pick-cli">
+    <div class="pick-t">① 用我电脑上已经装好的 AI<span class="tag" id="cli-tag">检测中…</span></div>
+    <div class="pick-d">Codex 用你的 ChatGPT 账号，Claude Code 用你的 Claude 订阅。都不需要另外申请 Key，也不额外花钱。</div>
+    <div class="pick-a" id="cli-actions"></div>
+    <div class="pick-m" id="cli-msg"></div>
+  </div>
+  <div class="pick" id="pick-key">
+    <div class="pick-t">② 用 DeepSeek（没装上面那些就选这条）</div>
+    <div class="pick-d">一次性设置，大约五分钟，之后就不用管了。按顺序做这三步：</div>
+    <ol class="guide">
+      <li>打开 <a href="https://platform.deepseek.com/sign_up" target="_blank" rel="noopener">DeepSeek 注册页</a>，用手机号注册。</li>
+      <li>在 <a href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener">充值页</a> 充 10 元，够用很久。</li>
+      <li>在 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">API Keys 页</a> 点「创建」，把那串 sk- 开头的字复制下来，粘到下面。</li>
+    </ol>
+    <div id="key-fields"></div>
+  </div>
+  <div class="pick" id="pick-company">
+    <div class="pick-t">③ 公司给了我接口</div>
+    <div class="pick-d">公司自建网关或别的服务商，把地址、模型名和 Key 填进上面②的三个框即可。</div>
+  </div>
+</section>
+<h2>3. 填模型 Key（上面选了 ② 或 ③ 才要填）</h2><p><a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">创建 DeepSeek API Key ↗</a><br><small>已有模型 API 就用自己的：默认 DeepSeek 只需填 Key；公司或其他 OpenAI 兼容接口，再展开下面的地址和模型名称。需要可用 API 额度。原生 Claude API 暂不支持；聊天订阅不能直接填在这里。</small></p><label for="model-key">模型 API Key</label><input id="model-key" name="DEEPSEEK_API_KEY" type="password" autocomplete="off"><details><summary>使用自己的其他模型 / 高级设置</summary><label for="base">接口地址</label><input id="base" name="LLM_BASE_URL" type="url"><label for="model">模型名称</label><input id="model" name="LLM_MODEL"><label for="resource">火山 Resource ID</label><input id="resource" name="VOLC_RESOURCE_ID"></details><p>已配置的密钥不会回显；留空保留原值。只有你新填写的内容会在本机保存。</p><button type="submit">保存设置</button><button type="button" id="test">保存并测试模型</button><a class="button" href="index.html">进入听会台</a></form><p id="message" role="status"></p><p><small>首次使用先试录 30 秒：确认自己和对方都有字幕，再结束并查看会议档案。“保存并测试模型”会发送一个短请求，可能产生少量 API 费用。核查结果是模型初判，未经联网证据验证。</small></p></main><script src="setup.js"></script></body></html>
