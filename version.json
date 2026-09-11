@@ -1,9 +1,9 @@
 {
-  "version": "0.5.1",
+  "version": "0.5.2",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.1.zip",
-  "sha256": "06d84fe792fe1d10c85299285236a27c805e1b805d56e9259b3def0b0809426f",
-  "size": 295398,
-  "notes": "工作台和设置页改为另开窗口，不再打断正在进行的会议",
+  "zip": "tinghuitai-desktop-v0.5.2.zip",
+  "sha256": "ceb45c1268896b943d82fc1711edb39eddb02684817afd954205a4b66030c85e",
+  "size": 295628,
+  "notes": "记忆副本默认写在自己的数据目录，路径可在设置里改",
   "min_macos": 13
 }
