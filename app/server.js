@@ -46,10 +46,12 @@ const INDEX_HTML = path.join(STATIC_DIR,'index.html');
 const CONTEXT_MD = path.join(DATA,'context.md');
 // 记忆投影写到哪：默认 Aaron 的项目记忆区（Cowork 的 Chansey 空间），目录不存在就退回本机数据目录。
 const MEMORY_PROJECTION_DIR = (() => {
-  const envDir = process.env.THT_MEMORY_PROJECTION_DIR;
-  if (envDir) return envDir;
-  const home = path.join(require('os').homedir(), 'This is my Chansey', '.memory');
-  try { if (fs.existsSync(home) && fs.statSync(home).isDirectory()) return home; } catch (e) {}
+  // 默认写在自己的数据目录里。想让它同时出现在别的地方（例如某个 AI 助手的项目记忆目录），
+  // 自己设 THT_MEMORY_PROJECTION_DIR 或在设置里填，不在代码里写死任何人的私人路径。
+  const envDir = (process.env.THT_MEMORY_PROJECTION_DIR || '').trim();
+  if (envDir) { try { const abs = path.resolve(envDir); if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return abs; } catch (e) {} }
+  try { const cfg = (settings.load().MEMORY_PROJECTION_DIR || '').trim();
+    if (cfg) { const abs = path.resolve(cfg); if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return abs; } } catch (e) {}
   return path.join(DATA, 'memory');
 })();
 const PENDING_DIR = path.join(DATA,'pending');
