@@ -1,10 +1,10 @@
 {
-  "version": "0.5.3",
+  "version": "0.5.4",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.3.zip",
-  "sha256": "2037cf14fb7bf2fc42c39d25546a9aa2161b151ea2a3e305fe8244103dfbfc80",
-  "size": 296093,
-  "notes": "历史会议「打开」修复；下载地址改成固定链接",
+  "zip": "tinghuitai-desktop-v0.5.4.zip",
+  "sha256": "d198c11786bb57cc357c21faf1182cea95854ce8fae827cfb9d4b00894110579",
+  "size": 280333,
+  "notes": "会中进度感三条；记忆校验与重算；会后点时间戳回听；历史会议浮层样式修复",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }
