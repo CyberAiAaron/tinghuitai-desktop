@@ -13,9 +13,18 @@ const KEEP=new Set(['preset.json','node_modules','.git','version-state.json','.p
 // 回滚：更新前把即将被覆盖的文件整份留一份在 .prev，用户点「回到上一版」就搬回来
 const PREV=path.join(ROOT,'.prev');
 function snapshot(fromVersion,names){
-  fs.rmSync(PREV,{recursive:true,force:true}); fs.mkdirSync(PREV,{recursive:true});
-  for(const name of names){ const from=path.join(ROOT,name); if(fs.existsSync(from)) fs.cpSync(from,path.join(PREV,name),{recursive:true}); }
-  fs.writeFileSync(path.join(PREV,'.version'),String(fromVersion||''));
+  // 先整份建在临时目录，全部成功才替换掉旧的 .prev；中途失败时上一版的回退快照仍然完好
+  const tmp=PREV+'.building-'+Date.now();
+  fs.rmSync(tmp,{recursive:true,force:true}); fs.mkdirSync(tmp,{recursive:true});
+  try{
+    for(const name of names){ const from=path.join(ROOT,name); if(fs.existsSync(from)) fs.cpSync(from,path.join(tmp,name),{recursive:true}); }
+    fs.writeFileSync(path.join(tmp,'.version'),String(fromVersion||''));
+    const old=PREV+'.old-'+Date.now();
+    if(fs.existsSync(PREV)) fs.renameSync(PREV,old);
+    try{ fs.renameSync(tmp,PREV); }
+    catch(e){ if(fs.existsSync(old)) { try{ fs.renameSync(old,PREV); }catch(e2){} } throw e; }
+    fs.rmSync(old,{recursive:true,force:true});
+  }catch(e){ fs.rmSync(tmp,{recursive:true,force:true}); throw e; }
 }
 function prevVersion(){ try{ return fs.readFileSync(path.join(PREV,'.version'),'utf8').trim(); }catch(e){ return ''; } }
 async function rollback(log=()=>{}){
@@ -92,7 +101,8 @@ async function apply(log=()=>{}){
   if(!fs.existsSync(path.join(src,'app'))) throw new Error('包结构不对，未更新');
   const names=fs.readdirSync(src).filter(n=>!KEEP.has(n)&&n!=='p.zip');
   log('备份当前版本，万一不对可以回退');
-  try{ snapshot(info.current,names); }catch(e){ log('备份没做成，继续更新：'+e.message); }
+  // 备份是回滚的唯一依据，备份失败就停手：宁可这次不升级，也不能升成一半又退不回去
+  try{ snapshot(info.current,names); }catch(e){ throw new Error('备份当前版本失败，已取消更新（'+e.message+'）'); }
   log('替换程序文件');
   for(const name of fs.readdirSync(src)){
     if(KEEP.has(name)||name==='p.zip') continue;

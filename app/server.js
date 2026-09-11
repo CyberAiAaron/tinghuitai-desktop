@@ -150,6 +150,8 @@ class Session {
   snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names } }; }
   // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
   connectAsr() {
+    if (this.mac) return;                       // 续场重连时已经有一个在跑，再造一个会漏掉旧的进程和端口
+    if (this.macFellBack) return this.connectVolc();   // 这场已经回退过，别再试本机转写
     if ((this.env.ASR_PROVIDER || 'volc') !== 'mac') return this.connectVolc();
     const {MacAsr, available} = require('./mac-asr');
     if (!available()) { this.broadcast({type:'error',message:'本机转写不可用，这场改用火山。'}); return this.connectVolc(); }
@@ -170,6 +172,9 @@ class Session {
         this.connectVolc();
         return;
       }
+      // 彻底放弃时把实例清掉，否则 connectAsr 的去重 guard 会让续场永远起不来
+      try { this.mac && this.mac.stop(); } catch (e) {}
+      this.mac = null;
       this.broadcast({type:'error',message:r.text}); return;
     }
     if (r.type === 'note') { log('mac-asr note: ' + r.text); return; }
@@ -232,8 +237,19 @@ class Session {
     const cfg = { user: { uid: 'tinghuitai' }, audio, request: req };
     this.volcWs.send(buildFrame(FULL_CLIENT_REQUEST, POS_SEQ, cfg, this.seq++, true)); log('volc config sent ' + this.id);
   }
-  sendAudio(pcm16k) { if(this.finalized)return;this.lastAudioTs=Date.now(); if(this.mac){ if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) {} } this.mac.write(pcm16k); return; } if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) { this.audioSaveError='Mac 录音写入失败，请导出浏览器录音备份。';log('audio write fail ' + e.message);this.broadcast({type:'error',message:'Mac 录音写入失败，请导出浏览器录音备份。'}); } } if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN && !this.draining) this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, pcm16k, this.seq++, false)); else {this.queuedAudio.push(Buffer.from(pcm16k));this.queuedAudioBytes+=pcm16k.length;while(this.queuedAudioBytes>16000*2*QUEUE_MAX_SEC){const dropped=this.queuedAudio.shift().length;this.queuedAudioBytes-=dropped;this.transcriptionGapSeconds+=dropped/32000;}if(this.transcriptionGapSeconds>0&&!this.gapWarned){this.gapWarned=true;this.broadcast({type:'error',message:this.audioSaveError?'实时转写存在缺口，Mac录音也未完整保存；请导出浏览器录音备份补转。':'实时转写存在缺口，原始录音仍保存；会后将尝试本地补转。'});}} }
+  sendAudio(pcm16k) { if(this.finalized)return;this.lastAudioTs=Date.now(); if(this.mac){ if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) {} } this.mac.write(pcm16k); return; } if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.writeSync(this.audioFd, pcm16k); } catch (e) { this.audioSaveError='Mac 录音写入失败，请导出浏览器录音备份。';log('audio write fail ' + e.message);this.broadcast({type:'error',message:'Mac 录音写入失败，请导出浏览器录音备份。'}); } } if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN && !this.draining) {
+      try { this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, POS_SEQ, pcm16k, this.seq++, false)); }
+      catch (e) { log('volc send fail ' + e.message); this.dropVolc('send ' + e.message); this.queueAudio(pcm16k); }   // 失败的这块退回队列，走和断线时同一套上限与缺口统计
+    } else this.queueAudio(pcm16k);
+  }
+  // 排队等重连：有上限，超出的部分算成转写缺口，只告警一次
+  queueAudio(pcm16k) {
+    this.queuedAudio.push(Buffer.from(pcm16k)); this.queuedAudioBytes += pcm16k.length;
+    while (this.queuedAudioBytes > 16000 * 2 * QUEUE_MAX_SEC) { const dropped = this.queuedAudio.shift().length; this.queuedAudioBytes -= dropped; this.transcriptionGapSeconds += dropped / 32000; }
+    if (this.transcriptionGapSeconds > 0 && !this.gapWarned) { this.gapWarned = true; this.broadcast({ type: 'error', message: this.audioSaveError ? '实时转写存在缺口，Mac录音也未完整保存；请导出浏览器录音备份补转。' : '实时转写存在缺口，原始录音仍保存；会后将尝试本地补转。' }); }
+  }
   onVolc(d) {
+    if (this.finalized || this.finalizing) return;   // 收尾已经开始，迟到的结果不再写 transcript，避免把已完成场次写回未完成
     let p; try { p = parseFrame(d); } catch (e) { return; }
     if (p.msgType === ERROR_RESPONSE) { log('volc ERROR ' + p.errorCode); this.broadcast({ type: 'error', message: `火山错误 ${p.errorCode}` }); this.volcFailStreak = (this.volcFailStreak || 0) + 1; this.dropVolc('error ' + p.errorCode); return; }
     const utts = p.json && p.json.result && p.json.result.utterances; if (!Array.isArray(utts)) return;

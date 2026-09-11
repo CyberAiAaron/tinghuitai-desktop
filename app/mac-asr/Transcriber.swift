@@ -61,10 +61,21 @@ final class Engine {
     }
     func rotate() {
         if let t = task, t.state == .running || t.state == .starting { t.finish() }
-        task = nil; req = nil; start()
+        task = nil; req = nil
+        start()
+        rotating = false
+        if !carry.isEmpty { let c = carry; carry = Data(); feed(c) }   // 把等待期间攒下的音频补进新任务
     }
+    var rotating = false
+    var carry = Data()          // 轮换等待期间收到的音频：苹果的最终句回调可能慢几百毫秒，这段不缓存就会永久丢话
     func feed(_ data: Data) {
-        if Date().timeIntervalSince(startedAt) > ROTATE_SEC { req?.endAudio(); return }
+        if rotating { carry.append(data); if carry.count > 16000 * 2 * 20 { carry.removeFirst(carry.count - 16000 * 2 * 20) }; return }
+        if Date().timeIntervalSince(startedAt) > ROTATE_SEC {
+            rotating = true
+            carry.append(data)
+            req?.endAudio()
+            return
+        }
         let frames = AVAudioFrameCount(data.count / 2)
         guard frames > 0, let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) else { return }
         buf.frameLength = frames

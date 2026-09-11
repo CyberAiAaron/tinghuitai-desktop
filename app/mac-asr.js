@@ -29,6 +29,7 @@ class MacAsr {
           const line=this.buf.slice(0,i); this.buf=this.buf.slice(i+1);
           if(!authed){ if(line.trim()!==this.token){ this.log('本机转写握手不对，断开'); sock.destroy(); return; } authed=true; this.sock=sock; continue; }
           let j; try{ j=JSON.parse(line); }catch(e){ continue; }
+          if(j.type==='final'&&this.dead&&this.onFinalWhileDraining){ const cb=this.onFinalWhileDraining; this.onFinalWhileDraining=null; this.onResult(j); setTimeout(cb,300); continue; }
           if(j.type==='ready'){ this.ready=true; if(this.timeout){clearTimeout(this.timeout);this.timeout=null;} this.log('本机转写就绪 '+j.text+(j.onDevice?'（离线）':'（需联网）')+'，补上等待期间的 '+Math.round(this.pendingBytes/32000)+' 秒音频'); this.flush(); continue; }
           this.onResult(j);
         }
@@ -67,13 +68,14 @@ class MacAsr {
   // 结束时只关写入方向，读的那头留着：小程序收到 EOF 会把最后一句吐完再退，
   // 直接 destroy 会把最后一句话丢掉。
   // 结束时等最后一句：半关写入 → 小程序收到 EOF 把最后一句吐完 → socket 关闭
-  drain(ms=5000){
+  drain(ms=8000){
     return new Promise(res=>{
       const s=this.sock;
       this.dead=true;
       if(this.timeout){ clearTimeout(this.timeout); this.timeout=null; }
       if(!s||s.destroyed){ this.close(); return res(); }
       let done=false; const fin=()=>{ if(done) return; done=true; try{s.destroy();}catch(e){} this.close(); res(); };
+      this.onFinalWhileDraining=fin;          // 最后一句一到就收工，不用等满超时
       s.once('close',fin); setTimeout(fin,ms);
       try{ s.end(); }catch(e){ fin(); }
     });
