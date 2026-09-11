@@ -2,14 +2,14 @@
 
 开会时它在旁边听着，实时出字幕、要点和待办；开完自动整理成纪要。跑在你自己的 Mac 上。
 
-**当前版本 0.5.2**
+**当前版本 0.5.3**
 
 ## 装它（一行命令，不用管什么隔离属性）
 
 打开「终端」，粘这一行，回车：
 
 ```bash
-cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop-v0.5.2.zip && unzip -oq tinghuitai-desktop-v0.5.2.zip -d 听会台 && bash 听会台/安装.command
+cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop.zip && unzip -oq tinghuitai-desktop.zip -d 听会台 && bash 听会台/安装.command
 ```
 
 装完浏览器会自己打开设置页。以后每次用，双击「启动.command」。
@@ -36,14 +36,14 @@ cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop
 
 It listens while you meet: live captions, key points and action items, then a written summary when you stop. Everything runs on your own Mac.
 
-**Current version 0.5.2**
+**Current version 0.5.3**
 
 ## Install (one line, no quarantine dance)
 
 Open Terminal, paste this, press return:
 
 ```bash
-cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop-v0.5.2.zip && unzip -oq tinghuitai-desktop-v0.5.2.zip -d MeetingLiveMate && bash MeetingLiveMate/安装.command
+cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop.zip && unzip -oq tinghuitai-desktop.zip -d MeetingLiveMate && bash MeetingLiveMate/安装.command
 ```
 
 The setup page opens by itself. To use it later, double-click `启动.command`.
