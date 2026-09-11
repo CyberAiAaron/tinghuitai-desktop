@@ -1,9 +1,9 @@
 {
-  "version": "0.4.2",
-  "released": "2026-09-10",
-  "zip": "tinghuitai-desktop-v0.4.2.zip",
-  "sha256": "d5b82aa4fd60bdf200d2b38e60470ed92a6539d7d99f8ef414fbc83aa1f50eea",
-  "size": 261867,
-  "notes": "一批稳定性修复，无新功能",
+  "version": "0.5.0",
+  "released": "2026-09-11",
+  "zip": "tinghuitai-desktop-v0.5.0.zip",
+  "sha256": "616f31e185655e36424003768eef87f0bf72dc854b70e39b3de820108fad5b43",
+  "size": 295197,
+  "notes": "会议记忆；开会方式细分；Deepgram；会后总结支持本机 CLI；一批稳定性修复",
   "min_macos": 13
 }

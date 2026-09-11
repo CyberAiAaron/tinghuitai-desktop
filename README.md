@@ -1,61 +1,65 @@
-# 听会台 Meeting LiveMate · Mac 独立版
+# 听会台 Meeting LiveMate · Mac
 
-开会时它在旁边听着，实时出字幕和译文，随手把要点归好类；开完自动整理成纪要。全部跑在你自己的 Mac 上。
+开会时它在旁边听着，实时出字幕、要点和待办；开完自动整理成纪要。跑在你自己的 Mac 上。
 
-## 它能做什么
+**当前版本 0.5.0**
 
-**会议进行中**
+## 装它（一行命令，不用管什么隔离属性）
 
-- **实时字幕和翻译**：说中文出中文，说英文出英文，中英混着说也认得。
-- **要点自动归类**：每隔几句把要点归成几个大标题，编号 1a / 1b / 1c。标题写的是结论而不是话题名，从上往下读一遍就是这场会的梗概。
-- **看到不确定的会标出来**：提到的公司、数字、事件会单独列一栏，给个初步判断供你核对。
-- **补充材料**：截图直接 ⌘V 粘进去，也能拖文件。点一下「发送给助手看」，它会打开每张图看一遍，说清楚图里是什么，随会议一起归档。
-- **语言自己认**：不用先选。判出来会告诉你，判错了在设置里定住即可。目前中文、英文最准；印尼语、巴西葡语、西班牙语的会中字幕仅供参考，录音会在会后用本机模型重新转写一遍。
+打开「终端」，粘这一行，回车：
 
-**会议结束后**
+```bash
+cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop-v0.5.0.zip && unzip -oq tinghuitai-desktop-v0.5.0.zip -d 听会台 && bash 听会台/安装.command
+```
 
-- **一场一张卡**：录音管理看板按周排列，能按来源和状态筛，随时重新整理或删除。删除进回收区，30 天内可恢复。
-- **回看页**：逐字稿、要点、待核查三栏并排，下面是本场总结、待办确认和问助手。
-- **待办浓缩**：一场会几十上百条要点，压成最多 5 条「我要去干嘛」，每条带一句会议依据，可以直接建成待办。
+装完浏览器会自己打开设置页。以后每次用，双击「启动.command」。
 
-**装一次就够了**：以后有新版程序自己在右下角提示，点一下更新完。你填的密钥和会议记录都不受影响。
+## 要准备什么
 
-## 你需要准备什么
+**语音转文字**，三选一：火山语音（要注册，官方列了 20 小时免费额度，中文最准、能区分说话人）；本机转写（不用注册，用你 Mac 自带的语音识别，完全离线，分不出说话人）；Deepgram（邮箱注册即可，不要中国手机号，官方送额度，英文强）。
 
-**一、语音转文字（必需）**
+**谁来写总结**，三选一：你电脑上已装的 Codex 或 Claude Code（设置页会自动认出来，点一下就行，不用申请 Key）；DeepSeek API Key；你公司给的 OpenAI 兼容接口。
 
-用火山引擎的流式语音识别，官方列出 20 小时免费试用额度，资格和有效期以你自己的控制台为准。
+不想自己弄的话，设置页第 3 步有个「复制引导词」，把那段发给你自己的 ChatGPT 或 Claude，它会一步步带你配完。
 
-开通入口：https://console.volcengine.com/speech/app
+## 更新
 
-（你自己已经有别的语音转文字服务也行，在设置页填对应的地址和密钥即可。）
+打开听会台，点右下角「检查更新」。装完不对可以在同一个地方退回上一版。
 
-**二、帮你总结的 AI（多数人不用花钱）**
+## 关于你的数据
 
-设置页会自动看这台 Mac 上有没有装 **Codex**（ChatGPT 桌面版自带）或 **Claude Code**。装了就点一下按钮，它当场试跑一次，通了就直接用你已有的额度，不用另外注册、不用充值。
+会议记录、录音和记忆都存在你自己的 Mac 上。本地存储和编排，不做联网检索；内容是否离开本机，取决于你选的转写服务和模型服务。
 
-没装的话，设置页把 DeepSeek 的注册、充值、拿 Key 拆成三步，每步都有直达链接，五分钟能弄完。公司自建网关或别的服务商，填同样三个框。
+---
 
-- DeepSeek 注册：https://platform.deepseek.com/sign_up
-- 拿 API Key：https://platform.deepseek.com/api_keys
+# Meeting LiveMate for Mac
 
-## 怎么装
+It listens while you meet: live captions, key points and action items, then a written summary when you stop. Everything runs on your own Mac.
 
-**最省事的办法**：把这个仓库的链接发给能操作你 Mac 的 Claude Code 或 Codex，跟它说「请按 AI-SETUP.md 安装听会台」。
+**Current version 0.5.0**
 
-想自己装就按这个顺序：
+## Install (one line, no quarantine dance)
 
-1. [下载安装包](tinghuitai-desktop-v0.4.2.zip)，解压，把文件夹放到「文稿」或桌面这种不会误删的地方。
-2. **解开 macOS 的下载保护**（只做一次）。从网上下载的东西默认不让直接运行，双击会说「打不开，要移到废纸篓」。打开「终端」，输入 `xattr -dr com.apple.quarantine ` （末尾留一个空格），把那个文件夹拖进终端窗口，回车。
-3. 双击 **安装.command**，等它跑完。
-4. 双击 **启动.command**，浏览器会自己打开，按设置页填上面那两项。
+Open Terminal, paste this, press return:
 
-- [给 AI 的安装入口](AI-SETUP.md)
-- [更详细的准备说明](RAY.md)
-- [这版改了什么](RELEASE-0.3.2.md)
+```bash
+cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop-v0.5.0.zip && unzip -oq tinghuitai-desktop-v0.5.0.zip -d MeetingLiveMate && bash MeetingLiveMate/安装.command
+```
 
-## 几件要知道的事
+The setup page opens by itself. To use it later, double-click `启动.command`.
 
-会议内容只存在你自己的电脑上。首次安装会下载 Node 运行环境，几分钟，不需要管理员密码。安装包本身约 200 KB，不含大型语音模型。火山语音和模型 API 按各自供应商计费。飞书是可选项，不配也能用。账号登录、服务开通和麦克风权限需要本人完成。开会时别让电脑睡着。手机独立录音不属于本版。
+## What you need
 
-正式开会前建议先做一次 30 秒试录。
+**Speech to text**, pick one: on-device (no signup, uses the speech recognition built into macOS, fully offline, no speaker separation); Deepgram (email signup, free credit to start, strong on English); Volcano Engine (best for Chinese and separates speakers, but signup needs a Chinese account).
+
+**Who writes the summary**, pick one: Codex or Claude Code already installed on your Mac (the setup page detects it, one click, no API key); a DeepSeek API key; any OpenAI-compatible endpoint your company gives you.
+
+Step 3 of the setup page has a "copy the walkthrough" button. Paste that into your own ChatGPT or Claude and it will walk you through the whole thing.
+
+## Updates
+
+Open the app and click "检查更新" at the bottom right. You can roll back to the previous version from the same place.
+
+## Your data
+
+Meetings, recordings and memory stay on your Mac. Local storage and orchestration, no web lookups; whether content leaves your machine depends on the transcription and model services you pick.
