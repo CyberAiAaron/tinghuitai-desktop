@@ -288,7 +288,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
     <div class="spacer"></div>
     <button class="btn icon" id="mode-chip" title="开会方式" data-i18n="b_mode">开会方式</button>
     <div class="seg" id="ui-lang" role="group" aria-label="界面语言 / UI language"><button type="button" data-ui="zh" aria-selected="true">中文</button><button type="button" data-ui="en" aria-selected="false">EN</button></div>
-    <a class="btn" href="work.html" id="work-link" data-i18n="work_hub">工作台</a><button class="btn" id="b-tasks"><span data-i18n="tasks">待办</span> <span id="task-count">0</span></button><button class="btn" id="b-assistant" aria-expanded="false" aria-controls="assistant-panel">My AI</button><button class="btn icon" id="gear" aria-label="设置">⚙︎</button>
+    <a class="btn" href="work.html" id="work-link" target="_blank" rel="noopener" data-i18n="work_hub">工作台</a><button class="btn" id="b-tasks"><span data-i18n="tasks">待办</span> <span id="task-count">0</span></button><button class="btn" id="b-assistant" aria-expanded="false" aria-controls="assistant-panel">My AI</button><button class="btn icon" id="gear" aria-label="设置">⚙︎</button>
     <button class="btn primary" id="start" data-i18n="start">开始听会</button>
     <button class="btn danger" id="stop" hidden data-i18n="stop">结束并总结</button>
   </header>
@@ -428,7 +428,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
   <div class="field"><label data-i18n="f_ctx">项目上下文（只喂给会中分析）</label><textarea id="s-ctx" rows="5" placeholder="可选：填写本场背景，不需要预先整理。"></textarea><div class="hint" id="s-ctx-hint"></div></div>
   </details>
   <div class="field"><label data-i18n="f_auto">多少分钟没人说话自动结束</label><input type="number" id="s-auto" min="3" max="60" placeholder="12"></div>
-  <p><a href="setup.html">语音与模型服务设置 ↗</a></p><div class="row"><button class="btn" id="s-test" data-i18n="b_test">测一下连通</button><button class="btn" id="s-cancel" data-i18n="cancel">取消</button><button class="btn primary" id="s-save" data-i18n="save">保存</button></div>
+  <p><a href="setup.html" target="_blank" rel="noopener" data-i18n="link_setup">语音与模型服务设置 ↗</a></p><div class="row"><button class="btn" id="s-test" data-i18n="b_test">测一下连通</button><button class="btn" id="s-cancel" data-i18n="cancel">取消</button><button class="btn primary" id="s-save" data-i18n="save">保存</button></div>
   <div class="notice" id="s-msg" hidden style="margin:10px 0 0"></div>
 </dialog>
 
@@ -542,7 +542,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
       h_tr:'Transcript', h_hl:'Notes', h_ck:'To verify',
       ph_ime:'Tap here → keyboard mic → talk. Text moves into the transcript 2.5s after you pause.',
       jump:'↓ Latest',
-      b_sum:'Meeting notes', st_idle:'Idle', sum_empty:'Appears here after the meeting ends.', mode_hint:'Pick how this meeting happens. While recording it shows the actual mode; you can change it afterwards.', kind_title:'How is this meeting happening?', k_test:'Test it first (10s)', k_live_t:'In person', k_live_d:'Put the Mac on the table and let it hear the room.', k_on_t:'Online (just me at my desk)', k_on_d:'Captures the meeting audio and your own voice. Noise suppression is on, so nearby chatter is not recorded. Chrome will ask you to pick the meeting tab — remember to tick \u201cAlso share tab audio\u201d.', k_room_t:'Online + in person (others in the room)', k_room_d:'Meeting audio plus the whole room. Noise suppression off, so anyone in the room is picked up. Muting yourself in the meeting app makes no difference.', b_memory:'Meeting memory', b_notes:'Material', b_arch:'Meeting archive', b_backup:'Audio backups', b_more:'More', b_update:'Check for updates', b_feedback:'Feedback / contact', b_mode:'Meeting type', b_resume:'Resume last', b_share:'Save as doc', b_copy:'Copy Markdown', b_export:'Export web page', b_hist:'Past meetings', b_clear:'Clear session',
+      b_sum:'Meeting notes', link_setup:'Speech and model settings ↗', st_idle:'Idle', sum_empty:'Appears here after the meeting ends.', mode_hint:'Pick how this meeting happens. While recording it shows the actual mode; you can change it afterwards.', kind_title:'How is this meeting happening?', k_test:'Test it first (10s)', k_live_t:'In person', k_live_d:'Put the Mac on the table and let it hear the room.', k_on_t:'Online (just me at my desk)', k_on_d:'Captures the meeting audio and your own voice. Noise suppression is on, so nearby chatter is not recorded. Chrome will ask you to pick the meeting tab — remember to tick \u201cAlso share tab audio\u201d.', k_room_t:'Online + in person (others in the room)', k_room_d:'Meeting audio plus the whole room. Noise suppression off, so anyone in the room is picked up. Muting yourself in the meeting app makes no difference.', b_memory:'Meeting memory', b_notes:'Material', b_arch:'Meeting archive', b_backup:'Audio backups', b_more:'More', b_update:'Check for updates', b_feedback:'Feedback / contact', b_mode:'Meeting type', b_resume:'Resume last', b_share:'Save as doc', b_copy:'Copy Markdown', b_export:'Export web page', b_hist:'Past meetings', b_clear:'Clear session',
       sh_sum:'Closing summary', sh_hist:'Past sessions', close:'Close',
       dlg_settings:'Settings', f_relay:'Mac relay token (for Volcano ASR / multi-screen)', f_hot:'Hotwords (comma separated)',
       f_provider:'Analysis model (runs on this device when Mac is offline)', f_key:'API key',
@@ -663,6 +663,8 @@ dialog h2{margin:0 0 12px;font-size:16px}
       updateModeChip(); renderModeList(); closeSheets();
     });
   }
+  // 工作台原来是普通链接，点一下会把当前页面整个换掉——开会中点一下录音就没了。
+  $('#work-link').onclick = e => { e.preventDefault(); window.open('work.html','tinghuitai-workhub','popup,width=1200,height=900'); };
   $('#b-memory').onclick = () => window.open('memory.html','tinghuitai-memory','popup,width=980,height=860');
   $('#mode-chip').onclick = () => { toggleSheet('#sh-mode', renderModeList); };
   $('#hist-pull').onclick = async () => {
