@@ -1,10 +1,10 @@
 {
-  "version": "0.5.8",
+  "version": "0.5.9",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.8.zip",
-  "sha256": "d7933b97f4dc654725e7df2c76f1c35daee66f427e99c0227f5b3713bd520950",
-  "size": 284239,
-  "notes": "改这一条：新增「理解错了」一句话纠正，可长期生效",
+  "zip": "tinghuitai-desktop-v0.5.9.zip",
+  "sha256": "94981bf33cda8965c8ebab028d4df8a2cb645fc6454f06b2f750d6a88d9741b8",
+  "size": 285538,
+  "notes": "会中可在「线上会」与「线上+线下」之间直接切换，不中断这一场",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }
