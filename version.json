@@ -1,10 +1,10 @@
 {
-  "version": "0.5.7",
+  "version": "0.5.8",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.7.zip",
-  "sha256": "3dc24951694a058b9fa4dd9c22f58db3bd0d7f52adbd5e8a6fcb64b203ee2e35",
-  "size": 283155,
-  "notes": "补充材料改成后台分析，点完即可关闭面板",
+  "zip": "tinghuitai-desktop-v0.5.8.zip",
+  "sha256": "d7933b97f4dc654725e7df2c76f1c35daee66f427e99c0227f5b3713bd520950",
+  "size": 284239,
+  "notes": "改这一条：新增「理解错了」一句话纠正，可长期生效",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }

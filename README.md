@@ -2,7 +2,7 @@
 
 开会时它在旁边听着，实时出字幕、要点和待办；开完自动整理成纪要。跑在你自己的 Mac 上。
 
-**当前版本 0.5.7**
+**当前版本 0.5.8**
 
 ## 装它（一行命令，不用管什么隔离属性）
 
@@ -36,7 +36,7 @@ cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop
 
 It listens while you meet: live captions, key points and action items, then a written summary when you stop. Everything runs on your own Mac.
 
-**Current version 0.5.7**
+**Current version 0.5.8**
 
 ## Install (one line, no quarantine dance)
 
