@@ -1,9 +1,10 @@
 {
-  "version": "0.5.2",
+  "version": "0.5.3",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.2.zip",
-  "sha256": "ceb45c1268896b943d82fc1711edb39eddb02684817afd954205a4b66030c85e",
-  "size": 295628,
-  "notes": "记忆副本默认写在自己的数据目录，路径可在设置里改",
-  "min_macos": 13
+  "zip": "tinghuitai-desktop-v0.5.3.zip",
+  "sha256": "2037cf14fb7bf2fc42c39d25546a9aa2161b151ea2a3e305fe8244103dfbfc80",
+  "size": 296093,
+  "notes": "历史会议「打开」修复；下载地址改成固定链接",
+  "min_macos": 13,
+  "stable_zip": "tinghuitai-desktop.zip"
 }

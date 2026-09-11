@@ -1253,6 +1253,9 @@ dialog h2{margin:0 0 12px;font-size:16px}
   }
 
   // 会上明确改口时，服务端就地修订已有条目并广播 revise；界面要原位更新，不要重新插一条。
+  function openArchivePanel(id){let ov=$('#archive-overlay');if(!ov){ov=document.createElement('div');ov.id='archive-overlay';ov.innerHTML='<div class="ap-bar"><b id="ap-title">会议详情</b><span style="flex:1"></span><button class="btn sm" id="ap-new" type="button">新窗口打开 ↗</button><button class="archive-close" id="ap-close" type="button" aria-label="关闭">×</button></div><iframe id="ap-frame" title="会议详情"></iframe>';document.body.append(ov);$('#ap-close').onclick=()=>{ov.hidden=true;$('#ap-frame').src='about:blank';};document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!ov.hidden)$('#ap-close').click();});}
+    const url='archive.html?id='+encodeURIComponent(id)+'&embed=1';$('#ap-frame').src=url;$('#ap-new').onclick=()=>window.open('archive.html?id='+encodeURIComponent(id),'_blank','noopener');const sess=state.sessions.find(x=>x.id===id);$('#ap-title').textContent=sess?(sess.topicTitle||sess.title||'会议详情'):'会议详情';ov.hidden=false;closeSheets();}
+
   function applyRevise(m){
     if(!cur||!Array.isArray(m.items))return;
     let n=0;

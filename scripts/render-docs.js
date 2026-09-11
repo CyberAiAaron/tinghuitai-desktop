@@ -5,7 +5,9 @@ const root=path.join(__dirname,'..');
 const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
 const man=JSON.parse(fs.readFileSync(path.join(root,'version.json'),'utf8'));
 const V=pkg.version, ZIP=man.zip;
-const dl=repo=>`https://github.com/${repo}/raw/main/${ZIP}`;
+// 固定文件名：发出去的链接不会因为出新版而失效。带版本号的包同时保留，给回滚和校验用。
+const STABLE='tinghuitai-desktop.zip';
+const dl=repo=>`https://github.com/${repo}/raw/main/${STABLE}`;
 
 function render(repo){
   return `# 听会台 Meeting LiveMate · Mac
@@ -19,7 +21,7 @@ function render(repo){
 打开「终端」，粘这一行，回车：
 
 \`\`\`bash
-cd ~/Downloads && curl -fsSLO ${dl(repo)} && unzip -oq ${ZIP} -d 听会台 && bash 听会台/安装.command
+cd ~/Downloads && curl -fsSLO ${dl(repo)} && unzip -oq ${STABLE} -d 听会台 && bash 听会台/安装.command
 \`\`\`
 
 装完浏览器会自己打开设置页。以后每次用，双击「启动.command」。
@@ -53,7 +55,7 @@ It listens while you meet: live captions, key points and action items, then a wr
 Open Terminal, paste this, press return:
 
 \`\`\`bash
-cd ~/Downloads && curl -fsSLO ${dl(repo)} && unzip -oq ${ZIP} -d MeetingLiveMate && bash MeetingLiveMate/安装.command
+cd ~/Downloads && curl -fsSLO ${dl(repo)} && unzip -oq ${STABLE} -d MeetingLiveMate && bash MeetingLiveMate/安装.command
 \`\`\`
 
 The setup page opens by itself. To use it later, double-click \`启动.command\`.
