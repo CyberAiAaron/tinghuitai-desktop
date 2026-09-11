@@ -36,8 +36,19 @@ function open(dataDir) {
     text TEXT NOT NULL, state TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', due TEXT NOT NULL DEFAULT '',
     aliases TEXT NOT NULL DEFAULT '', meeting_id TEXT NOT NULL DEFAULT '', meeting_title TEXT NOT NULL DEFAULT '',
     source_refs TEXT NOT NULL DEFAULT '[]', recorded_at TEXT NOT NULL, effective_at TEXT,
-    supersedes_id TEXT, human_edited INTEGER NOT NULL DEFAULT 0, needs_review INTEGER NOT NULL DEFAULT 0,
+    supersedes_id TEXT, change_reason TEXT NOT NULL DEFAULT '', human_edited INTEGER NOT NULL DEFAULT 0, needs_review INTEGER NOT NULL DEFAULT 0,
     review_note TEXT NOT NULL DEFAULT '')`);
+  // 老库没有这一列：被替代的旧决定要留下「是哪句话把它推翻的」。
+  // 加列失败分两种：列已经在（正常）和真出事了（锁住、只读、库坏）。后者必须抛出来，
+  // 否则后面按新列名写入会一路失败，看起来像记忆莫名其妙存不下。
+  try { db.exec("ALTER TABLE cards ADD COLUMN change_reason TEXT NOT NULL DEFAULT ''"); }
+  catch (e) {
+    // 只有「这列本来就有」才是正常情况。锁住、只读、库坏都必须抛出来，
+    // 否则后面按新列名写入会一路失败，看起来像记忆莫名其妙存不下。
+    const dup = /duplicate column/i.test(String(e.message || ''));
+    const has = db.prepare('PRAGMA table_info(cards)').all().some(c => c.name === 'change_reason');
+    if (!dup || !has) throw new Error('记忆库升级失败（change_reason 列）：' + e.message);
+  }
   db.exec(`CREATE TABLE IF NOT EXISTS card_history(
     id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, changed_at TEXT NOT NULL,
     PRIMARY KEY(id, revision))`);
@@ -84,7 +95,7 @@ function inTx(db, fn) {
 }
 
 const COLS = ['project','kind','topic','text','state','owner','due','aliases','meeting_id','meeting_title',
-              'source_refs','recorded_at','effective_at','supersedes_id','human_edited','needs_review','review_note'];
+              'source_refs','recorded_at','effective_at','supersedes_id','change_reason','human_edited','needs_review','review_note'];
 
 function putCard(db, c) {
   const kind = KINDS.has(c.kind) ? c.kind : 'decision';
@@ -97,7 +108,7 @@ function putCard(db, c) {
     meeting_id: str(c.meeting_id, 100), meeting_title: str(c.meeting_title, 200),
     source_refs: JSON.stringify(Array.isArray(c.source_refs) ? c.source_refs.slice(0, 20) : []),
     recorded_at: iso(c.recorded_at), effective_at: c.effective_at ? iso(c.effective_at) : null,
-    supersedes_id: str(c.supersedes_id, 64) || null, human_edited: c.human_edited ? 1 : 0,
+    supersedes_id: str(c.supersedes_id, 64) || null, change_reason: str(c.change_reason, 400), human_edited: c.human_edited ? 1 : 0,
     needs_review: c.needs_review ? 1 : 0, review_note: str(c.review_note, 300),
   };
   if (!row.text.trim()) return null;

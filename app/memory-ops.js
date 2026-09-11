@@ -23,6 +23,99 @@ const inputHash = session => crypto.createHash('sha256')
 const CLAIM_TTL_MS = 15 * 60 * 1000;   // 抽卡最多跑这么久；超过就认为那个进程死了，允许别人接手
 
 // 会后抽卡。ask 是 (system,user)=>Promise<string|null>，由调用方注入。
+// —— 语义一致性校验 ——
+// 词重合率分不清「决定周五发布」和「决定不在周五发布」：两句实词几乎一样，意思相反。
+// 所以在重合率之外，再单独比对三样最容易出反向错误的东西：否定、数字、日期。
+// 「不」后面跟动词一律算否定（不追加、不通过…），但排开「不错 / 不少 / 差不多」这类其实是肯定的说法
+const NEG_RE = /(不(?!错|少|多|得了|妨)|别(?=[\u4e00-\u9fa5])|无需|勿|未(?!来)|没有|暂缓|取消|作废|推翻|否决|放弃|\bnot\b|\bno\b|\bnever\b|\bwon't\b|\bdon't\b|\bdoesn't\b|\bcancel(?:led|ed)?\b|\bdrop(?:ped)?\b|\breject(?:ed)?\b)/gi;
+function negCount(s) { const m = String(s || '').match(NEG_RE); return m ? m.length : 0; }
+// 数字连着它后面的单位一起取，「8 台」和「8 天」才不会被当成同一个数。
+// 只取有判别力的：纯数字、百分比、金额、月日、星期。忽略长 id。
+const UNIT = '%|台|天|人|个|万|亿|元|块|月|日|号|周|分钟|小时|分|秒|倍|次|页|条|张|件|毫米|厘米|英寸|寸|GB|MB|TB|KB|kg|g|mm|cm|km|M|K|W|nm|fps|Hz|℃';
+function numTokens(s) {
+  const out = [];
+  const re = new RegExp('(\\d+(?:\\.\\d+)?)\\s*(' + UNIT + ')?', 'g');
+  for (const m of String(s || '').matchAll(re)) {
+    if (m[1].replace(/\D/g, '').length > 6) continue;      // 长 id 不算数字
+    out.push({ v: m[1], unit: m[2] || '', tok: m[1] + (m[2] || '') });
+  }
+  for (const m of String(s || '').matchAll(/(周|星期|礼拜)([一二三四五六日天])/g)) out.push({ v: m[2], unit: '周', tok: '周' + m[2] });
+  for (const m of String(s || '').matchAll(/\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/gi)) out.push({ v: m[1].toLowerCase(), unit: 'wd', tok: m[1].toLowerCase() });
+  return out;
+}
+function numsOf(s) { return new Set(numTokens(s).map(x => x.tok)); }
+// 一句原文里常有跟结论无关的半句（「CDCP 是 9 月 22 日，别记错」里的「别记错」）。
+// 拿整句比正反会把这种误判成矛盾，所以先切成小句，只跟最相关的那半句比。
+function closestClause(cardText, evidenceText) {
+  const parts = String(evidenceText || '').split(/[。！？!?；;，,、\n]+/).map(x => x.trim()).filter(Boolean);
+  if (parts.length < 2) return String(evidenceText || '');
+  const ct = terms(cardText);
+  if (!ct.length) return String(evidenceText || '');
+  // 实词和数字一起算分：卡里带 30% 时，含 30% 的那半句才是它真正的出处
+  const cnum = numsOf(cardText);
+  let best = parts[0], bestScore = -1;
+  for (const p of parts) {
+    const low = p.toLowerCase();
+    const pnum = numsOf(p);
+    const sc = ct.filter(w => low.includes(w)).length + [...cnum].filter(v => pnum.has(v)).length;
+    if (sc > bestScore) { bestScore = sc; best = p; }
+  }
+  return best;
+}
+// 返回 true = 这条卡和它引用的原文在「正反 / 数字 / 日期」上对得上
+function semanticallyConsistent(cardText, evidenceText) {
+  // 否定极性：卡里有否定而原文对应那半句一句否定都没有（或反过来），就是典型的反向错误
+  const clause = closestClause(cardText, evidenceText);
+  const a = negCount(cardText) > 0, b = negCount(clause) > 0;
+  if (a !== b) return false;
+  // 数字和星期也只跟最相关的那半句比。拿整句比的话，
+  // 「样机做 8 台，周期 18 天」会让「样机 18 台」这种错配蒙混过关。
+  const cardNums = numTokens(cardText), clauseNums = numTokens(clause);
+  const en = new Set(clauseNums.map(x => x.tok));
+  for (const x of cardNums) if (!en.has(x.tok)) return false;
+  // 原话里同一个单位出现多次、而且那半句确实在讲「从 A 变成 B」时，结论要的是变化之后那个值。
+  // 卡片只写了一个数却写成前面那个基准值，是最常见的一类错抄。
+  // 没有变化措辞（比如单纯并列「8 台样机 18 台夹具」）就不按顺序判，免得误杀。
+  const CHANGE_HINT = /(从|由).{0,12}(提到|涨到|降到|减到|改到|改成|调到|变成|到)|(提高|降低|上调|下调|调整|改)(到|为)|from.{0,12}to|raised? to|reduced? to/;
+  const clauseSaysChange = CHANGE_HINT.test(clause);
+  for (const x of cardNums) {
+    if (!clauseSaysChange) continue;
+    const sameUnit = clauseNums.filter(y => y.unit === x.unit);
+    if (sameUnit.length < 2) continue;
+    const mine = cardNums.filter(y => y.unit === x.unit);
+    if (mine.length !== 1) continue;                      // 卡片自己就写了区间，不判
+    if (sameUnit[sameUnit.length - 1].tok !== x.tok) return false;
+  }
+  return true;
+}
+
+// —— 新决定替代旧决定 ——
+// 判据保守：同一个 topic，而且新那条本身带明确的改口/否定措辞，才建立替代关系。
+// 长得像不等于是同一件事的新版本，判错了会把还有效的决定误标作废，比不标更糟。
+const CHANGE_RE = /(改为|改成|改到|不再|推翻|取消|作废|撤回|重新定|改口|换成|延后到|提前到|no longer|instead|changed to|revised to|overrid|revers|cancel(?:led|ed)?)/i;
+function linkSupersedes(db, written, mid, log) {
+  for (const nc of written) {
+    if (nc.kind !== 'decision' && nc.kind !== 'term') continue;
+    const topic = String(nc.topic || '').trim();
+    if (!topic) continue;
+    if (!CHANGE_RE.test(String(nc.text || ''))) continue;   // 没有改口措辞就并存，让人自己去作废
+    let olds = [];
+    try {
+      olds = db.prepare("SELECT id,text FROM cards WHERE kind=? AND state='active' AND topic=? AND id<>? AND meeting_id<>? AND human_edited=0")
+        .all(nc.kind, topic, nc.id, mid).slice(0, 5);
+    } catch (e) { log('memory: 找旧决定失败 ' + e.message); continue; }
+    if (!olds.length) continue;
+    const why = '被「' + String(nc.text || '').slice(0, 120) + '」替代（' + (nc.meeting_title || nc.meeting_id || '新一场会') + '）';
+    for (const o of olds) {
+      try {
+        mem.updateCard(db, o.id, { state: 'superseded', change_reason: why, needs_review: 0 }, '同议题出现明确改口的新决定');
+        log('memory: 旧决定被替代 — ' + String(o.text || '').slice(0, 40));
+      } catch (e) { log('memory: 标记替代失败 ' + e.message); }
+    }
+    try { mem.updateCard(db, nc.id, { supersedes_id: olds[0].id }, '替代了旧决定'); } catch (e) {}
+  }
+}
+
 async function ingest(dataDir, session, ask, log = () => {}) {
   const db = mem.open(dataDir);
   if (!db) { log('memory: 本机 node 不支持 sqlite，跳过'); return { skipped: true }; }
@@ -78,13 +171,31 @@ async function ingest(dataDir, session, ask, log = () => {}) {
           if (!ev.length) continue;                    // 没有本场原文支持的一律不收
           // 出处必须真的支持这条内容。逐条比对而不是把所有引用拼起来比，
           // 拼起来会让「引用了一句足够长的话」就能给任意结论背书。
-          const cardTerms = terms(String(it.text || '') + ' ' + String(it.topic || ''));
+          // 只拿卡片正文跟原话比，而且只比二字片段：
+          // topic 是我们自己起的标签（「发布时间」），原话里本来就不会出现；
+          // terms() 还会额外塞一个整句词条（「决定周五发布」），模型换个说法就永远命中不了。
+          // 这两样留在分母里，会让「决定周五发布」对上原话「我们定了，周五发布」也被判为对不上。
+          const cardTerms = terms(String(it.text || '')).filter(w => !(/^[\p{Script=Han}]+$/u.test(w) && w.length > 2));
           if (!cardTerms.length) continue;             // 抽不出实词 = 无法验证 = 不收
-          const best = Math.max(...ev.map(id => {
-            const low = (segText.get(id) || '').toLowerCase();
-            return cardTerms.filter(w => low.includes(w)).length / cardTerms.length;
-          }));
-          if (best < 0.4) continue;                    // 出处对不上就不收，而不是收进来打个标签
+          const scored = ev.map(id => {
+            const seg = segText.get(id) || '';
+            const low = seg.toLowerCase();
+            const hits = cardTerms.filter(w => low.includes(w)).length;
+            return { id, seg, hits, score: hits / cardTerms.length };
+          });
+          const best = Math.max(...scored.map(x => x.score));
+          const bestHits = Math.max(...scored.map(x => x.hits));
+          // 光看比率，短卡片（「周五安排」对原话「我们定了，周五发布」）只要蹭中一个词就有 0.5。
+          // 所以再加一条绝对门槛：至少要跟原话对上两个片段。
+          if (best < 0.4 || bestHits < 2) continue;    // 出处对不上就不收，而不是收进来打个标签
+          // 重合率够高还不够：得分最高的那条出处必须在正反、数字、日期上也对得上，
+          // 否则就是「决定周五发」被写成「决定不在周五发」这类反向错误。
+          const top = scored.reduce((m, x) => x.score > m.score ? x : m, scored[0]);
+          const cardFull = String(it.text || '') + ' ' + String(it.due || '');
+          if (!semanticallyConsistent(cardFull, top.seg)) {
+            log('memory: 出处对得上但意思对不上，丢弃 — ' + String(it.text || '').slice(0, 40));
+            continue;
+          }
           collect({
             kind, topic: it.topic, text: it.text, owner: it.owner, due: it.due, aliases: it.aliases,
             project: session.project || '', meeting_id: mid, meeting_title: session.title || '',
@@ -118,6 +229,8 @@ async function ingest(dataDir, session, ask, log = () => {}) {
       const olds = db.prepare('SELECT id FROM cards WHERE kind=? AND topic=? AND id<>? AND meeting_id<>? AND needs_review=0').all(row.kind, row.topic, row.id, mid);
       for (const o of olds.slice(0, 5)) { try { mem.flagPossiblyChanged(db, o.id, '同一议题有了新说法，等你核对'); } catch (e) { log('memory: 标记旧卡失败 ' + e.message); } }
     }
+    // 明确改口的，把同议题的旧决定标成被替代，并留下是哪句话推翻的
+    try { linkSupersedes(db, written, mid, log); } catch (e) { log('memory: 替代关系处理失败 ' + e.message); }
     ok = true;
     log(`memory: 本场抽出 ${written.length} 条`);
     return { count: written.length, cards: written };

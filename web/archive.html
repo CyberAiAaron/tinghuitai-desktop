@@ -22,10 +22,17 @@ body{margin:0;padding:0 0 60px}
 .chip{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--panel-2,#f0f0f3);font-size:12px;color:var(--muted,#76767c)}
 .summary{white-space:pre-wrap;font-size:14px;line-height:1.65}
 .empty{padding:12px 14px}
+.player-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.player-box .ph{font-size:12px;color:var(--muted)}
+.player-box audio{height:32px;flex:1;min-width:220px}
+button.k.play{cursor:pointer;background:none;border:0;padding:0;font:inherit;color:inherit}
+button.k.play:hover,time.play:hover{text-decoration:underline}
+time.play{cursor:pointer}
 </style></head><body>
 <div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="download">下载全文与总结</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
 <div class="wrap">
 <div class="meta" id="meta"></div>
+<div class="player-box" id="player-box" hidden></div>
 <div class="grid">
   <div>
     <div class="pane" style="margin-bottom:14px"><h2>智能总结 · 待核对</h2><div class="scroll"><div class="summary" id="summary"></div></div></div>
