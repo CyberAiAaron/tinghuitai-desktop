@@ -49,6 +49,11 @@ input:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible{o
   <div class="pick" id="asr-pick">
     <label class="opt"><input type="radio" name="asr" value="volc" checked><span><b data-t="asr_volc"></b><small data-t="asr_volc_d"></small></span></label>
     <label class="opt"><input type="radio" name="asr" value="mac"><span><b data-t="asr_mac"></b><small data-t="asr_mac_d"></small></span></label>
+    <label class="opt"><input type="radio" name="asr" value="deepgram"><span><b data-t="asr_dg"></b><small data-t="asr_dg_d"></small></span></label>
+  </div>
+  <div id="dg-fields" hidden>
+    <p class="hint" data-t="dg_hint"></p>
+    <label for="dg-key" data-t="l_dg"></label><input id="dg-key" name="DEEPGRAM_API_KEY" type="password" autocomplete="off">
   </div>
   <div id="volc-fields">
   <p class="hint" data-t="s1hint"></p>

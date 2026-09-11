@@ -8,7 +8,8 @@ module.exports=async function(req,res,u,{isLocal,settings,active,testModel}){
  const c=settings.load();
  const macAsr=(()=>{try{return require('./mac-asr').available();}catch(e){return false;}})();
  const asrLocal=c.ASR_PROVIDER==='mac';
- const publicState={provider:c.LLM_PROVIDER||'',asrProvider:c.ASR_PROVIDER||'volc',macAsrAvailable:macAsr,ready:!!((asrLocal||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY))&&(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER)),asrConfigured:!!(asrLocal||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY)),modelConfigured:!!(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER),base:c.LLM_BASE_URL,model:c.LLM_MODEL,resource:c.VOLC_RESOURCE_ID,archive:c.ARCHIVE_TARGET};
+ const asrDg=c.ASR_PROVIDER==='deepgram';
+ const publicState={provider:c.LLM_PROVIDER||'',asrProvider:c.ASR_PROVIDER||'',macAsrAvailable:macAsr,deepgramConfigured:!!c.DEEPGRAM_API_KEY,ready:!!((asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY))&&(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER)),asrConfigured:!!(asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY)),modelConfigured:!!(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER),base:c.LLM_BASE_URL,model:c.LLM_MODEL,resource:c.VOLC_RESOURCE_ID,archive:c.ARCHIVE_TARGET};
  if(bootstrap&&req.method==='GET'){res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end('window.THT_BOOT='+JSON.stringify({...publicState,relayToken:c.RELAY_TOKEN})+';');return true;}
  if(setup&&req.method==='GET')return json(200,publicState);
  // 本机装没装 AI 命令行：装了就不用申请 API Key
@@ -29,7 +30,7 @@ module.exports=async function(req,res,u,{isLocal,settings,active,testModel}){
  if(u.pathname==='/setup/test'){const result=await testModel();return json(result?200:502,{ok:!!result,message:result?'模型已连通。语音服务请用30秒试录验证。':'模型未连通，请检查API Key、余额、模型名与网络。'});}
  let body='';for await(const chunk of req){body+=chunk;if(body.length>12000)return json(413,{error:'配置过长'});}
  try{const j=JSON.parse(body);
- if(typeof j.ASR_PROVIDER==='string'){const v=j.ASR_PROVIDER.trim();if(!['','volc','mac'].includes(v))throw Error('转写方式取值不对');c.ASR_PROVIDER=v;}
+ if(typeof j.ASR_PROVIDER==='string'){const v=j.ASR_PROVIDER.trim();if(!['','volc','mac','deepgram'].includes(v))throw Error('转写方式取值不对');c.ASR_PROVIDER=v;}
  for(const k of Object.keys(settings.defaults)){if(k==='ASR_PROVIDER')continue;if(j[k]===undefined||['ARCHIVE_TARGET','THT_ARCHIVE_OWNER_ID','LLM_PROVIDER'].includes(k))continue;if(typeof j[k]!=='string'||j[k].length>4000||/[\r\n]/.test(j[k]))throw Error('字段格式不正确');if(['VOLC_APP_KEY','VOLC_ACCESS_KEY','DEEPSEEK_API_KEY'].includes(k)&&!j[k])continue;c[k]=j[k].trim();}
  const base=new URL(c.LLM_BASE_URL);if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash)throw Error('模型地址须为不含密钥的 HTTPS 地址');
  settings.save(c);

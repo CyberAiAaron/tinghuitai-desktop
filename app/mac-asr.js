@@ -14,7 +14,7 @@ class MacAsr {
     this.locale=LOCALE[lang]||'zh-CN'; this.onResult=onResult; this.log=log;
     this.token=crypto.randomBytes(16).toString('hex');
     this.server=null; this.sock=null; this.ready=false; this.dead=false; this.restarts=0; this.buf='';
-    this.pending=[]; this.pendingBytes=0;   // open -a 拉起来要几秒，这几秒的音频先存着，就绪后补上
+    this.pending=[]; this.pendingBytes=0; this.droppedBytes=0;   // open -a 拉起来要几秒，这几秒的音频先存着，就绪后补上
   }
   start(){
     if(this.dead) return;
@@ -39,17 +39,18 @@ class MacAsr {
     });
     this.server.listen(0,'127.0.0.1',()=>{
       const port=this.server.address().port;
+      this.launchedAt = Date.now();
       execFile('/usr/bin/open',['-n','-a',APP,'--args',String(port),this.token,this.locale],e=>{
         if(e){ this.log('启动本机转写失败: '+e.message); this.onResult({type:'fatal',text:'启动本机转写失败：'+e.message}); }
       });
       this.timeout=setTimeout(()=>{
-        if(!this.ready&&!this.dead) this.onResult({type:'fatal',text:'本机转写没连上。第一次用要先在弹出的窗口点「允许」；如果没看到弹窗，去「系统设置 → 隐私与安全性 → 语音识别」里打开「听会台转写」。'});
+        if(!this.ready&&!this.dead) this.reap(), this.onResult({type:'fatal',text:'本机转写没连上。第一次用要先在弹出的窗口点「允许」；如果没看到弹窗，去「系统设置 → 隐私与安全性 → 语音识别」里打开「听会台转写」。'});
       },10000);
     });
   }
   onExit(){
     if(this.dead) return;
-    if(this.restarts++<5){ this.log('本机转写断开，重连第 '+this.restarts+' 次'); this.close(); setTimeout(()=>this.start(),1500); }
+    if(this.restarts++<5){ this.log('本机转写断开，重连第 '+this.restarts+' 次'); this.close(); this.retryTimer=setTimeout(()=>this.start(),1500); }
     else this.onResult({type:'fatal',text:'本机转写反复断开，已停止重试。可以在设置页换回火山语音。'});
   }
   write(pcm){
@@ -57,14 +58,23 @@ class MacAsr {
     if(s&&!s.destroyed&&this.ready){ try{ s.write(pcm); }catch(e){} return; }
     if(this.dead) return;
     this.pending.push(Buffer.from(pcm)); this.pendingBytes+=pcm.length;
-    while(this.pendingBytes>32000*20){ this.pendingBytes-=this.pending.shift().length; }   // 最多存 20 秒
+    while(this.pending.length && this.pendingBytes>32000*20){ const b=this.pending.shift(); this.pendingBytes-=b.length; this.droppedBytes+=b.length; }   // 最多存 20 秒，挤掉的才算缺口
   }
   flush(){
     const s=this.sock; if(!s||s.destroyed) return;
     for(const b of this.pending){ try{ s.write(b); }catch(e){} }
     this.pending=[]; this.pendingBytes=0;
   }
-  close(){ try{ if(this.timeout) clearTimeout(this.timeout); }catch(e){} try{ this.sock&&this.sock.destroy(); }catch(e){} try{ this.server&&this.server.close(); }catch(e){} this.sock=null; this.server=null; this.ready=false; }
+  // 没连上就放弃时，open 拉起的那个 .app 是独立进程，服务端没有它的 pid。
+  // 不收掉它会常驻并占着麦克风权限，反复重试还会越堆越多。
+  reap(){
+    if(!this.launchedAt) return;
+    this.launchedAt=0;
+    // 只收自己这一份：按 bundle 路径匹配，不会误伤别的程序
+
+    try{ require('child_process').execFile('/usr/bin/pkill',['-f','TinghuitaiSpeech.app/Contents/MacOS/transcriber'],()=>{}); }catch(e){}
+  }
+  close(){ try{ if(this.timeout) clearTimeout(this.timeout); }catch(e){} try{ if(this.retryTimer) clearTimeout(this.retryTimer); }catch(e){} try{ this.sock&&this.sock.destroy(); }catch(e){} try{ this.server&&this.server.close(); }catch(e){} this.sock=null; this.server=null; this.ready=false; }
   // 结束时只关写入方向，读的那头留着：小程序收到 EOF 会把最后一句吐完再退，
   // 直接 destroy 会把最后一句话丢掉。
   // 结束时等最后一句：半关写入 → 小程序收到 EOF 把最后一句吐完 → socket 关闭
@@ -84,8 +94,10 @@ class MacAsr {
     this.dead=true;
     if(this.timeout){ clearTimeout(this.timeout); this.timeout=null; }
     const s=this.sock;
-    if(s&&!s.destroyed){ try{ s.end(); }catch(e){} setTimeout(()=>{ try{ s.destroy(); }catch(e){} this.close(); },3000); }
-    else this.close();
+    // 连上过就给它几秒自己退；没连上过（授权失败、还在启动）必须立刻收掉，
+    // 否则 open 拉起的那个 .app 会常驻并占着麦克风权限，切一次语言就多一个。
+    if(s&&!s.destroyed){ try{ s.end(); }catch(e){} const tm=setTimeout(()=>{ try{ s.destroy(); }catch(e){} this.close(); this.reap(); },3000); if(tm.unref) tm.unref(); }
+    else { this.close(); this.reap(); }
   }
 }
 module.exports={MacAsr,available,BIN,APP};

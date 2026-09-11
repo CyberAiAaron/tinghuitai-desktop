@@ -1,9 +1,12 @@
 'use strict';
 // 首次设置：一屏两步 + 一条「让 AI 带你做」。文案两套，跟随系统语言，右上角可切。
 const T={zh:{
- h1:'开始听会前，填两个东西', sub:'都填在这个页面，不用改配置文件。会议存在这台电脑；声音发给火山转文字，文字发给你选的模型做总结。',
+ h1:'开始听会前，填两个东西', sub:'都填在这个页面，不用改配置文件。会议和记忆都存在这台电脑；内容会不会出本机，取决于你下面选的转写和模型服务。',
  s1:'语音转写', s1go:'去火山控制台拿 ↗', l_app:'App Key / APP ID', l_access:'Access Key / Access Token',
  asr_volc:'火山语音（推荐）', asr_volc_d:'延迟一秒左右，能区分说话人。要注册一个账号，官方给 20 小时免费额度。',
+ asr_dg:'Deepgram（国外，邮箱注册）', asr_dg_d:'不用中国手机号，邮箱注册就行，官方送一笔免费额度。英文很准，延迟低。适合给不方便开火山账号的人用。',
+ dg_hint:'去 console.deepgram.com 用邮箱注册，在 API Keys 页建一个 Key，粘到下面。注册不需要信用卡。',
+ l_dg:'Deepgram API Key',
  asr_mac:'本机转写（不用注册）', asr_mac_d:'用这台 Mac 自带的语音识别，完全离线、不花钱、不用填任何东西。慢几秒，分不出说话人，中文和英文效果最好。',
  s1hint:'需要一个火山引擎账号（手机号就能注册），开通「大模型流式语音识别」这项服务，火山官方给 20 小时免费额度。开通后在应用详情里复制两串东西，填到下面。',
  s1more:'怎么拿？',
@@ -25,10 +28,13 @@ const T={zh:{
  readfail:'读不到本机设置，请重新启动听会台。', notloaded:'设置还没加载好，刷新一下页面。',
  need:'请填写', ok_all:'两项都配好了。改完可以重新测试。', todo_all:'填好上面两步，保存后试录 30 秒。'
 },en:{
- h1:'Two things before your first meeting', sub:'Fill them in here, no config files. Meetings stay on this computer; audio goes to Volcano for transcription, text goes to the model you pick.',
+ h1:'Two things before your first meeting', sub:'Fill them in here, no config files. Meetings and memory stay on this computer; whether anything leaves it depends on the transcription and model services you pick below.',
  s1:'Transcription', s1go:'Get keys at Volcano ↗', l_app:'App Key / APP ID', l_access:'Access Key / Access Token',
- asr_volc:'Volcano speech (recommended)', asr_volc_d:'About one second of delay and it separates speakers. Needs an account; Volcano lists a 20-hour free trial.',
- asr_mac:'On this Mac (no signup)', asr_mac_d:'Uses the speech recognition built into macOS. Fully offline, free, nothing to fill in. A few seconds slower, no speaker separation, best for Chinese and English.',
+ asr_volc:'Volcano speech', asr_volc_d:'About one second of delay and it separates speakers. Needs an account; Volcano lists a 20-hour free trial.',
+ asr_dg:'Deepgram (sign up with email)', asr_dg_d:'No Chinese phone number needed, email signup, and they give you free credit to start. Strong on English, low latency.',
+ dg_hint:'Sign up at console.deepgram.com, create a key on the API Keys page, paste it below. No credit card needed.',
+ l_dg:'Deepgram API key',
+ asr_mac:'On this Mac (recommended, no signup)', asr_mac_d:'Uses the speech recognition built into macOS. Fully offline, free, nothing to fill in. A few seconds slower, no speaker separation, best for Chinese and English.',
  s1hint:'You need a Volcano Engine account, then enable its streaming speech recognition service. Volcano lists a 20-hour free trial. Once enabled, copy two values from your app details into the boxes below.',
  s1more:'How do I get these?',
  v1:'Open the Volcano speech console and enable streaming speech recognition.', v2:'Open the app details and copy App Key and Access Key.',
@@ -63,14 +69,15 @@ function applyLang(){
 }
 function paintPlaceholders(){
   if(!state) return;
-  for(const [key,ready] of [['VOLC_APP_KEY',state.asrConfigured],['VOLC_ACCESS_KEY',state.asrConfigured],['DEEPSEEK_API_KEY',state.modelConfigured]])
+  for(const [key,ready] of [['VOLC_APP_KEY',state.asrConfigured],['VOLC_ACCESS_KEY',state.asrConfigured],['DEEPSEEK_API_KEY',state.modelConfigured],['DEEPGRAM_API_KEY',state.deepgramConfigured]])
     form.elements[key].placeholder=ready?t('ph_saved'):t('ph_new');
 }
 function paintStatus(){ if(state&&!message.dataset.sticky) message.textContent=state.ready?t('ok_all'):t('todo_all'); }
 function paintAsr(){
-  const local=document.querySelector('input[name=asr]:checked')?.value==='mac';
-  document.getElementById('volc-fields').hidden=local;
-  document.getElementById('volc-how').hidden=local;
+  const v=document.querySelector('input[name=asr]:checked')?.value||'volc';
+  document.getElementById('volc-fields').hidden=(v!=='volc');
+  document.getElementById('volc-how').hidden=(v!=='volc');
+  const dg=document.getElementById('dg-fields'); if(dg) dg.hidden=(v!=='deepgram');
 }
 document.getElementById('asr-pick').onchange=paintAsr;
 document.getElementById('lang').onclick=e=>{const b=e.target.closest('button');if(b){L=b.dataset.l;applyLang();}};
@@ -79,15 +86,19 @@ async function refresh(){
   const r=await fetch('/setup',{cache:'no-store'}); if(!r.ok) throw Error(t('readfail'));
   state=await r.json();
   form.elements.LLM_BASE_URL.value=state.base; form.elements.LLM_MODEL.value=state.model; form.elements.VOLC_RESOURCE_ID.value=state.resource;
-  const r2=document.querySelector('input[name=asr][value="'+(state.asrProvider==='mac'?'mac':'volc')+'"]'); if(r2) r2.checked=true;
+  // 还没选过的话：中文系统默认火山（中文最准），非中文系统默认本机转写（火山要中国账号，对老外是死路）
+  const fallbackAsr = (L === 'zh' ? 'volc' : (state.macAsrAvailable ? 'mac' : 'deepgram'));
+  const pickAsr = ['mac','deepgram','volc'].includes(state.asrProvider) ? state.asrProvider : fallbackAsr;
+  const r2=document.querySelector('input[name=asr][value="'+pickAsr+'"]'); if(r2) r2.checked=true;
   paintAsr();
   paintPlaceholders();
 }
 async function send(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Tht-Token':window.THT_BOOT?.relayToken||''},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw Error(j.error||j.message||'failed');return j;}
 function validate(){
   if(!state) throw Error(t('notloaded'));
-  const localAsr=document.querySelector('input[name=asr]:checked')?.value==='mac';
-  for(const [key,ready,label] of [['VOLC_APP_KEY',state.asrConfigured||localAsr,'App Key / APP ID'],['VOLC_ACCESS_KEY',state.asrConfigured||localAsr,'Access Key / Access Token'],['DEEPSEEK_API_KEY',state.modelConfigured||!!state.provider,t('l_key')]])
+  const pick=document.querySelector('input[name=asr]:checked')?.value||'volc';
+  const localAsr=(pick!=='volc');
+  for(const [key,ready,label] of [['VOLC_APP_KEY',state.asrConfigured||localAsr,'App Key / APP ID'],['VOLC_ACCESS_KEY',state.asrConfigured||localAsr,'Access Key / Access Token'],['DEEPSEEK_API_KEY',state.modelConfigured||!!state.provider,t('l_key')],['DEEPGRAM_API_KEY',pick!=='deepgram'||state.deepgramConfigured,t('l_dg')]])
     if(!ready&&!form.elements[key].value.trim()){form.elements[key].focus();throw Error(t('need')+label);}
 }
 async function save(){validate();const body=Object.fromEntries(new FormData(form));body.ASR_PROVIDER=document.querySelector('input[name=asr]:checked')?.value||'volc';delete body.asr;await send('/setup',body);for(const el of form.querySelectorAll('[type=password]'))el.value='';await refresh();}
