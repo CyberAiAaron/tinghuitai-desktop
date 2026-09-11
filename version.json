@@ -1,10 +1,10 @@
 {
-  "version": "0.5.9",
+  "version": "0.6.0",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.9.zip",
-  "sha256": "94981bf33cda8965c8ebab028d4df8a2cb645fc6454f06b2f750d6a88d9741b8",
-  "size": 285538,
-  "notes": "会中可在「线上会」与「线上+线下」之间直接切换，不中断这一场",
+  "zip": "tinghuitai-desktop-v0.6.0.zip",
+  "sha256": "94fbbc2433b1d1ce97c397d2e4d47249040958454b07c800716fc21bf1387daa",
+  "size": 331729,
+  "notes": "会后一张卡直接进这一场的页面，纪要在第一屏；要点收敛成十来条一条条确认；记忆分成待处理/已确认/已作废，作废可撤销；工作台合成一个（含日报）并可单独开 App。修了「在工作台改待办会误跑程序更新且不保存」和四个点不到的功能。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }
