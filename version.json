@@ -1,10 +1,10 @@
 {
-  "version": "0.5.5",
+  "version": "0.5.6",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.5.zip",
-  "sha256": "9e7cee16d22d860664fe60b505cd30381a899b102ce60fcf0be4b4ec7c9845bb",
-  "size": 282734,
-  "notes": "首次打开不再被设置页拦住；启动器就绪判据修正；顶部常驻就绪条",
+  "zip": "tinghuitai-desktop-v0.5.6.zip",
+  "sha256": "087a4e376365a01cfa180068873bc0d8a3f1a4e0ce34e6b7c61101670df715f2",
+  "size": 282624,
+  "notes": "删除字幕直取模式；修复切换会议时的报错；补齐英文",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }
