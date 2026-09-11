@@ -13,3 +13,6 @@ archives/
 *.zip
 preset.json
 开始用.md
+
+# 发行产物不进源码树
+*.zip

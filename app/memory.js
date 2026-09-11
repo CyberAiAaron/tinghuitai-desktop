@@ -160,10 +160,109 @@ function flagPossiblyChanged(db, id, note) {
 }
 
 function dropCard(db, id, note) {
-  const cur = db.prepare('SELECT kind FROM cards WHERE id=?').get(id);
+  const cur = db.prepare('SELECT kind,state,human_edited,review_note FROM cards WHERE id=?').get(id);
   if (!cur) return null;
-  return updateCard(db, id, { state: DROP_STATE[cur.kind] || 'revoked', human_edited: 1, needs_review: 0 }, note || '你标为作废');
+  // 记下作废之前是什么状态，才撤得回来。不留这个，撤销只能瞎猜。
+  // human_edited 也要记：作废会把它置 1，不还原，撤销后这条会留在「已确认」那一组里。
+  const r = updateCard(db, id, { state: DROP_STATE[cur.kind] || 'revoked', human_edited: 1, needs_review: 0 }, note || '你标为作废');
+  return r ? { ...r, prevState: cur.state, prevEdited: cur.human_edited ? 1 : 0, prevNote: cur.review_note || '' } : null;
 }
 
-module.exports = { open, closeAll, inTx, putCard, updateCard, dropCard, flagPossiblyChanged,
+// 撤销作废：放回作废前的状态。终态不可复活那条规则在这里要让路——
+// 是用户自己刚点的作废，5 秒内反悔属于正常操作，不是模型在复活旧决定。
+function undropCard(db, id, prevState, prevEdited, prevNote) {
+  const cur = db.prepare('SELECT kind,state FROM cards WHERE id=?').get(id);
+  if (!cur) return null;
+  const allowed = STATES[cur.kind] || [];
+  const back = allowed.includes(prevState) ? prevState : DEFAULT_STATE[cur.kind];
+  const edited = prevEdited ? 1 : 0;
+  const note = typeof prevNote === 'string' ? prevNote.slice(0, 300) : '';
+  return inTx(db, () => {
+    db.prepare('UPDATE cards SET state=?, human_edited=?, review_note=?, revision=revision+1 WHERE id=?').run(back, edited, note, id);
+    const row = db.prepare('SELECT * FROM cards WHERE id=?').get(id);
+    db.prepare('INSERT INTO card_history(id,revision,snapshot,changed_at) VALUES(?,?,?,?)').run(id, row.revision, JSON.stringify(row), now());
+    return row;
+  });
+}
+
+module.exports = { open, closeAll, inTx, putCard, updateCard, dropCard, undropCard, flagPossiblyChanged,
                    KINDS, STATES, DEFAULT_STATE, DROP_STATE, TERMINAL, uid, now, iso };
+
+// ===== 词表（lexicon）：用户纠正过的词，回流到转写之前 =====
+// 跟记忆卡分开存：卡片是会议内容，词表是识别层的纠正，生命周期和用途都不同。
+// 存服务端而不是浏览器，因为它必须在下一场会开始之前、由服务端注入热词。
+function ensureLexicon(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS lexicon(
+    wrong TEXT PRIMARY KEY, right TEXT NOT NULL, scope TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 1.0, hit_count INTEGER NOT NULL DEFAULT 0,
+    harm_count INTEGER NOT NULL DEFAULT 0, miss_count INTEGER NOT NULL DEFAULT 0,
+    last_hit_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    source_meeting TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT 'active')`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_lex_live ON lexicon(state,last_hit_at)');
+}
+// 太短或太常见的词进热词会污染整场识别（把「方案」加成热词，满屏都是方案）。
+// 这里只拦明显有害的：单字、纯数字、纯标点、超长。其余交给用户判断。
+const LEX_BAD = /^[\s\p{P}]*$|^\d+$/u;
+function lexOk(wrong, right) {
+  const w = String(wrong || '').trim(), r = String(right || '').trim();
+  if (!w || !r) return { ok: false, why: '两个都要填' };
+  if (w === r) return { ok: false, why: '两个词一样' };
+  if (w.length > 40 || r.length > 40) return { ok: false, why: '词太长' };
+  if (/[\r\n]/.test(w + r)) return { ok: false, why: '不能有换行' };
+  if (LEX_BAD.test(w) || LEX_BAD.test(r)) return { ok: false, why: '不是一个词' };
+  if ([...w].length < 2 && !/^[A-Za-z]{2,}$/.test(w)) return { ok: false, why: '单字不能做热词，会污染整场识别' };
+  return { ok: true, w, r };
+}
+function putLex(db, wrong, right, meetingId) {
+  ensureLexicon(db);
+  const v = lexOk(wrong, right);
+  if (!v.ok) return { ok: false, why: v.why };
+  return inTx(db, () => {
+    const cur = db.prepare('SELECT * FROM lexicon WHERE wrong=?').get(v.w);
+    const t = now();
+    if (cur) {
+      // 同一个错词改到了另一个正确写法：以最新为准，但不清空统计
+      db.prepare('UPDATE lexicon SET right=?,updated_at=?,state=?,confidence=1.0 WHERE wrong=?').run(v.r, t, 'active', v.w);
+      return { ok: true, updated: true, wrong: v.w, right: v.r };
+    }
+    db.prepare('INSERT INTO lexicon(wrong,right,created_at,updated_at,source_meeting) VALUES(?,?,?,?,?)')
+      .run(v.w, v.r, t, t, str(meetingId, 100));
+    return { ok: true, created: true, wrong: v.w, right: v.r };
+  });
+}
+// 注入热词：取正确写法，按最近命中和置信度排序。limit 由调用方按 ASR 能力给。
+function lexHotwords(db, limit = 15) {
+  ensureLexicon(db);
+  try {
+    return db.prepare(`SELECT right FROM lexicon WHERE state='active' AND harm_count < 3
+      ORDER BY (last_hit_at IS NULL) ASC, last_hit_at DESC, confidence DESC, updated_at DESC LIMIT ?`)
+      .all(Math.max(0, Math.min(200, limit | 0))).map(r => r.right);
+  } catch (e) { return []; }
+}
+function lexAll(db) { ensureLexicon(db); try { return db.prepare('SELECT * FROM lexicon ORDER BY updated_at DESC').all(); } catch (e) { return []; } }
+// 一场会结束后数一次：错词还出现 = 这次没救回来（复发）；正确写法出现 = 命中。
+function lexScore(db, text, meetingId) {
+  ensureLexicon(db);
+  const rows = lexAll(db).filter(r => r.state === 'active');
+  const out = [];
+  const t = now();
+  for (const r of rows) {
+    const miss = (String(text).split(r.wrong).length - 1);
+    const hit = (String(text).split(r.right).length - 1);
+    if (!miss && !hit) continue;
+    try {
+      inTx(db, () => {
+        db.prepare('UPDATE lexicon SET hit_count=hit_count+?, miss_count=miss_count+?, last_hit_at=CASE WHEN ?>0 THEN ? ELSE last_hit_at END, updated_at=? WHERE wrong=?')
+          .run(hit, miss, hit, t, t, r.wrong);
+      });
+    } catch (e) {}
+    out.push({ wrong: r.wrong, right: r.right, hit, miss, meeting: meetingId || '' });
+  }
+  return out;
+}
+module.exports.ensureLexicon = ensureLexicon;
+module.exports.lexOk = lexOk;
+module.exports.putLex = putLex;
+module.exports.lexHotwords = lexHotwords;
+module.exports.lexAll = lexAll;
+module.exports.lexScore = lexScore;

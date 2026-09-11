@@ -105,6 +105,14 @@ async function deepseek(env, system, user, maxTokens, tier) {
 }
 function larkPush() { /* No automatic external messages in the standalone edition. */ }
 
+const SERVER_STARTED_AT = new Date().toISOString();
+const SERVER_VERSION = (() => {
+  // 安装脚本不复制 version.json（它只拷 app/web/scripts/... 那几项），全新安装读不到版本号。
+  // package.json 一定在，退回去读它。检查更新本来就是以 package.json 为准的。
+  try { return require('../version.json').version; } catch (e) {}
+  try { return require('../package.json').version || ''; } catch (e) { return ''; }
+})();
+
 const SESSIONS = new Map();  // sessionId -> Session
 
   function repeatedASR(text){return typeof text==='string'&&text.length>=80&&/(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}/u.test(text);}
@@ -292,7 +300,16 @@ class Session {
     }, 100);
   }
   sendConfig() {
-    const hw = (Array.isArray(this.startMsg.hotwords) ? this.startMsg.hotwords : []).slice(0, 15).map(w => ({ word: String(w) }));
+    // 热词先用你纠正过的词（服务端词表，按最近命中排序），不够的再拿本场简报里的词补。
+    // 词表读不出来时静默回落到原来的行为——热词只是锦上添花，绝不能让会开不成。
+    const HOTWORD_CAP = 15;                      // 火山当前接受的条数，验证过再谈扩容
+    let lex = [];
+    try { lex = require('./memory').lexHotwords(require('./memory').open(DATA), HOTWORD_CAP); }
+    catch (e) { log('热词：词表读取失败，回落到简报热词 ' + e.message); }
+    const fromBrief = Array.isArray(this.startMsg.hotwords) ? this.startMsg.hotwords : [];
+    const merged = [...new Set([...lex, ...fromBrief].map(x => String(x || '').trim()).filter(Boolean))].slice(0, HOTWORD_CAP);
+    if (lex.length) log('热词：词表 ' + lex.length + ' 个 + 简报补位，共 ' + merged.length + ' 个 ' + this.id);
+    const hw = merged.map(w => ({ word: w }));
     const req = { model_name: 'bigmodel', enable_nonstream: true, enable_itn: true, enable_punc: true, enable_ddc: false, show_utterances: true, enable_speaker_info: true, ssd_version: '200', end_window_size: 800, result_type: 'single', corpus: { context: JSON.stringify({ hotwords: hw }) } };
     const volc = this.lang && LANGS[this.lang] ? LANGS[this.lang].volc : '';
     if (volc) req.language = volc;
@@ -608,12 +625,39 @@ class Session {
     let saved=false;
     try {
       const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||''};
+      // 这一场里，你纠正过的词有没有再错。这是「回流到底有没有用」的唯一证据。
+      try {
+        const mem = require('./memory');
+        const full = (this.transcript||[]).map(r=>r.text).join('\n');
+        const scored = mem.lexScore(mem.open(DATA), full, this.id).filter(x => x.hit || x.miss);
+        if (scored.length) {
+          const miss = scored.reduce((a,b)=>a+b.miss,0), hit = scored.reduce((a,b)=>a+b.hit,0);
+          sess.lexiconScore = { rows: scored, hit, miss, recurrence: (hit+miss) ? +(miss/(hit+miss)).toFixed(3) : null };
+          log('词表复发统计 ' + this.id + '：命中 ' + hit + ' 次，仍错 ' + miss + ' 次');
+        }
+      } catch (e) { log('词表统计失败（不影响这场）' + e.message); }
       try { const ops = require('./memory-ops');
         const spoken = (this.transcript||[]).map(r=>r.text).join(' ').slice(0, 6000);
         const after = ops.retrieve(DATA, [this.title||'', spoken].join(' '), { log });
         sess.memoryBlock = ops.toPromptBlock(after);
       } catch (e) { log('memory 会后检索失败 ' + e.message); }
       this.pendingPath=path.join(PENDING_DIR,'sess-'+this.id+'.json');journal.write(this.pendingPath,sess);
+      // 会后收敛：原始条目已经落盘了才跑，跑挂了也只是没有收敛版，原始一条不少。
+      // 放在归档之后、不阻塞收尾。
+      const condTimer = setTimeout(() => {
+        (async () => {
+          try {
+            const { condense } = require('./condense');
+            const r = await condense(sess, (sysP, userP) => deepseek(loadEnv(), sysP, userP, 3000), log);
+            if (r && !r.skipped && !r.failed) {
+              sess.condensed = r;
+              journal.write(this.pendingPath, sess);          // 原子写，和原始数据同一份文件
+              this.broadcast({ type: 'condensed', condensed: r });
+            }
+          } catch (e) { log('收敛异常（不影响这场）' + e.message); }
+        })();
+      }, 1500);
+      if (condTimer.unref) condTimer.unref();
       // 抽卡放在归档之后、不阻塞收尾：失败只记日志，不影响纪要
       const memTimer = setTimeout(() => {
         const ops = require('./memory-ops');
@@ -666,7 +710,7 @@ function buildExportState() {
       if (!/^(sess|offline)-.*\.json(\.done)?$/.test(f)) continue;
       try {
         const s = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, f), 'utf8'));
-        sessions.push({ _fileUpdated:fs.statSync(path.join(PENDING_DIR,f)).mtimeMs,id: s.id || f, title: s.title || '', start: s.start || '', end: s.end || '', mode: s.mode || 'record', source: s.source || '', lang: s.lang || '', uiLang: s.uiLang || 'zh', notes:s.notes||'',fixes:s.fixes||[],recoveryStatus:s.recoveryStatus||'',names: s.names || {}, transcript: s.transcript || [], highlights: s.highlights || [], todos: s.todos || [], factchecks: s.factchecks || [], summary: s.summary || '' });
+        sessions.push({ _fileUpdated:fs.statSync(path.join(PENDING_DIR,f)).mtimeMs,id: s.id || f, title: s.title || '', start: s.start || '', end: s.end || '', mode: s.mode || 'record', source: s.source || '', lang: s.lang || '', uiLang: s.uiLang || 'zh', notes:s.notes||'',fixes:s.fixes||[],recoveryStatus:s.recoveryStatus||'',names: s.names || {}, transcript: s.transcript || [], highlights: s.highlights || [], todos: s.todos || [], factchecks: s.factchecks || [], summary: s.summary || '', condensed: s.condensed || null, review: s.review || null, shareNote: s.shareNote || '' });
       } catch (e) { log('export-state skip bad file ' + f + ' ' + e.message); }
     }
   } catch (e) { log('export-state scan fail ' + e.message); }
@@ -747,9 +791,34 @@ async function processImportedAudio(audioPath, title, options={}) {
 const STATIC_MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.css': 'text/css; charset=utf-8' };
 // 页面本身也曾只能从 funnel 拿——tailscaled 一死，中转活着也打不开页面；这条把静态资源挪进中转自身，
 // 让 Mac 本机全链路（页面+WS）不碰隧道，funnel 只服务手机端。
+// 把 /hub 整段转发给常驻服务，保持单写者。失败返回 false，由调用方退回本地。
+async function proxyHub(req, res, u, upstream) {
+  let body = null;
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const parts=[]; let size=0;
+    try { for await (const c of req) { parts.push(c); size+=c.length; if (size>2_000_000) throw Error('too large'); } }
+    catch (e) { return false; }
+    body = Buffer.concat(parts);
+  }
+  // 上游有自己的口令，客户端带过来的是本机这一份，必须换掉，否则一律 401
+  const q = new URLSearchParams(u.search||'');
+  let upTok = String(process.env.THT_HUB_UPSTREAM_TOKEN||'').trim();
+  if (!upTok) { try { upTok = String(loadEnv().HUB_UPSTREAM_TOKEN||'').trim(); } catch (e) { upTok=''; } }
+  if (upTok) q.set('token', upTok);
+  const qs = q.toString();
+  const target = upstream.replace(/\/$/,'') + u.pathname.replace(/^\/asr-relay/,'') + (qs?'?'+qs:'');
+  try {
+    const r = await fetch(target, { method: req.method, headers: { 'Content-Type': req.headers['content-type']||'application/json' },
+      body: body && body.length ? body : undefined, signal: AbortSignal.timeout(20000) });
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.writeHead(r.status, { 'Content-Type': r.headers.get('content-type')||'application/json', 'Cache-Control':'no-store' });
+    res.end(buf); return true;
+  } catch (e) { log('工作台上游不可用，退回本地一份：'+e.message); return false; }
+}
+
 function serveStatic(req, res, p) {
   let rel;try{rel=decodeURIComponent(p.replace(/^\/tinghuitai\/?/, '')).split('?')[0]||'index.html';}catch{res.writeHead(400);return res.end('invalid path');}
-  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','memory.html']);
+  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json']);
   if(!allowed.has(rel)){res.writeHead(404);return res.end('not found');}
   const full = path.join(STATIC_DIR, rel);
   if (!full.startsWith(STATIC_DIR + path.sep) && full !== STATIC_DIR) { res.writeHead(403); return res.end('forbidden'); }
@@ -795,6 +864,21 @@ process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获
 const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
+  // ⚠️ 工作台这一段必须排在所有 p.endsWith('/xxx') 路由前面。
+  // 它的子路径叫 /hub/update、/hub/session，会被下面的 endsWith('/update')（应用自更新）
+  // 和 endsWith('/session')（存会议记录）抢走：改一条待办会去跑一次程序更新，
+  // 「收进工作台」会走到存会议那条路上。2026-09-11 实测到，靠排序解决。
+  // Hub mutations require same-origin JSON; no credential-bearing wildcard CORS.
+  // 工作台只能有一份数据。这台机器上另有一个常驻服务在写同一个总待办池；
+  // 两个进程各写各的 work-hub.json 会互相覆盖，所以这里不自己读写，整段转给它。
+  // 没配 THT_HUB_UPSTREAM（别人的安装）就还是走本地那份，行为不变。
+  if (u.pathname.replace(/^\/asr-relay/,'').startsWith('/hub')) {
+    let up = String(process.env.THT_HUB_UPSTREAM||'').trim();
+    if (!up) { try { up = String(loadEnv().HUB_UPSTREAM||'').trim(); } catch (e) { up=''; } }
+    if (up) { if (await proxyHub(req,res,u,up)) return; }   // 上游连不上就退回本地，工作台不至于打不开
+    await workHub.route(req,res,u,authed); return;
+  }
+
   if(req.method==='GET'&&p.endsWith('/meeting-result')){if(!authed){res.writeHead(401);return res.end('unauthorized');}const rid=u.searchParams.get('id');let result=meetingPipeline.result(rid);if(!result){const pend=buildExportState().sessions.find(s=>String(s.id)===String(rid));if(pend)result={...pend,source:pend.source||'',archiveNote:'尚未经过会后整理，显示原始记录'};}if(result){const t=readTitles()[String(rid)]||{};if(!result.topicTitle&&t.topicTitle)result.topicTitle=t.topicTitle;if(!result.participants)result.participants=t.participants||[];}res.writeHead(result?200:404,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(result||{}));}
   // 更新日志：先读本机的，读不到再去公开仓库拿
   if(req.method==='GET'&&p.endsWith('/changelog')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
@@ -843,7 +927,16 @@ const server = http.createServer(async (req, res) => {
           const r = mem.updateCard(db, String(j.id), patch, '你手动改过');
           if (!r) return send(404,{ok:false,error:'没有这条'});
         } else if (j.action === 'drop' && j.id) {
-          if (!mem.dropCard(db, String(j.id), '你标为作废')) return send(404,{ok:false,error:'没有这条'});
+          const r = mem.dropCard(db, String(j.id), '你标为作废');
+          if (!r) return send(404,{ok:false,error:'没有这条'});
+          ops.project(DATA, path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'), log);
+          // 带回作废前的全部可还原字段，前端才撤得回来
+          return send(200,{ok:true, prevState: r.prevState, prevEdited: r.prevEdited, prevNote: r.prevNote, state: r.state});
+        } else if (j.action === 'undrop' && j.id) {
+          if (!mem.undropCard(db, String(j.id), String(j.prevState||''), j.prevEdited?1:0, String(j.prevNote||''))) return send(404,{ok:false,error:'没有这条'});
+        } else if (j.action === 'confirm' && j.id) {
+          // 「确认无误」是一个独立动作：标成人工确认，模型以后不会静默改它
+          if (!mem.updateCard(db, String(j.id), { human_edited: 1, needs_review: 0 }, '你确认无误')) return send(404,{ok:false,error:'没有这条'});
         } else return send(400,{ok:false,error:'不认识的动作'});
         ops.project(DATA, path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'), log);
         return send(200,{ok:true});
@@ -932,20 +1025,238 @@ const server = http.createServer(async (req, res) => {
         .then(out=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(out));})
         .catch(e=>{res.writeHead(e.status||400,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     });return;}
-  if(req.method==='POST'&&p.endsWith('/meeting-retry')){if(!authed){res.writeHead(401);return res.end('unauthorized');}let parts=[],size=0;req.on('data',d=>{parts.push(d);size+=d.length;if(size>2000)req.destroy();});req.on('end',()=>{const body=Buffer.concat(parts).toString('utf8');try{const job=meetingPipeline.retry(JSON.parse(body).id);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(job));}catch(e){res.writeHead(400);res.end(e.message);}});return;}
+  if(req.method==='POST'&&p.endsWith('/meeting-retry')){if(!authed){res.writeHead(401);return res.end('unauthorized');}let parts=[],size=0;req.on('data',d=>{parts.push(d);size+=d.length;if(size>2000)req.destroy();});req.on('end',()=>{
+    const body=Buffer.concat(parts).toString('utf8');
+    let rid=''; try{ rid=String(JSON.parse(body).id||''); }catch(e){ res.writeHead(400); return res.end('bad json'); }
+    if(!/^[A-Za-z0-9_-]{1,80}$/.test(rid)){ res.writeHead(400); return res.end('bad id'); }
+    // 「重新整理」是这件事的唯一入口，所以它要把该做的都做了：
+    // 重跑归档（有归档任务才有得跑）+ 按最新格式收敛（不管有没有归档任务都要做）。
+    // 只有两件都没得做时才算失败。
+    let job=null, jobErr='';
+    try{ job=meetingPipeline.retry(rid); }catch(e){ jobErr=e.message||String(e); }
+    const file=path.join(PENDING_DIR,'sess-'+rid+'.json');
+    const hasSession=fs.existsSync(file);
+    if(!job&&!hasSession){ res.writeHead(400); return res.end(jobErr||'找不到这一场'); }
+    setTimeout(()=>{(async()=>{try{
+      const sess=JSON.parse(fs.readFileSync(file,'utf8'));
+      const r=await require('./condense').condense(sess,(a,b)=>deepseek(loadEnv(),a,b,3000),log);
+      if(r&&!r.skipped&&!r.failed){ sess.condensed=r; journal.write(file,sess); log('重新整理：收敛完成 '+rid); }
+      else if(r&&r.failed){ log('重新整理：收敛没成，原始条目一条没动 '+rid); }
+      else if(r&&r.skipped){ log('重新整理：条目不多，跳过收敛 '+rid); }
+    }catch(e){ log('重新整理时的收敛失败（不影响归档）'+e.message); }})();},1500).unref?.();
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify(job||{ok:true,note:jobErr?'没有归档任务，只做了按最新格式整理':'',sessionId:rid}));
+  });return;}
   // 历史场次轻量清单：不带转写正文；topicTitle/participants 来自 meeting-titles.json（会后流水线与 backfill-titles.py 写入）。
   if(req.method==='GET'&&p.endsWith('/meeting-list')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
     const titles=readTitles();const jobs=new Map(meetingPipeline.list().map(j=>[String(j.sessionId),j]));
     const rows=buildExportState().sessions.map(s=>{const t=titles[String(s.id)]||{};const j=jobs.get(String(s.id))||{};const start=typeof s.start==='number'?s.start:Date.parse(s.start)||0;const last=(s.transcript||[]).length?(s.transcript[s.transcript.length-1].at||0):0;const endTs=s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)||0):(last>1e11?last:(last?start+last*1000:0));
             const src=/yoooclaw/i.test(String(s.source||''))||String(s.mode||'')==='yoooclaw'||/^yc-/.test(String(s.id))?'yoooclaw':'tinghuitai';
-return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',participants:t.participants||[],start,end:endTs||null,durationSec:endTs&&start?Math.max(0,Math.round((endTs-start)/1000)):0,transcriptCount:(s.transcript||[]).length,highlightCount:(s.highlights||[]).length,todoCount:(s.todos||[]).length,factcheckCount:(s.factchecks||[]).length,hasSummary:!!s.summary,recoveryStatus:s.recoveryStatus||'',source:src,recording:SESSIONS.has(String(s.id))&&!SESSIONS.get(String(s.id)).finalized,archive:{status:j.status||'',phase:j.phase||'',url:j.url||'',error:String(j.error||'').slice(0,200)}};}).sort((a,b)=>b.start-a.start);
+return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',participants:t.participants||[],start,end:endTs||null,durationSec:endTs&&start?Math.max(0,Math.round((endTs-start)/1000)):0,transcriptCount:(s.transcript||[]).length,highlightCount:(s.highlights||[]).length,todoCount:(s.todos||[]).length,factcheckCount:(s.factchecks||[]).length,hasSummary:!!s.summary,recoveryStatus:s.recoveryStatus||'',source:src,recording:SESSIONS.has(String(s.id))&&!SESSIONS.get(String(s.id)).finalized,archive:{status:j.status||'',phase:j.phase||'',url:j.url||'',error:String(j.error||'').slice(0,200),startedAt:j.created||'',updatedAt:j.updated||''}};}).sort((a,b)=>b.start-a.start);
     const gone=new Set(meetingTrash.deletedIds().map(String));
     res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({v:1,sessions:rows.filter(r=>!gone.has(String(r.id))),deletedIds:[...gone]}));}
   if(req.method==='GET'&&p.endsWith('/meeting-status')){if(!authed){res.writeHead(401);return res.end('unauthorized');}res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({jobs:meetingPipeline.list()}));}
-  // Hub mutations require same-origin JSON; no credential-bearing wildcard CORS.
-  if (u.pathname.replace(/^\/asr-relay/,'').startsWith('/hub')) { await workHub.route(req,res,u,authed); return; }
+  // 日报的数据是外部管线生成的，不在安装包里：按顺序找，都没有就回一个空壳，页面自己说「还没有日报」。
+  if (req.method === 'GET' && p.endsWith('/briefs.json')) {
+    const cands = [process.env.THT_BRIEFS_JSON, path.join(DATA,'briefs.json'), path.join(STATIC_DIR,'briefs.json'),
+      path.join(HOME,'This is my Chansey','tools','tinghuitai','briefs.json')].filter(Boolean);
+    const hit = cands.find(f => { try { return fs.statSync(f).isFile(); } catch (e) { return false; } });
+    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+    if (!hit) return res.end(JSON.stringify({topics:[],generatedAt:''}));
+    try { return res.end(fs.readFileSync(hit)); } catch (e) { return res.end(JSON.stringify({topics:[],generatedAt:''})); }
+  }
   if (req.method === 'GET' && (p === '/tinghuitai' || p.startsWith('/tinghuitai/'))) { return serveStatic(req, res, p); }
   // 会后回听：把这场的原始 PCM 当成 WAV 发出去，支持 Range 才能拖动和点条目跳转。
+  // 按最新格式整理一场老会议：给它补上收敛结果。
+  // 老场次是在有收敛能力之前录的，所以没有 condensed，界面上既看不到收敛条也点不了「过一遍」。
+  const condensing = new Set();
+  if (p.endsWith('/condense')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method not allowed'); }
+    const parts = []; let size = 0;
+    req.on('data', c => { parts.push(c); size += c.length; if (size > 4000) req.destroy(); });
+    req.on('end', async () => {
+      let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+      const sid = String(j.id || '');
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok: false, error: '会议编号不对' });
+      if (condensing.has(sid)) return reply(200, { ok: false, error: '这场正在整理，等它跑完' });
+      const file = path.join(PENDING_DIR, 'sess-' + sid + '.json');
+      let sess; try { sess = JSON.parse(fs.readFileSync(file, 'utf8')); }
+      catch (e) { return reply(404, { ok: false, error: '找不到这场会议' }); }
+      condensing.add(sid);
+      try {
+        const r = await require('./condense').condense(sess, (sysP, userP) => deepseek(loadEnv(), sysP, userP, 3000), log);
+        if (r && r.skipped) return reply(200, { ok: false, skipped: true, error: r.reason === 'small' ? '这场条目本来就不多，不用收敛' : '这场条目太多，暂时收不了' });
+        if (!r || r.failed) return reply(200, { ok: false, error: '模型这次没给出可用结果，原始条目一条没动，可以再试一次' });
+        sess.condensed = r;
+        journal.write(file, sess);
+        log('按最新格式整理完成 ' + sid);
+        return reply(200, { ok: true, condensed: { source: r.source, highlights: r.highlights.length, todos: r.todos.length, factchecks: r.factchecks.length } });
+      } catch (e) { log('按最新格式整理失败 ' + e.message); return reply(200, { ok: false, error: e.message }); }
+      finally { condensing.delete(sid); }
+    });
+    return;
+  }
+  // 一次拿全：所有会 + 每场的总体状态 + 五个产物各自的可用性。
+  // 前端不再自己推断状态（旧的 bdState 推错过好几次）。
+  if (p.endsWith('/meetings')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const lang = u.searchParams.get('lang') === 'en' ? 'en' : 'zh';
+    const MS = require('./meeting-state');
+    const titles = readTitles();
+    const jobs = new Map(meetingPipeline.list().map(j => [String(j.sessionId), j]));
+    let memCounts = new Map();
+    try {
+      const db = require('./memory').open(DATA);
+      for (const r of db.prepare('SELECT meeting_id, COUNT(*) n FROM cards GROUP BY meeting_id').all()) memCounts.set(String(r.meeting_id), r.n);
+    } catch (e) {}
+    const gone = new Set(meetingTrash.deletedIds().map(String));
+    const rows = [];
+    try {
+      fs.mkdirSync(PENDING_DIR, { recursive: true });
+      for (const f of fs.readdirSync(PENDING_DIR)) {
+        if (!/^(sess|offline)-.*\.json$/.test(f)) continue;
+        let x; try { x = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, f), 'utf8')); } catch (e) { continue; }
+        const id = String(x.id || '');
+        if (!id || gone.has(id)) continue;
+        // 同一场可能同时有 sess- 和 offline- 两份。留信息多的那份：
+        // 有收敛/过审结果的优先，其次转写更长的。留错了会把「已整理」显示成「没整理」。
+        const score = (o) => (o.condensed ? 4 : 0) + (o.review ? 2 : 0) + ((o.transcript || []).length ? 1 : 0);
+        const dupIdx = rows.findIndex(r => r.id === id);
+        if (dupIdx >= 0) { if (score(x) <= score(rows[dupIdx].__raw)) continue; rows.splice(dupIdx, 1); }
+        const live = SESSIONS.has(id) && !SESSIONS.get(id).finalized;
+        const t = titles[id] || {};
+        const d = MS.describe(x, jobs.get(id), memCounts.get(id) || 0, live, lang);
+        const start = typeof x.start === 'number' ? x.start : (Date.parse(x.start || '') || 0);
+        const end = x.end ? (typeof x.end === 'number' ? x.end : Date.parse(x.end)) : null;
+        rows.push({ __raw: x, id, title: x.topicTitle || t.topicTitle || x.title || '', participants: t.participants || [],
+                    start, end, durationSec: end && start ? Math.max(0, Math.round((end - start) / 1000)) : 0,
+                    source: x.source || '', ...d });
+      }
+    } catch (e) { log('/meetings 扫描失败 ' + e.message); }
+    rows.sort((a, b) => (b.state === 'recording' ? 1 : 0) - (a.state === 'recording' ? 1 : 0) || b.start - a.start);
+    for (const r of rows) delete r.__raw;                        // 内部字段不外发
+    return reply(200, { ok: true, rows, at: Date.now() });
+  }
+  // 会后卡片的数据源。真相在服务端：哪几场已经收敛、还没过一遍。
+  // 不能靠浏览器 localStorage——收敛是服务端后台跑的，浏览器那份副本根本没有这个字段。
+  if (p.endsWith('/post-meeting')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const DAYS = 7, MAX = 3, now = Date.now();
+    const out = [];
+    try {
+      fs.mkdirSync(PENDING_DIR, { recursive: true });
+      for (const f of fs.readdirSync(PENDING_DIR)) {
+        if (!/^sess-.*\.json$/.test(f)) continue;
+        let x; try { x = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, f), 'utf8')); } catch (e) { continue; }
+        if (!x.condensed) continue;                                   // 没收敛的没什么可给
+        if (x.review && (x.review.decisions || []).length) continue;   // 过过一遍的不再提示
+        const t = Date.parse(x.end || x.start || '') || 0;
+        if (!t || now - t > DAYS * 86400000) continue;                 // 太久远的不再打扰
+        const c = x.condensed;
+        // 标题优先用整理后的主题标题，它才是人认得出来的那个
+        const t0 = (() => { try { return (readTitles()[String(x.id)] || {}).topicTitle || ''; } catch (e) { return ''; } })();
+        out.push({ id: x.id, title: x.topicTitle || t0 || x.title || '', endedAt: x.end || x.start || '',
+                   counts: { highlights: (c.highlights || []).length, todos: (c.todos || []).length, factchecks: (c.factchecks || []).length } });
+      }
+    } catch (e) { log('post-meeting 扫描失败 ' + e.message); }
+    out.sort((a, b) => (Date.parse(b.endedAt) || 0) - (Date.parse(a.endedAt) || 0));
+    return reply(200, { ok: true, rows: out.slice(0, MAX) });
+  }
+  // 这一场往长期记忆里留下了什么：会议详情页要能看到，记忆页要能点回来。
+  if (p.endsWith('/meeting-memory')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const sid = String(u.searchParams.get('id') || '');
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok: false, error: '会议编号不对' });
+    try {
+      const db = require('./memory').open(DATA);
+      const rows = db.prepare("SELECT id,kind,text,owner,due,state FROM cards WHERE meeting_id=? ORDER BY rowid").all(sid);
+      return reply(200, { ok: true, cards: rows, count: rows.length });
+    } catch (e) { return reply(200, { ok: false, cards: [], count: 0, error: e.message }); }
+  }
+  // 纪要随时可取：有收敛结果就能出，不要求先「过一遍」。
+  // 过一遍只是让它更准，不该成为拿到东西的前置条件。
+  if (p.endsWith('/share-note')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const sid = String(u.searchParams.get('id') || '');
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok: false, error: '会议编号不对' });
+    let sess; try { sess = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, 'sess-' + sid + '.json'), 'utf8')); }
+    catch (e) { return reply(404, { ok: false, error: '找不到这场会议' }); }
+    try {
+      const R = require('./review');
+      const cond = sess.condensed || { highlights: sess.highlights || [], todos: sess.todos || [], factchecks: sess.factchecks || [] };
+      const decisions = (sess.review && sess.review.decisions) || [];
+      const note = R.shareNote(sess, decisions, cond);
+      // 说清这份是自动整理的还是你确认过的，别让人拿着自动版当定稿转发
+      return reply(200, { ok: true, note, confirmed: !!decisions.length, condensed: !!sess.condensed });
+    } catch (e) { log('生成纪要失败 ' + e.message); return reply(200, { ok: false, error: e.message }); }
+  }
+  // 会后过一遍：保存你对收敛结果的逐条判断，并落两份产物
+  if (p.endsWith('/review')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method not allowed'); }
+    const parts = []; let size = 0, big = false;
+    req.on('data', c => { parts.push(c); size += c.length; if (size > 400000 && !big) { big = true; try { reply(413, { ok: false, error: '请求过长' }); } catch (e) {} req.destroy(); } });
+    req.on('end', async () => {
+      if (big) return;
+      let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+      const sid = String(j.id || '');
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok: false, error: '会议编号不对' });
+      const file = path.join(PENDING_DIR, 'sess-' + sid + '.json');
+      let sess = null;
+      try { sess = JSON.parse(fs.readFileSync(file, 'utf8')); }
+      catch (e) { return reply(404, { ok: false, error: '找不到这场会议' }); }
+      try {
+        const r = await require('./review').apply(DATA, sess, j.decisions, path.join(MEMORY_PROJECTION_DIR, 'meeting-memory.md'), log);
+        if (!r.ok) return reply(200, r);
+        sess.review = { decisions: r.decisions, at: r.at, written: r.written };
+        sess.shareNote = r.note;
+        try { journal.write(file, sess); } catch (e) { log('过审：写回场次失败 ' + e.message); return reply(200, { ok: false, error: '判断没存上：' + e.message }); }
+        log('过审完成 ' + sid + '：' + r.decisions.length + ' 条判断，写入记忆卡 ' + r.written + ' 张');
+        return reply(200, { ok: true, written: r.written, projected: r.projected, note: r.note, count: r.decisions.length });
+      } catch (e) { log('过审异常 ' + e.message); return reply(200, { ok: false, error: e.message }); }
+    });
+    return;
+  }
+  // 词表：你纠正过的词。写在服务端，下一场会开始前由它注入热词。
+  if (p.endsWith('/lexicon')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const mem = require('./memory');
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method === 'GET') {
+      try {
+        const db = mem.open(DATA);
+        const rows = mem.lexAll(db).map(r => ({ wrong: r.wrong, right: r.right, hit: r.hit_count, miss: r.miss_count, harm: r.harm_count, lastHitAt: r.last_hit_at, state: r.state }));
+        const hit = rows.reduce((a, b) => a + b.hit, 0), miss = rows.reduce((a, b) => a + b.miss, 0);
+        return reply(200, { ok: true, rows, total: rows.length, hit, miss, recurrence: (hit + miss) ? +(miss / (hit + miss)).toFixed(3) : null });
+      } catch (e) { log('lexicon 读失败 ' + e.message); return reply(200, { ok: false, rows: [], total: 0, error: '词表暂时读不出来' }); }
+    }
+    if (req.method === 'POST') {
+      const parts = []; let size = 0, big = false;
+      // 先把 413 发出去再断连接：直接 destroy 的话客户端只看到连接被掐，不知道为什么
+      req.on('data', c => { parts.push(c); size += c.length; if (size > 20000 && !big) { big = true; try { reply(413, { ok: false, error: '请求过长' }); } catch (e) {} req.destroy(); } });
+      req.on('end', () => {
+        if (big) return;
+        let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+        try {
+          const db = mem.open(DATA);
+          if (j.remove) { mem.ensureLexicon(db); db.prepare("UPDATE lexicon SET state='dropped', updated_at=? WHERE wrong=?").run(new Date().toISOString(), String(j.remove)); return reply(200, { ok: true, removed: true }); }
+          const r = mem.putLex(db, j.wrong, j.right, j.meetingId);
+          if (!r.ok) return reply(200, { ok: false, error: r.why });
+          log('词表 +1：' + r.wrong + ' → ' + r.right);
+          return reply(200, r);
+        } catch (e) { log('lexicon 写失败 ' + e.message); return reply(200, { ok: false, error: '没存上：' + e.message }); }
+      });
+      return;
+    }
+    res.writeHead(405); return res.end('method not allowed');
+  }
   if ((req.method === 'GET' || req.method === 'HEAD') && p.endsWith('/audio')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const sid = String(u.searchParams.get('id') || '');
@@ -988,7 +1299,11 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
     } else res.end();
     return;
   }
-  if (req.method === 'GET' && p.endsWith('/health')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({crashedSinceStart, ok: true, app:'tinghuitai-desktop', assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>['error','partial'].includes(j.status)).length })); }
+  if (req.method === 'GET' && p.endsWith('/health')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({crashedSinceStart, ok: true, app:'tinghuitai-desktop',
+    // 这三个字段是为了能一眼看出「现在跑的到底是哪份代码」。
+    // 2026-09-11 踩过：pid 文件是陈旧的，按它杀进程杀错了，老服务继续跑了一整天，
+    // 改完的服务端代码一直没生效，而界面因为是从磁盘读的看起来像已经更新。
+    pid: process.pid, startedAt: SERVER_STARTED_AT, version: SERVER_VERSION, assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>['error','partial'].includes(j.status)).length   /* empty 是终态，不算待处理 */ })); }
   if (req.method === 'GET' && p.endsWith('/export-state')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(buildExportState())); }
   if (req.method === 'POST' && p.endsWith('/audio')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({error:'首版未安装离线音频转写。请使用实时转写或导入文字。'})); }
   if (req.method === 'POST' && p.endsWith('/session')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } let parts = [], size = 0, big = false; req.on('data', c => { parts.push(c); size += c.length; if (size > 5e6) { big = true; req.destroy(); } }); req.on('end', () => { const body = Buffer.concat(parts).toString('utf8'); if (big) { res.writeHead(413); return res.end('too large'); } const ok = saveOfflineSession(body); log('offline session ' + (ok ? 'saved' : 'FAIL')); res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok })); }); return; }

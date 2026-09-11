@@ -120,9 +120,13 @@ def ensure_private(doc):
     if not closed(perm):
         raise RuntimeError('未确认仅本人可见，暂停上传会议正文')
 
+class NothingToArchive(RuntimeError):
+    """一个字都没转出来。重试多少次都一样，属于终态，不该一直挂在待处理里。"""
+    pass
+
 def archive_version(job, session, label, save):
     if not any(r.get('text','').strip() for r in session.get('transcript',[])):
-        raise RuntimeError('尚无可归档的转写，录音保留，等待识别重试')
+        raise NothingToArchive('这场没有转写内容，录音已保留')
     if read(ROOT/'settings.json',{}).get('ARCHIVE_TARGET','local') != 'lark':
         dest=ROOT/'archives'/job['key'];dest.mkdir(parents=True,exist_ok=True)
         content={'label':label,'session':session};version=digest(content)
@@ -270,7 +274,7 @@ def read_context():
     try: return f.read_text(encoding='utf-8', errors='replace')
     except Exception as e: raise RuntimeError('核心记忆读取失败：' + type(e).__name__)
 
-def summarize(session):
+def summarize(session, on_phase=None):
     config = read(ROOT/'settings.json', {})
     key = config.get('DEEPSEEK_API_KEY')
     provider = (config.get('LLM_PROVIDER') or '').strip()
@@ -317,7 +321,15 @@ def summarize(session):
         if rounds > 4:            # 模型可能把摘要写得跟原文一样长，导致永远收不敛，这里封顶
             text = text[:16000]; chunks = [text]; break
         before = len(text)
-        text = '\n\n'.join(call(c) for c in chunks)
+        # 长会这一段要跑好几分钟。每合并完一块就把进度写回 job，
+        # 否则外面只能看到「整理智能总结」五个字，分不清在跑还是卡死了。
+        parts = []
+        for n, c in enumerate(chunks, 1):
+            if on_phase:
+                try: on_phase('整理智能总结 · 第 %d/%d 段' % (n, len(chunks)))
+                except Exception: pass
+            parts.append(call(c))
+        text = '\n\n'.join(parts)
         if len(text) >= before:   # 这一轮没变短，再循环也不会短，直接截断进最终合并
             text = text[:16000]; chunks = [text]; break
         chunks = [text[i:i+16000] for i in range(0,len(text),16000)]
@@ -404,7 +416,7 @@ def process(job_path):
                 summary_source['names']={}
                 for row in summary_source.get('transcript',[]):
                     for field in ['speaker','spk','who']:row.pop(field,None)
-            enhanced['summary']=summarize(summary_source);job['summaryGenerated']=True;job.pop('summaryVerified',None)
+            enhanced['summary']=summarize(summary_source, on_phase=phase);job['summaryGenerated']=True;job.pop('summaryVerified',None)
         except Exception:
             job['summaryWarning']='智能总结未完成，原文已保留，可稍后重试'
         write(job_path.with_suffix('.enhanced.json'),enhanced)
@@ -438,5 +450,8 @@ if __name__=='__main__':
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:raise SystemExit(0)
         try: process(jp)
+        except NothingToArchive as e:
+            # 终态：不算失败、不再重试、不进「待处理」计数
+            job=read(jp);job.update(status='empty',error='',phase='这场没有内容');job.pop('nextRetry',None);write(jp,job);raise SystemExit(0)
         except Exception as e:
             job=read(jp);job.update(status='error',error=str(e)[:300],phase='归档待重试',nextRetry=time.time()+min(1800,60*2**job.get('attempts',1)));write(jp,job);raise SystemExit(1)

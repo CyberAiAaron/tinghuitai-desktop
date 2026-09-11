@@ -18,35 +18,109 @@ textarea{width:100%;box-sizing:border-box;border:1px solid #d2d2d7;border-radius
 .empty{color:#8e8e94;padding:40px 0;text-align:center}
 #msg{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1d1d1f;color:#fff;padding:9px 16px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s}
 #msg.on{opacity:1}
+.card.gone{opacity:0;transform:translateX(-12px);transition:opacity .45s,transform .45s}
+.card.just-confirmed{border-left-color:#2e7d32;transition:border-color .3s}
+.toast-act{margin-left:12px;border:0;background:rgba(255,255,255,.18);color:inherit;border-radius:999px;padding:3px 12px;font:inherit;font-size:13px;cursor:pointer}
+.toast-act:hover{background:rgba(255,255,255,.3)}
+#msg{display:flex;align-items:center;gap:4px}
+
 </style></head><body><main>
 <h1>会议记忆</h1>
 <p class="sub">每场会结束后自动从你说过的话里抽出来的，下一场开会时相关的会被自动翻出来给助手看。记错了就在这里改或作废，改完 Claude 那边的只读副本会同步更新。</p>
 <div class="tabs" id="tabs"></div>
 <div id="list"></div>
+
+<section id="lex-box" hidden>
+  <h2 style="font-size:17px;margin:36px 0 6px;padding-top:20px;border-top:1px solid #e6e6ea">纠正过的词</h2>
+  <p class="sub" id="lex-sub"></p>
+  <div id="lex-list"></div>
+</section>
 </main><div id="msg"></div>
 <script>
-const KIND={decision:'决定',question:'未决',promise:'承诺',term:'术语'};
+const KIND={decision:'记忆',question:'未决',promise:'承诺',term:'术语'};
 const STATE={active:'有效',superseded:'已被替代',revoked:'已作废',open:'未解决',resolved:'已解决',pending:'待完成',done:'已完成',cancelled:'已取消'};
 let all=[],tab='all';
+// 三个去处：待处理（还没看过的）、已确认（你确认或改过的）、已作废（你标掉的）。
+// 处理完一条它就离开待处理——这是「一条一条消失」的语义来源，不是动画效果。
+const isDropped=c=>c.review_note==='你标为作废';
+const isHandled=c=>!isDropped(c)&&!!c.human_edited;
+const isPending=c=>!isDropped(c)&&!c.human_edited;
+// 从会议详情页点过来时只看这一场，并在标题下说明
+const onlyMeeting=new URLSearchParams(location.search).get('meeting')||'';
 const tok=()=>window.THT_BOOT&&window.THT_BOOT.relayToken||'';
-const toast=s=>{const m=document.getElementById('msg');m.textContent=s;m.className='on';setTimeout(()=>m.className='',1800);};
+let toastTimer=null;
+// 提示要能带一个动作（撤销、去看看）。只报一句「已作废」而不给退路，是把不可逆操作硬塞给人。
+function toast(text, action, ms){
+  const m=document.getElementById('msg');
+  m.textContent=''; const span=document.createElement('span'); span.textContent=text; m.appendChild(span);
+  if(action){ const b=document.createElement('button'); b.textContent=action.label; b.className='toast-act';
+    b.onclick=()=>{ m.className=''; action.run(); }; m.appendChild(b); }
+  m.className='on';
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>m.className='', ms || (action?6000:2200));
+}
+// 你纠正过的词：这些会在下一场开会前被塞进语音识别的热词里，从源头上不再听错。
+// 「还错 N 次」是唯一能证明这条回流真的有用的数字——它该随场次降到 0。
+async function loadLex(){
+  const box=document.getElementById('lex-box');
+  try{
+    const r=await fetch('/asr-relay/lexicon?token='+encodeURIComponent(tok()),{cache:'no-store'});
+    const j=await r.json();
+    const rows=(j.rows||[]).filter(x=>x.state==='active');
+    if(!rows.length){ box.hidden=true; return; }
+    box.hidden=false;
+    const rec=j.recurrence;
+    document.getElementById('lex-sub').textContent =
+      rows.length+' 个词会在下一场开会前进入语音识别的热词。'
+      + (rec===null||rec===undefined ? '还没有统计数据，开一场含这些词的会就有了。'
+        : '这些词后来一共听对 '+j.hit+' 次、仍听错 '+j.miss+' 次，复发率 '+(rec*100).toFixed(0)+'%。这个数应该越用越低。');
+    document.getElementById('lex-list').innerHTML = rows.map(x=>
+      '<article class="card"><div class="head"><span class="kind">词</span>'
+      + '<span class="state">'+(x.miss? '仍错 '+x.miss+' 次' : (x.hit? '已听对 '+x.hit+' 次' : '还没遇到'))+'</span></div>'
+      + '<p class="text">'+esc(x.wrong)+' → <b>'+esc(x.right)+'</b></p>'
+      + '<div class="acts"><button data-lex-drop="'+esc(x.wrong)+'">不要这条</button></div></article>').join('');
+    document.getElementById('lex-list').querySelectorAll('[data-lex-drop]').forEach(b=>b.onclick=async()=>{
+      if(!confirm('以后不再把「'+b.dataset.lexDrop+'」当作要纠正的词？')) return;
+      await fetch('/asr-relay/lexicon?token='+encodeURIComponent(tok()),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({remove:b.dataset.lexDrop})});
+      toast('已移除'); loadLex();
+    });
+  }catch(e){ box.hidden=true; }
+}
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function load(){
+  loadLex();
   const r=await fetch('/asr-relay/memory?token='+encodeURIComponent(tok()),{cache:'no-store'});
   const j=await r.json();
   if(!j.ok){document.getElementById('list').innerHTML='<p class="empty">'+(j.error||'读不到')+'</p>';return;}
-  all=j.cards||[]; render();
+  all=j.cards||[];
+  if(onlyMeeting){
+    const before=all.length;
+    all=all.filter(c=>String(c.meeting_id||'')===onlyMeeting);
+    const sub=document.querySelector('.sub');
+    if(sub) sub.textContent='只看这一场留下的 '+all.length+' 条（全部共 '+before+' 条）。改完 Claude 那边的只读副本会同步更新。';
+  }
+  render();
 }
 function render(){
   const t=document.getElementById('tabs');
-  const counts={all:all.length,review:all.filter(c=>c.needs_review).length};
-  for(const k of Object.keys(KIND)) counts[k]=all.filter(c=>c.kind===k).length;
+  const pend=all.filter(isPending);
+  const counts={all:pend.length,review:pend.filter(c=>c.needs_review).length,
+    confirmed:all.filter(isHandled).length,dropped:all.filter(isDropped).length};
+  for(const k of Object.keys(KIND)) counts[k]=pend.filter(c=>c.kind===k).length;
   t.innerHTML='';
   const mk=(key,label)=>{const b=document.createElement('button');b.textContent=label+'（'+(counts[key]||0)+'）';b.setAttribute('aria-selected',String(tab===key));b.onclick=()=>{tab=key;render();};t.appendChild(b);};
-  mk('all','全部'); mk('review','待你核对'); for(const [k,v] of Object.entries(KIND)) mk(k,v);
-  let rows=all;
-  if(tab==='review') rows=all.filter(c=>c.needs_review); else if(tab!=='all') rows=all.filter(c=>c.kind===tab);
+  mk('all','待处理'); mk('review','待你核对'); for(const [k,v] of Object.entries(KIND)) mk(k,v);
+  mk('confirmed','已确认'); mk('dropped','已作废');
+  let rows=pend;
+  if(tab==='review') rows=pend.filter(c=>c.needs_review);
+  else if(tab==='confirmed') rows=all.filter(isHandled);
+  else if(tab==='dropped') rows=all.filter(isDropped);
+  else if(tab!=='all') rows=pend.filter(c=>c.kind===tab);
   const box=document.getElementById('list');
-  if(!rows.length){box.innerHTML='<p class="empty">这里还没有内容。开一场会，结束后就会自动出现。</p>';return;}
+  if(!rows.length){box.innerHTML='<p class="empty">'+(
+    tab==='confirmed'?'还没有确认过的。在「待处理」里点「确认无误」，它就收到这里。'
+    :tab==='dropped'?'还没有作废的。'
+    :tab==='all'?'待处理清空了。确认过的在「已确认」里，作废的在「已作废」里。'
+    :'这一组是空的。')+'</p>';return;}
   box.innerHTML='';
   for(const c of rows){
     const d=document.createElement('div'); d.className='card'+(c.needs_review?' review':'');
@@ -56,8 +130,23 @@ function render(){
     d.querySelector('.m').textContent=meta;
     if(c.needs_review) d.querySelector('.note').textContent='⚠️ '+(c.review_note||'等你核对');
     const acts=d.querySelector('.acts');
+    // 已经作废的那一组：只留「恢复」。对一条已作废的卡再点一次「作废」没有意义，
+    // 而唯一还想做的事就是把它拿回来。
+    if(isDropped(c)){
+      const back=document.createElement('button'); back.className='sm p'; back.textContent='恢复';
+      back.onclick=async()=>{
+        const r=await post({action:'undrop',id:c.id,prevState:'',prevEdited:0});
+        if(!r) return;
+        c.review_note=''; c.human_edited=0;
+        leave(d, ()=>render());
+        toast('已恢复，回到「待处理」', {label:'去看看', run:()=>{ tab='all'; render(); }});
+        setTimeout(load, 1200);
+      };
+      acts.appendChild(back); box.appendChild(d); continue;
+    }
     const bEdit=document.createElement('button'); bEdit.className='sm'; bEdit.textContent='改'; acts.appendChild(bEdit);
-    const bOk=document.createElement('button'); bOk.className='sm'; bOk.textContent=c.needs_review?'没问题':'确认无误'; acts.appendChild(bOk);
+    const bOk=document.createElement('button'); bOk.className='sm'; bOk.textContent=c.needs_review?'没问题':'确认无误';
+    if(!isHandled(c)) acts.appendChild(bOk);
     const bDrop=document.createElement('button'); bDrop.className='sm'; bDrop.textContent='作废'; acts.appendChild(bDrop);
     bEdit.onclick=()=>{
       const ta=document.createElement('textarea'); ta.rows=3; ta.value=c.text;
@@ -65,20 +154,57 @@ function render(){
       const cancel=document.createElement('button'); cancel.className='sm'; cancel.textContent='取消';
       acts.innerHTML=''; d.querySelector('.t').replaceWith(ta); acts.append(save,cancel);
       cancel.onclick=()=>render();
-      save.onclick=()=>post({action:'update',id:c.id,text:ta.value.trim()},'改好了');
+      save.onclick=async()=>{
+        const before=c.text, after=ta.value.trim();
+        if(!after){ toast('内容不能为空'); return; }
+        const ok=await post({action:'update',id:c.id,text:after});
+        if(ok){ c.text=after; c.human_edited=1; c.needs_review=0; c.review_note='你手动改过';
+          leave(d, ()=>render());
+          toast('改好了：'+after.slice(0,24)+(after.length>24?'…':'')+'　收进「已确认」那一组',
+            {label:'去看看', run:()=>{ tab='confirmed'; render(); }});
+          setTimeout(load, 1200); }
+      };
     };
-    bOk.onclick=()=>post({action:'update',id:c.id,text:c.text},'标成你确认过了');
-    bDrop.onclick=()=>{ if(confirm('作废这条？以后开会不会再被翻出来。')) post({action:'drop',id:c.id},'已作废'); };
+    // 确认：给明确的正反馈，并说清它去哪了——「已确认」是一个真实存在的分组，点得进去
+    bOk.onclick=async()=>{
+      const ok=await post({action:'confirm',id:c.id});
+      if(ok){ c.human_edited=1; c.needs_review=0; c.review_note='你确认无误';
+        d.classList.add('just-confirmed');
+        setTimeout(()=>leave(d, ()=>render()), 220);
+        toast('已确认，收进「已确认」那一组，模型以后不会再改它', {label:'去看看', run:()=>{ tab='confirmed'; render(); }});
+        setTimeout(load, 1400); }
+    };
+    // 作废：先当场淡出（看得见的结果），5 秒内可撤销；不再用 confirm 弹窗打断
+    bDrop.onclick=async()=>{
+      const r=await post({action:'drop',id:c.id});
+      if(!r) return;
+      const keepState=c.state, keepEdited=c.human_edited, keepNote=c.review_note;
+      c.state=r.state||c.state; c.human_edited=1; c.review_note='你标为作废';
+      leave(d, ()=>render());
+      toast('已作废，以后开会不会再被翻出来', {label:'撤销', run:async()=>{
+        const back=await post({action:'undrop',id:c.id,prevState:r.prevState,prevEdited:r.prevEdited});
+        if(!back) return;
+        c.state=keepState; c.human_edited=keepEdited; c.review_note=keepNote;
+        render(); toast('已撤销，放回原样'); load();
+      }}, 6000);
+    };
     box.appendChild(d);
   }
 }
-async function post(body,okMsg){
+// 一条处理完就当场从当前分组里退出去：先淡出，动画走完再重排剩下的。
+// 不重排会留下一个空位，也看不出「少了一条」。
+function leave(el, after){
+  el.classList.add('gone');
+  setTimeout(()=>{ try{ after&&after(); }catch(e){} }, 460);
+}
+// 返回服务端的响应体（撤销需要里面的 prevState），失败返回 null
+async function post(body){
   try{
     const r=await fetch('/asr-relay/memory?token='+encodeURIComponent(tok()),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const j=await r.json();
-    if(!j.ok) return toast(j.error||'没成功');
-    toast(okMsg); await load();
-  }catch(e){ toast('没成功：'+e.message); }
+    if(!j.ok){ toast(j.error||'没成功'); return null; }
+    return j;
+  }catch(e){ toast('没成功：'+e.message); return null; }
 }
 load();
 </script></body></html>

@@ -2,13 +2,33 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const html=fs.readFileSync(__dirname+'/../web/index.html','utf8');
 const code=(start,end)=>html.slice(html.indexOf(start),html.indexOf(end,html.indexOf(start)));
 function fixture(){const els={};const $=k=>els[k]??={value:'',dataset:{},showModal(){this.open=true},close(){this.open=false},focus(){}};
- const c={$,cur:{transcript:[{text:'hello'},{text:'hello'}],fixes:[]},briefFix:'',parseFixes:()=>[],setTimeout:()=>{},rememberFix:()=>{},syncCorrectionContext:()=>{},persist:()=>{},resetSigs:()=>{},render:()=>{},note:()=>{},T:()=>'',ui:'zh'};
+ const c={$,cur:{transcript:[{text:'hello'},{text:'hello'}],fixes:[]},briefFix:'',parseFixes:()=>[],setTimeout:()=>{},rememberFix:()=>{},rememberRule:()=>false,syncCorrectionContext:()=>{},persist:()=>{},resetSigs:()=>{},render:()=>{},note:()=>{},T:()=>'',ui:'zh'};
  vm.createContext(c);vm.runInContext(code('  function openFix(', '  // Literal,'),c);vm.runInContext(code("  $('#fix-save').onclick", "  $('#fix-del').onclick"),c);return{c,$,els};}
 test('all inline scripts parse',()=>{for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))new vm.Script(m[1]);});
 test('open edit shows existing sentence and saving only changes selected row',()=>{const {c,$}=fixture();c.openFix({dataset:{fix:'tr',key:'0'}});assert.equal($('#fix-text').value,'hello');assert.equal(c.cur.transcript[0].text,'hello');$('#fix-text').value='hello Person';$('#fix-save').onclick();assert.equal(c.cur.transcript[0].text,'hello Person');assert.equal(c.cur.transcript[1].text,'hello');assert.equal(c.cur.transcriptEdits[0].originalText,'hello');assert.equal(c.cur.fixes.length,0);});
 test('repeated edit replaces same edit record without growth',()=>{const{c,$}=fixture();for(let i=0;i<4;i++){c.openFix({dataset:{fix:'tr',key:'0'}});$('#fix-text').value='hello Person';$('#fix-save').onclick();}assert.equal(c.cur.transcriptEdits.length,1);assert.equal(c.cur.transcript[0].text,'hello Person');});
 test('dictionary applies once and skips manually edited sentences',()=>{const{c}=fixture();vm.runInContext(code('  function correctedText(', '  function syncCorrectionContext'),c);c.cur.fixes=[{wrong:'hello',right:'hello Person'}];c.cur.transcript[0].edited=true;c.cur.transcript[0].text='hello exact';for(let i=0;i<4;i++)c.applyCorrections(c.cur);assert.equal(c.cur.transcript[0].text,'hello exact');assert.equal(c.cur.transcript[1].text,'hello Person');});
-test('recovery controls are inside visible app footer',()=>{const footer=html.slice(html.indexOf('<footer'),html.indexOf('</footer>'));assert.ok(footer.includes('id="recording-recovery"'));assert.ok(footer.includes('id="recording-safety-status"'));});
+test('recovery and per-meeting actions are reachable from a visible entry',()=>{
+ const footer=html.slice(html.indexOf('<footer'),html.indexOf('</footer>'));
+ assert.ok(footer.includes('id="b-this"'),'footer must keep one visible entry to this-meeting actions');
+ assert.ok(footer.includes('id="recording-safety-status"'));
+ const dlg=html.slice(html.indexOf('<dialog id="meeting-more-dialog"'),html.indexOf('</dialog>',html.indexOf('<dialog id="meeting-more-dialog"')));
+ assert.ok(dlg.includes('id="m-recovery"'),'browser audio recovery must be reachable');
+ assert.ok(dlg.includes('id="m-notes"'),'meeting attachments must be reachable');
+});
+// 上一轮改版把五个按钮整体塞进 <div hidden id="legacy-entries">，处理函数还绑着，
+// 界面上却一个都点不到。这条守住的是「绑了点击就必须有路走到它」。
+test('no click handler is bound to a permanently hidden entry',()=>{
+ const m=html.match(/<div hidden id="legacy-entries">([\s\S]*?)<\/div>/);
+ const hidden=m?[...m[1].matchAll(/id="([A-Za-z0-9_-]+)"/g)].map(x=>x[1]):[];
+ const orphans=hidden.filter(id=>{
+  const bound=new RegExp("\\$\\('#"+id+"'\\)\\s*\\.onclick").test(html);
+  if(!bound) return false;
+  // 有别的可见按钮代它触发就不算孤儿
+  return !new RegExp("\\$\\('#"+id+"'\\)\\.onclick\\(\\)").test(html);
+ });
+ assert.deepEqual(orphans,[],'these ids have click handlers but no way to reach them: '+orphans.join(', '));
+});
 test('clearing dictionary restores retained original text',()=>{const{c}=fixture();vm.runInContext(code('  function correctedText(', '  function syncCorrectionContext'),c);c.cur.fixes=[{wrong:'hello',right:'Person'}];c.applyCorrections(c.cur);assert.equal(c.cur.transcript[0].text,'Person');c.cur.fixes=[];c.applyCorrections(c.cur);assert.equal(c.cur.transcript[0].text,'hello');});
 test('backup initialization failure warns but allows capture to continue',async()=>{const notices=[],status={};const context={RecordingSafety:{start:async()=>{throw Error('QuotaExceededError')}},asrStream:{},cur:{id:'synthetic'},ui:'zh',note:(...args)=>notices.push(args),$:()=>status,safetyRecording:null};vm.createContext(context);const snippet=code('    try { safetyRecording = await RecordingSafety.start(', '    for(const stream of [asrStream');await vm.runInContext('(async()=>{'+snippet+';return true})()',context);assert.equal(context.safetyRecording,null);assert.equal(context.backupHealthy,false);assert.equal(notices[0][1],true);assert.match(status.textContent,/备份不可用/);});
 test('end delivery reports disconnected transport instead of success',()=>{const c={asrWs:null,cur:{notes:''},setTimeout:()=>{},safetyRecording:null,asrNode:null,asrCtx:null,asrStream:null,stopSpkTrack:()=>{},lastFinalAt:0};vm.createContext(c);vm.runInContext(code('  function asrStop()', '  // ===== 浏览器'),c);assert.equal(c.asrStop(),false);});

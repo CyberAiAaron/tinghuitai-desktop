@@ -22,6 +22,34 @@ body{margin:0;padding:0 0 60px}
 .chip{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--panel-2,#f0f0f3);font-size:12px;color:var(--muted,#76767c)}
 .summary{white-space:pre-wrap;font-size:14px;line-height:1.65}
 .empty{padding:12px 14px}
+#rv{position:fixed;inset:0;z-index:140;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;padding:20px}
+#rv[hidden]{display:none}
+.rv-box{width:min(620px,100%);background:var(--panel);border-radius:16px;padding:20px;box-shadow:0 18px 60px #0003;max-height:88vh;overflow:auto}
+.rv-top{display:flex;align-items:center;font:12px var(--mono);color:var(--muted);margin-bottom:14px}
+.rv-kind{display:inline-block;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 9px;margin-bottom:10px}
+.rv-text{font-size:17px;line-height:1.6;margin:0 0 18px}
+.rv-edit textarea,.rv-edit input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px;background:var(--panel-2);color:var(--text)}
+.rv-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.rv-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
+.rv-acts button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:8px 16px;font:inherit;font-size:14px;cursor:pointer}
+.rv-acts button.primary{background:var(--text);color:var(--panel);border-color:var(--text)}
+.rv-acts kbd{font:11px var(--mono);opacity:.55;margin-left:4px}
+.rv-done{font-size:14px;line-height:1.7}
+.rv-done pre{white-space:pre-wrap;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:40vh;overflow:auto;font:13px/1.7 var(--mono)}
+.note-box{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:0 0 6px;margin:0 0 14px}
+.note-box[hidden]{display:none}
+.note-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:14px}
+.note-tag{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 9px}
+.note-head button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:4px 12px;font:inherit;font-size:12px;cursor:pointer}
+.note-body{padding:6px 18px 12px;font-size:14.5px;line-height:1.75}
+.note-body h3{font-size:14px;margin:16px 0 6px;color:var(--muted);font-weight:600}
+.note-body ul{margin:0;padding-left:20px}.note-body li{margin:5px 0}
+.note-meta{color:var(--muted);font-size:12.5px;margin:2px 0}
+.note-loading{padding:14px 16px;color:var(--muted);font-size:13px}
+.cond-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:12.5px;color:var(--muted)}
+.cond-bar[hidden]{display:none}
+.cond-bar button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:3px 12px;font:inherit;font-size:12px;cursor:pointer}
+.cond-bar button:hover{border-color:var(--live)}
 .player-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 .player-box .ph{font-size:12px;color:var(--muted)}
 .player-box audio{height:32px;flex:1;min-width:220px}
@@ -29,7 +57,7 @@ button.k.play{cursor:pointer;background:none;border:0;padding:0;font:inherit;col
 button.k.play:hover,time.play:hover{text-decoration:underline}
 time.play{cursor:pointer}
 </style></head><body>
-<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="download">下载全文与总结</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
+<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="review-go" hidden>过一遍</button><button class="btn sm" id="download">下载全文与总结</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
 <div class="wrap">
 <div class="meta" id="meta"></div>
 <div class="player-box" id="player-box" hidden></div>
@@ -45,4 +73,22 @@ time.play{cursor:pointer}
   </div>
 </div>
 </div>
-<script src="archive.js?v=2"></script></body></html>
+<div id="rv" hidden>
+  <div class="rv-box">
+    <div class="rv-top"><span id="rv-step"></span><span style="flex:1"></span><button type="button" class="archive-close" id="rv-x" aria-label="关闭">×</button></div>
+    <div class="rv-kind" id="rv-kind"></div>
+    <div class="rv-text" id="rv-text"></div>
+    <div class="rv-edit" id="rv-edit" hidden>
+      <textarea id="rv-input" rows="3"></textarea>
+      <div class="rv-row"><input type="text" id="rv-owner" placeholder="谁做（可留空）"><input type="text" id="rv-due" placeholder="什么时候（可留空）"></div>
+      <div class="rv-row"><input type="text" id="rv-wrong" placeholder="顺手纠个词：听成了"><span>&rarr;</span><input type="text" id="rv-right" placeholder="其实是"></div>
+    </div>
+    <div class="rv-acts" id="rv-acts">
+      <button type="button" id="rv-drop">不要这条 <kbd>&larr;</kbd></button>
+      <button type="button" id="rv-edit-go">改一下 <kbd>&uarr;</kbd></button>
+      <button type="button" id="rv-keep" class="primary">留下 <kbd>&rarr;</kbd></button>
+    </div>
+    <div class="rv-done" id="rv-done" hidden></div>
+  </div>
+</div>
+<script src="archive.js?v=3"></script></body></html>
