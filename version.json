@@ -1,9 +1,9 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.5.0.zip",
-  "sha256": "616f31e185655e36424003768eef87f0bf72dc854b70e39b3de820108fad5b43",
-  "size": 295197,
-  "notes": "会议记忆；开会方式细分；Deepgram；会后总结支持本机 CLI；一批稳定性修复",
+  "zip": "tinghuitai-desktop-v0.5.1.zip",
+  "sha256": "06d84fe792fe1d10c85299285236a27c805e1b805d56e9259b3def0b0809426f",
+  "size": 295398,
+  "notes": "工作台和设置页改为另开窗口，不再打断正在进行的会议",
   "min_macos": 13
 }
