@@ -136,9 +136,10 @@ function mountPlayer(){
   catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
 })();
 
-$('#download').onclick=()=>{if(!record)return;const s=record,start=ts(s.start);const names=s.names||{};
-  const text='# '+(s.topicTitle||s.title||'会议')+'\n\n'+new Date(start).toLocaleString('zh-CN')+'\n\n## 智能总结\n'+(s.summary||'')+'\n\n## 要点\n'+(s.highlights||[]).map(x=>'- '+x.text).join('\n')+'\n\n## 待办\n'+(s.todos||[]).map(x=>'- [ ] '+x.text+(x.owner?' → '+x.owner:'')).join('\n')+'\n\n## 待核查\n'+(s.factchecks||[]).map(x=>'- '+x.claim+' ['+(x.verdict||'')+'] '+(x.note||'')).join('\n')+'\n\n## 逐字稿\n'+(s.transcript||[]).map(t=>{const sp=t.speaker||t.spk||t.who||'';return '['+clock(t,start)+'] '+(sp?spkName(sp,names)+'：':'')+t.text+(t.originalText&&t.originalText!==t.text?'\n原句：'+t.originalText:'');}).join('\n\n');
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'text/markdown;charset=utf-8'}));a.download=(s.topicTitle||s.title||'会议记录').replace(/[\\/:*?"<>|]/g,'_')+'.md';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};
+// 下载和分享是同一件事，只留一个入口（顶栏这个）。
+// 以前这里另有一份客户端拼的「全文与总结」，把会议过程中的几百条要点/待办/待核查全倒进去——
+// 那不是给人读的。现在统一走 /share-export：总结 + 核心要点 + 核心纠错 + 核心待办 + 逐字稿。
+$('#download').onclick=openTake;
 
 // ===== 过一遍：收敛后的十几条，一条一条判「留下 / 改一下 / 不要」 =====
 // 只对收敛结果做，原始那几百条不进这个流程——那是翻不动的。
@@ -182,13 +183,84 @@ async function mountNote(s){
       return l.trim()? '<p class="note-meta">'+esc(l)+'</p>' : '';
     }).join('').replace(/(<li>.*?<\/li>)+/g, m=>'<ul>'+m+'</ul>');
     box.innerHTML='<div class="note-head"><b>纪要</b><span class="note-tag">'+(j.confirmed?'你确认过的版本':'自动整理版')+'</span>'
-      +'<span style="flex:1"></span><button type="button" id="note-copy">复制</button></div>'
+      +'<span style="flex:1"></span><button type="button" id="note-copy">复制</button>'
+      +'</div>'
       +'<div class="note-body">'+html+'</div>';
     document.getElementById('note-copy').onclick=async()=>{
       try{ await navigator.clipboard.writeText(j.note); document.getElementById('note-copy').textContent='已复制'; }
       catch(e){ document.getElementById('note-copy').textContent='复制失败'; }
     };
   }catch(e){ box.hidden=true; }
+}
+
+// 会后带走：下载和分享是同一件事的三个去处，共用同一份正文（纪要 + 逐字稿）。
+// 分开做成三个按钮的话，三处各生成一遍，内容迟早对不上。
+const tok=()=>encodeURIComponent(settings.relayToken||'');
+async function openTake(){
+  let d=document.getElementById('take-dlg');
+  if(!d){
+    d=document.createElement('dialog'); d.id='take-dlg'; d.className='take-dlg';
+    d.innerHTML='<div class="take-head"><b>带走这一场</b><button type="button" data-x aria-label="关闭">×</button></div>'
+      +'<p class="take-sub" id="take-sub">纪要 + 带说话人的逐字稿，一份 Markdown。</p>'
+      +'<div class="take-row"><button type="button" class="p" id="take-dl">下载 Markdown</button></div>'
+      +'<div class="take-row"><label for="take-lark">发到飞书</label>'
+      +'<input id="take-q" placeholder="搜会话名，留空就发给我自己"><select id="take-lark"></select>'
+      +'<button type="button" id="take-lark-go">发送</button></div>'
+      +'<div class="take-row"><label>发到 Slack</label><span class="take-hint">发到你自己的 Slack 私聊</span>'
+      +'<button type="button" id="take-slack-go">发送</button></div>'
+      +'<p class="take-msg" id="take-msg" hidden></p>';
+    document.body.appendChild(d);
+    d.querySelector('[data-x]').onclick=()=>d.close();
+    d.addEventListener('cancel',e=>{e.preventDefault();d.close();});
+    d.addEventListener('click',e=>{if(e.target===d)d.close();});
+    document.getElementById('take-dl').onclick=takeDownload;
+    document.getElementById('take-q').oninput=debounceTargets();
+    document.getElementById('take-lark-go').onclick=()=>takeSend('lark',{chatId:document.getElementById('take-lark').value});
+    document.getElementById('take-slack-go').onclick=()=>takeSend('slack',{channel:'self'});
+  }
+  document.getElementById('take-msg').hidden=true;
+  d.showModal();
+  loadTargets('');
+}
+function debounceTargets(){ let t=null; return e=>{ clearTimeout(t); t=setTimeout(()=>loadTargets(e.target.value.trim()),400); }; }
+async function loadTargets(q){
+  const sel=document.getElementById('take-lark'); if(!sel) return;
+  sel.innerHTML='<option value="self">发给我自己（飞书私聊）</option>';
+  try{
+    const r=await fetch('/asr-relay/share-targets?q='+encodeURIComponent(q)+'&token='+tok(),{cache:'no-store',signal:AbortSignal.timeout(25000)});
+    const j=await r.json();
+    if(!j.ok) return;
+    sel.innerHTML=(j.lark||[]).map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join('')
+      || '<option value="self">发给我自己（飞书私聊）</option>';
+  }catch(e){ /* 搜不到就只剩「发给自己」，不打断 */ }
+}
+function takeMsg(text, warn){ const m=document.getElementById('take-msg'); m.textContent=text; m.className='take-msg'+(warn?' warn':''); m.hidden=false; }
+async function takeDownload(){
+  takeMsg('正在整理…');
+  try{
+    const r=await fetch('/asr-relay/share-export?id='+encodeURIComponent(id)+'&token='+tok(),{cache:'no-store',signal:AbortSignal.timeout(30000)});
+    const j=await r.json();
+    if(!j.ok) return takeMsg(j.error||'导不出来', true);
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([j.markdown],{type:'text/markdown;charset=utf-8'}));
+    a.download=j.filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+    takeMsg('已下载 '+j.filename+'（'+Math.round(j.bytes/1024)+' KB）');
+  }catch(e){ takeMsg('导不出来：'+e.message, true); }
+}
+async function takeSend(target, extra){
+  const btn=document.getElementById(target==='lark'?'take-lark-go':'take-slack-go');
+  btn.disabled=true; takeMsg(target==='slack'?'正在发到 Slack，走连接器会慢几秒…':'正在发…');
+  try{
+    const r=await fetch('/asr-relay/share-send?token='+tok(),{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({id,target,...extra}),signal:AbortSignal.timeout(200000)});
+    const j=await r.json();
+    const where=target==='lark'?'飞书':'Slack';
+    takeMsg(j.ok
+      ? (j.attached===false ? '纪要发到'+where+'了；逐字稿没能当附件发（'+(j.why||'')+'），用上面的下载拿全文'
+                            : '发出去了（'+where+'，纪要 + 逐字稿附件）')
+      : (j.error||'没发出去'), !j.ok);
+  }catch(e){ takeMsg('没发出去：'+e.message, true); }
+  finally{ btn.disabled=false; }
 }
 function startReview(s){
   const c=s.condensed||{};

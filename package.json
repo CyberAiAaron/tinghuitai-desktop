@@ -1,12 +1,13 @@
 {
   "name": "tinghuitai-desktop",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "",
   "main": "app/server.js",
   "scripts": {
     "start": "node app/server.js",
     "test": "node --test tests/*.test.js",
-    "doctor": "node scripts/doctor.js"
+    "doctor": "node scripts/doctor.js",
+    "smoke": "node scripts/ui-smoke.js"
   },
   "keywords": [],
   "dependencies": {

@@ -1,10 +1,10 @@
 {
-  "version": "0.6.0",
-  "released": "2026-09-11",
-  "zip": "tinghuitai-desktop-v0.6.0.zip",
-  "sha256": "94fbbc2433b1d1ce97c397d2e4d47249040958454b07c800716fc21bf1387daa",
-  "size": 331729,
-  "notes": "会后一张卡直接进这一场的页面，纪要在第一屏；要点收敛成十来条一条条确认；记忆分成待处理/已确认/已作废，作废可撤销；工作台合成一个（含日报）并可单独开 App。修了「在工作台改待办会误跑程序更新且不保存」和四个点不到的功能。",
+  "version": "0.6.1",
+  "released": "2026-09-12",
+  "zip": "tinghuitai-desktop-v0.6.1.zip",
+  "sha256": "f7bc1c5398495e23b76344a12f1ae273bf960f0e8fdfd9816026e2a904bcabbd",
+  "size": 354923,
+  "notes": "会议页多了「下载 / 分享」：总结 + 核心要点 + 核心纠错 + 核心待办 + 逐字稿，一份 Markdown，也能直接发飞书或 Slack。修了设置弹窗关不掉、抽屉按 Esc 没反应、检查更新报天书三处。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }

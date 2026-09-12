@@ -791,6 +791,8 @@ async function processImportedAudio(audioPath, title, options={}) {
 const STATIC_MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.css': 'text/css; charset=utf-8' };
 // 页面本身也曾只能从 funnel 拿——tailscaled 一死，中转活着也打不开页面；这条把静态资源挪进中转自身，
 // 让 Mac 本机全链路（页面+WS）不碰隧道，funnel 只服务手机端。
+// 这几个是「算」不是「数据」：耗时长、跟工作台那份 work-hub.json 无关，永远本机处理。
+const LOCAL_ONLY_HUB = new Set(['/hub/llm', '/hub/translate', '/hub/summarize', '/hub/extract', '/hub/asr']);
 // 把 /hub 整段转发给常驻服务，保持单写者。失败返回 false，由调用方退回本地。
 async function proxyHub(req, res, u, upstream) {
   let body = null;
@@ -873,8 +875,15 @@ const server = http.createServer(async (req, res) => {
   // 两个进程各写各的 work-hub.json 会互相覆盖，所以这里不自己读写，整段转给它。
   // 没配 THT_HUB_UPSTREAM（别人的安装）就还是走本地那份，行为不变。
   if (u.pathname.replace(/^\/asr-relay/,'').startsWith('/hub')) {
+    const sub = u.pathname.replace(/^\/asr-relay/,'').replace(/\?.*$/,'');
     let up = String(process.env.THT_HUB_UPSTREAM||'').trim();
     if (!up) { try { up = String(loadEnv().HUB_UPSTREAM||'').trim(); } catch (e) { up=''; } }
+    // 只有工作台的「数据」能代理，「算」的一律留在本机。
+    // 2026-09-11 事故（日志时间戳是 UTC，北京时间 09-12 清晨）：把 /hub/llm、/hub/translate 也转给了常驻服务，会中的翻译和要点分组
+    // 全压到那台机器上，它被拖慢 → watchdog 的 funnel 探活 8 秒超时 → kickstart -k 把它连同
+    // tailscaled 一起重启 → 正在跑的请求当场被杀。一小时内重启 5 次，5 次都能对上探活失败那一行。
+    // 会中的模型调用绝不跨进程：那台服务的存活由一个 8 秒探针说了算，不能交给它做长活。
+    if (up && LOCAL_ONLY_HUB.has(sub)) up = '';
     if (up) { if (await proxyHub(req,res,u,up)) return; }   // 上游连不上就退回本地，工作台不至于打不开
     await workHub.route(req,res,u,authed); return;
   }
@@ -1195,6 +1204,78 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
       // 说清这份是自动整理的还是你确认过的，别让人拿着自动版当定稿转发
       return reply(200, { ok: true, note, confirmed: !!decisions.length, condensed: !!sess.condensed });
     } catch (e) { log('生成纪要失败 ' + e.message); return reply(200, { ok: false, error: e.message }); }
+  }
+  // ===== 会后一键带走：下载「纪要 + 逐字稿」，或直接分享出去 =====
+  // 一个动作三个去处（下载 / 飞书 / Slack），共用同一份正文，免得三处各生成一遍、内容还对不上。
+  if (p.endsWith('/share-export') || p.endsWith('/share-targets') || p.endsWith('/share-send')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const share = require('./share');
+
+    if (p.endsWith('/share-targets')) {
+      if (req.method !== 'GET') { res.writeHead(405); return res.end('method'); }
+      try { return reply(200, { ok: true, lark: await share.larkTargets(u.searchParams.get('q') || '') }); }
+      catch (e) { return reply(200, { ok: true, lark: [{ id: 'self', name: '发给我自己（飞书私聊）' }] }); }
+    }
+
+    // 标题和智能总结在归档结果里，不在 pending 的原始记录里；两边都读，归档的优先。
+    // 只读 pending 的话，标题会变成会议编号、总结整段丢失（2026-09-12 实测到）。
+    const loadSession = sid => {
+      if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) throw Object.assign(new Error('会议编号不对'), { code: 400 });
+      let pend = null, done = null;
+      try { pend = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, 'sess-' + sid + '.json'), 'utf8')); } catch (e) {}
+      try { done = meetingPipeline.result(sid); } catch (e) {}
+      if (!pend && !done) throw Object.assign(new Error('找不到这场会议'), { code: 404 });
+      const m = { ...(pend || {}), ...(done || {}) };
+      // 逐字稿以条数多的那份为准：归档那份做过纠错合并，pending 那份可能更全
+      if ((pend?.transcript?.length || 0) > (done?.transcript?.length || 0)) m.transcript = pend.transcript;
+      m.condensed = pend?.condensed || done?.condensed || null;
+      m.review = pend?.review || done?.review || null;
+      m.title = done?.topicTitle || pend?.topicTitle || done?.title || pend?.title || '';
+      return m;
+    };
+    // 没整理过的老会议只有原始那几百条。直接倒进纪要就成了翻不动的流水账，
+    // 所以这里按收敛后的同一套上限截断，并在文件里说清这是未整理版。
+    const CAP = { highlights: 15, todos: 10, factchecks: 8 };
+    const noteOf = sess => {
+      try {
+        const R = require('./review');
+        let cond = sess.condensed, raw = false;
+        if (!cond) {
+          raw = true;
+          cond = {};
+          for (const k of Object.keys(CAP)) cond[k] = (sess[k] || []).slice(0, CAP[k]);
+        }
+        const note = R.shareNote({ ...sess, __noHead: true }, (sess.review && sess.review.decisions) || [], cond);
+        return raw ? note + '\n\n> 这一场还没整理过，上面是从原始记录里取的前几条。到会议页点「按最新格式整理」会好很多。' : note;
+      } catch (e) { log('分享取纪要失败 ' + e.message); return ''; }
+    };
+
+    if (p.endsWith('/share-export')) {
+      if (req.method !== 'GET') { res.writeHead(405); return res.end('method'); }
+      try {
+        const sess = loadSession(String(u.searchParams.get('id') || ''));
+        const md = share.buildMarkdown(sess, noteOf(sess));
+        return reply(200, { ok: true, filename: share.fileNameOf(sess), markdown: md, bytes: Buffer.byteLength(md) });
+      } catch (e) { return reply(e.code || 500, { ok: false, error: e.message }); }
+    }
+
+    // 发送
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method'); }
+    const parts = []; let size = 0;
+    for await (const c of req) { parts.push(c); size += c.length; if (size > 20000) return reply(413, { ok: false, error: '请求太长' }); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+    try {
+      const sess = loadSession(String(j.id || ''));
+      const md = share.buildMarkdown(sess, noteOf(sess));
+      const to = String(j.target || '');
+      let r = null;
+      if (to === 'lark') r = await share.sendLark(md, String(j.chatId || 'self'), loadEnv().THT_ARCHIVE_OWNER_ID || '');
+      else if (to === 'slack') r = await share.sendSlack(md, String(j.channel || 'self'));
+      else return reply(400, { ok: false, error: '不认识这个去处' });
+      log('分享成功 ' + to + ' ' + (j.chatId || j.channel || 'self') + (r && r.attached === false ? '（附件没发成：' + r.why + '）' : ''));
+      return reply(200, { ok: true, where: to, attached: !(r && r.attached === false), why: (r && r.why) || '' });
+    } catch (e) { log('分享失败 ' + e.message); return reply(200, { ok: false, error: String(e.message).slice(0, 300) }); }
   }
   // 会后过一遍：保存你对收敛结果的逐条判断，并落两份产物
   if (p.endsWith('/review')) {

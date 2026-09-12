@@ -38,6 +38,21 @@ body{margin:0;padding:0 0 60px}
 .rv-done pre{white-space:pre-wrap;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:40vh;overflow:auto;font:13px/1.7 var(--mono)}
 .note-box{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:0 0 6px;margin:0 0 14px}
 .note-box[hidden]{display:none}
+.take-dlg{border:0;border-radius:16px;padding:20px;max-width:520px;width:calc(100% - 32px);background:var(--panel);color:var(--text)}
+.take-dlg::backdrop{background:#0006}
+.take-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.take-head b{font-size:16px}
+.take-head [data-x]{margin-left:auto;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1}
+.take-sub{margin:0 0 14px;color:var(--muted);font-size:13px}
+.take-row{display:flex;align-items:center;gap:8px;margin:10px 0;flex-wrap:wrap}
+.take-row label{font-size:13px;color:var(--muted);min-width:66px}
+.take-row input,.take-row select{flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text);font:inherit;font-size:13px}
+.take-row button{padding:8px 14px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.take-row button.p{background:var(--live);border-color:var(--live);color:#fff}
+.take-row button:disabled{opacity:.5;cursor:default}
+.take-hint{flex:1;font-size:12px;color:var(--muted)}
+.take-msg{margin:12px 0 0;font-size:13px;color:var(--muted)}
+.take-msg.warn{color:#b3261e}
 .note-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:14px}
 .note-tag{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 9px}
 .note-head button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:4px 12px;font:inherit;font-size:12px;cursor:pointer}
@@ -57,7 +72,7 @@ button.k.play{cursor:pointer;background:none;border:0;padding:0;font:inherit;col
 button.k.play:hover,time.play:hover{text-decoration:underline}
 time.play{cursor:pointer}
 </style></head><body>
-<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="review-go" hidden>过一遍</button><button class="btn sm" id="download">下载全文与总结</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
+<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="review-go" hidden>过一遍</button><button class="btn sm" id="download">下载 / 分享</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
 <div class="wrap">
 <div class="meta" id="meta"></div>
 <div class="player-box" id="player-box" hidden></div>

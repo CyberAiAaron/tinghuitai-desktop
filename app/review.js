@@ -53,6 +53,7 @@ function toCards(session, decisions, condensed) {
 }
 
 // 给人看的那一份：能直接转发的纪要，不带内部字段、不带编号。
+const ts = v => typeof v === 'number' ? v : (Date.parse(v) || 0);
 function shareNote(session, decisions, condensed) {
   const pick = kind => (condensed[kind] || []).map((x, i) => {
     const d = decisions.find(y => y.kind === kind && y.index === i);
@@ -66,19 +67,47 @@ function shareNote(session, decisions, condensed) {
     };
   }).filter(x => x && x.text);
   const hl = pick('highlights'), td = pick('todos'), ck = pick('factchecks');
+  const VERDICT = { true: '大概率对', false: '可能有误', unsure: '拿不准' };
   const when = session.start ? new Date(session.start).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
   const L = [];
-  L.push('# ' + (session.topicTitle || session.title || '会议纪要'));
-  if (when) L.push('', when);
-  if (session.summary) L.push('', session.summary.trim());
-  if (hl.length) { L.push('', '## 结论'); hl.forEach(x => L.push('- ' + x.text)); }
-  if (td.length) {
-    L.push('', '## 待办');
-    td.forEach(x => L.push('- ' + x.text + (x.owner ? '（' + x.owner + (x.due ? ' · ' + x.due : '') + '）' : (x.due ? '（' + x.due + '）' : ''))));
+  if (!session.__noHead) {
+    L.push('# ' + (session.topicTitle || session.title || '会议纪要'));
+    if (when) L.push('', when);
   }
+  // 四段，顺序固定：总结 → 核心要点 → 核心纠错 → 核心待办。
+  // 会议过程中的那几百条明细一律不进这份——那是翻不动的，也不是给人读的。
+  // 总结就是一小段：这是一场什么会、从多少条里收敛出下面这些。
+  // 完整的「智能总结」有五六千字、几十条带引用编号的条目，跟下面的核心要点重复，
+  // 整段放进来就又变回翻不动的流水账了——它在会议页上随时能看。
+  {
+    const mins = (session.start && session.end) ? Math.round((ts(session.end) - ts(session.start)) / 60000) : 0;
+    const spk = new Set((session.transcript || []).map(r => String(r.speaker ?? '')).filter(x => x !== '')).size;
+    const src = (condensed && condensed.source) || {};
+    const bits = [];
+    if (mins) bits.push('这一场 ' + (mins >= 60 ? Math.floor(mins / 60) + ' 小时 ' + (mins % 60) + ' 分' : mins + ' 分钟'));
+    if (spk) bits.push(spk + ' 个说话人');
+    let line = bits.join('，');
+    const from = ['highlights', 'todos', 'factchecks'].map(k => src[k]).filter(Boolean);
+    if (from.length === 3)
+      line += (line ? '。' : '') + '从会中记下的 ' + from[0] + ' 条要点、' + from[1] + ' 条待办、' + from[2] + ' 条待核查里，收敛成下面这些。';
+    else if (line) line += '。';
+    // 智能总结开头若有一段散文（不是条目），留它一句，那往往是最像「总结」的一句
+    const first = String(session.summary || '').split('\n').map(x => x.trim())
+      .filter(Boolean).find(x => !/^[#\-*\d]/.test(x) && !/按你要求的结构|仅基于所给/.test(x) && x.length > 12);
+    if (first) line = (line ? line + '\n\n' : '') + first;
+    if (line) L.push('', '## 总结', '', line);
+  }
+  if (hl.length) { L.push('', '## 核心要点'); hl.forEach(x => L.push('- ' + x.text)); }
   if (ck.length) {
-    L.push('', '## 需要核实');
-    ck.forEach(x => L.push('- ' + x.text + (x.note ? ' —— ' + x.note : '')));
+    L.push('', '## 核心纠错');
+    ck.forEach(x => {
+      const v = VERDICT[String(x.verdict)] || '';
+      L.push('- ' + x.text + (v ? '（' + v + '）' : '') + (x.note ? ' —— ' + x.note : ''));
+    });
+  }
+  if (td.length) {
+    L.push('', '## 核心待办');
+    td.forEach(x => L.push('- ' + x.text + (x.owner ? '（' + x.owner + (x.due ? ' · ' + x.due : '') + '）' : (x.due ? '（' + x.due + '）' : ''))));
   }
   return L.join('\n');
 }
