@@ -1,10 +1,10 @@
 {
-  "version": "0.6.1",
+  "version": "0.6.2",
   "released": "2026-09-12",
-  "zip": "tinghuitai-desktop-v0.6.1.zip",
-  "sha256": "f7bc1c5398495e23b76344a12f1ae273bf960f0e8fdfd9816026e2a904bcabbd",
-  "size": 354923,
-  "notes": "会议页多了「下载 / 分享」：总结 + 核心要点 + 核心纠错 + 核心待办 + 逐字稿，一份 Markdown，也能直接发飞书或 Slack。修了设置弹窗关不掉、抽屉按 Esc 没反应、检查更新报天书三处。",
+  "zip": "tinghuitai-desktop-v0.6.2.zip",
+  "sha256": "428133cbe72d3b5b9e5df447bc382ed0365f32a900db14d01521b48834e32379",
+  "size": 357275,
+  "notes": "会中要点自动分组（之前只有手机上有，Mac 一直没出现）；识别语言「自动」补上；逐字稿去掉整句重发和结巴串，短应答照常保留。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }
