@@ -1,10 +1,10 @@
 {
-  "version": "0.6.2",
-  "released": "2026-09-12",
-  "zip": "tinghuitai-desktop-v0.6.2.zip",
-  "sha256": "428133cbe72d3b5b9e5df447bc382ed0365f32a900db14d01521b48834e32379",
-  "size": 357275,
-  "notes": "会中要点自动分组（之前只有手机上有，Mac 一直没出现）；识别语言「自动」补上；逐字稿去掉整句重发和结巴串，短应答照常保留。",
+  "version": "0.6.3",
+  "released": "2026-09-14",
+  "zip": "tinghuitai-desktop-v0.6.3.zip",
+  "sha256": "a077833fbb879765bd6a8b9251d24416ed40ea34aa5494527eb00c6595732fb5",
+  "size": 360445,
+  "notes": "首次设置不再要求模型 API Key；能本机转写就默认本机转写，什么都不填直接保存就能开会。页面拿不到本机口令时说清原因。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip"
 }
