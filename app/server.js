@@ -73,6 +73,18 @@ function isLocalReq(req) {
   if(req.headers.origin){try{const u=new URL(req.headers.origin);localOrigin=u.protocol==='http:'&&['localhost','127.0.0.1','::1','[::1]'].includes(u.hostname)&&u.port===String(PORT);}catch{localOrigin=false;}}
   return loopback && !proxied && localHost && localOrigin && req.headers['sec-fetch-site']!=='cross-site';
 }
+// 被判成「非本机」时说清是哪一条没过。用户看到的不再是一句「设置只能在本机打开」，
+// 而是「检测到代理头」「地址不是 127.0.0.1」这种能自己动手改的话（2026-09-14）。
+function localReqReason(req) {
+  const ip = (req.socket && req.socket.remoteAddress) || '';
+  if (!(ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) return '请求不是从这台电脑发出的（' + ip + '）';
+  if (req.headers['x-forwarded-for'] || req.headers['x-forwarded-proto']) return '浏览器走了代理（带 X-Forwarded 头），请关掉代理或把 127.0.0.1 加进代理的例外';
+  if (req.headers['tailscale-funnel-request']) return '这是从外网入口进来的，不能改本机设置';
+  const host=String(req.headers.host||'').toLowerCase();
+  if (!['localhost:'+PORT,'127.0.0.1:'+PORT,'[::1]:'+PORT].includes(host)) return '地址不对（' + host + '），请用 http://127.0.0.1:' + PORT + '/ 打开';
+  if (req.headers['sec-fetch-site'] === 'cross-site') return '页面是从别的网站跳过来的，请直接打开 http://127.0.0.1:' + PORT + '/';
+  return '页面来源不是本机';
+}
 function loadEnv() { return settings.load(); }
 
 function readTriagePrompt() { try { const s = fs.readFileSync(INDEX_HTML, 'utf8'); const m = s.match(/const\s+TRIAGE\s*=\s*([`"'])([\s\S]*?)\1/); return m ? m[2] : ''; } catch (e) { return ''; } }
@@ -865,7 +877,7 @@ process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获
 
 const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
-  if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
+  if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),localReason:()=>localReqReason(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
   // ⚠️ 工作台这一段必须排在所有 p.endsWith('/xxx') 路由前面。
   // 它的子路径叫 /hub/update、/hub/session，会被下面的 endsWith('/update')（应用自更新）
   // 和 endsWith('/session')（存会议记录）抢走：改一条待办会去跑一次程序更新，

@@ -923,8 +923,28 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   $('#s-provider').onchange = e => { const pr = PRESET[e.target.value]; $('#f-base').hidden = e.target.value!=='openai'; $('#s-base').value = pr.base; $('#s-quick').value = pr.quick; $('#s-model').value = pr.model; };
   $('#s-cancel').onclick = () => dlg.close();
   const readForm = () => ({provider:$('#s-provider').value, key:$('#s-key').value.trim(), base:$('#s-base').value.trim(), quick:$('#s-quick').value.trim()||DEF.quick, model:$('#s-model').value.trim()||DEF.model, relayToken:$('#s-relay').value.trim(), micId:$('#s-mic').value, micLabel:(($('#s-mic').selectedOptions[0]||{}).textContent||''), hotwords:$('#s-hot').value.trim(), autoEndMin: Math.max(3, parseInt($('#s-auto').value,10)||12)});
-  $('#s-save').onclick = () => { cfg = {...readForm(),key:'',relayToken:window.THT_BOOT?.relayToken||''}; try { localStorage.setItem('tht-settings', JSON.stringify(cfg)); } catch(e){} ctx = $('#s-ctx').value.trim(); try { localStorage.setItem('tht-ctx', ctx); } catch(e){} dlg.close(); checkMac().then(()=>{ viewerConnect(); updateStatusIdle(); }); note('设置已保存。'); setTimeout(()=>note(''),1500); };
-  $('#s-test').onclick = async () => { const m=$('#s-msg'); m.hidden=false; const saved=cfg; cfg=readForm(); m.textContent='测试中…'; const parts=[]; try { const ok = await checkMac(); parts.push(ok?'Mac 中转：在线':'Mac 中转：不在线或口令不对'); } catch(e){ parts.push('Mac 中转：不在线'); } if (cfg.key) { try { const t = await llm('回复两个字：连通', 'quick'); parts.push('分析模型：'+t.slice(0,20)); } catch(e){ parts.push('分析模型失败：'+(e.message||e)); } } else parts.push('分析模型：未填 key（Mac 在线时不需要）'); m.textContent = parts.join('　|　'); cfg = saved; };
+  async function saveModelDraft(form){
+    if(!form.key)return;
+    const r=await fetch('/setup',{method:'POST',headers:{'content-type':'application/json','x-tht-token':cfg.relayToken||''},body:JSON.stringify({DEEPSEEK_API_KEY:form.key,LLM_BASE_URL:form.base,LLM_MODEL:form.model})});
+    const result=await r.json();if(!r.ok)throw Error(result.error||'模型设置未保存');
+    $('#s-key').value='';
+  }
+  $('#s-save').onclick = async () => {
+    const b=$('#s-save');if(b.disabled)return;b.disabled=true;
+    try{const form=readForm();await saveModelDraft(form);
+      cfg={...form,key:'',relayToken:window.THT_BOOT?.relayToken||cfg.relayToken||''};
+      localStorage.setItem('tht-settings',JSON.stringify(cfg));ctx=$('#s-ctx').value.trim();localStorage.setItem('tht-ctx',ctx);
+      await loadServerSettings();dlg.close();checkMac().then(()=>{viewerConnect();updateStatusIdle();});note('设置已保存。');
+    }catch(e){note('保存未完成：'+e.message,true);}finally{b.disabled=false;}
+  };
+  $('#s-test').onclick = async () => {
+    const m=$('#s-msg');m.hidden=false;m.textContent='测试中…';
+    try{if(!await checkMac())throw Error('录音服务未连接，请重新打开听会台');
+      await saveModelDraft(readForm());
+      const r=await fetch('/setup/test',{method:'POST',headers:{'content-type':'application/json','x-tht-token':cfg.relayToken||''},body:'{}'});
+      const result=await r.json();m.textContent=result.message||result.error||(r.ok?'模型已连通':'模型测试失败');
+    }catch(e){m.textContent='测试未完成：'+e.message;}
+  };
 
   async function llm(prompt, tier){
     if(!macOnline)throw Error('本机服务未连接，请重新启动听会台');
@@ -1126,7 +1146,14 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     : {me: window.__roomMode ? '在场' : '我', them:'线上'};
   const spkName = (s) => (cur && cur.names && cur.names[s]) || state.names[s] || SPK_DEF()[s] || (s ? 'S'+s : '');
   const spkCls = (s) => s==='me' ? 's1' : s==='them' ? 's2' : /^\d+$/.test(s) ? 's'+Math.min(6, parseInt(s,10)||1) : 's'+(1 + ([...String(s)].reduce((h,c)=>(h*31 + c.charCodeAt(0))>>>0, 7) % 6));
-  function repeatedASR(text){return typeof text==='string'&&text.length>=80&&/(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}/u.test(text);}
+  // 转写卡住时会吐出一长串重复。两种形态都要认：
+  //   带分隔符的「好的。好的。好的。…」，和不带分隔符的「uhuhuhuh…」「I I I I…」。
+  // 原来只认第一种，于是后一种整条糊在逐字稿里（2026-09-12 在真实会议里找到 4 条）。
+  function repeatedASR(text){
+    if (typeof text !== 'string') return false;
+    if (text.length >= 80 && /(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}/u.test(text)) return true;
+    return text.length >= 60 && /(.{2,20}?)\1{5,}/u.test(text);
+  }
   const spkChip = (s) => s ? `<span class="spk ${spkCls(s)}" data-spk="${esc(s)}" title="点击起名">${esc(spkName(s))}</span>` : `<span class="spk s0">·</span>`;
   let sigTr = '', sigHl = '', sigCk = '', sigSum = '';
   const keepScroll = (node, fn) => { const top = node.scrollTop, atBottom = node.scrollHeight - top - node.clientHeight < 30; fn(); node.scrollTop = atBottom ? node.scrollHeight : top; };
@@ -1142,6 +1169,9 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     }
     renderMeetingTasks(); scheduleTranslation();
     const items = [...cur.highlights.map(x=>({k:'hl',...x}))].sort((a,b)=>(a.at||0)-(b.at||0));
+    // 要点攒够了就去排一次分组。少了这一行，scheduleGrouping 永远没人调用，
+    // 会中的要点就一直是平铺的——桌面版从加分组那天起就一直是这样（2026-09-12 Aaron 发现）。
+    scheduleGrouping(cur, items);
     const grouped = groupedHighlights(cur, items);
     const nHl = items.map(x=>x.text).join('\u0001') + '|' + ui + '|' + (cur.i18n && cur.i18n[ui] ? JSON.stringify(cur.i18n[ui]).length : 0) + '|' + (cur.hlGroups ? cur.hlGroups.at : '');
     if (nHl !== sigHl) {
@@ -1869,8 +1899,13 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   }
   let asrGen = 0;                      // 连接代号：只认最新一条连接的消息
   const seenFinals = [];               // 最近的 final 指纹，跨连接去重
+  // 同一句在 20 秒内又来一次，多半是转写重发。但「嗯」「对」「hmm」这种短应答
+  // 人真的会连说几次——2026-09-12 在一场真实会议上数过：195 条重复里 188 条是短应答，
+  // 只有 7 条够长。所以只挡长句，短的一律放行。
+  const DUP_MIN = 12;
   function isDup(text){
     const now = Date.now(), key = String(text).replace(/\s+/g,'');
+    if (key.length < DUP_MIN) return false;
     while (seenFinals.length && now - seenFinals[0].t > 20000) seenFinals.shift();
     if (seenFinals.some(x => x.k === key)) return true;
     seenFinals.push({k:key, t:now});
@@ -1899,9 +1934,13 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         interim = '';
         // Relay deduplicates utterance IDs/timestamps; repeated spoken words are valid.                          // 20 秒内同一句只收一次
         const now = Date.now();
+        if (isDup(m.text)) return;                       // 长句在 20 秒内重发，丢掉
         const spk = m.speaker ? String(m.speaker) : whoSpoke(lastFinalAt || (now - 8000), now);
         lastFinalAt = now;
         cur.transcript.push({at: now, t: Math.round((now-cur.start)/1000), text: m.text, spk});
+        // 识别语言选「自动」时，攒够几句就去认一次是中文还是英文。
+        // 这一行以前漏了，于是「自动」这个选项从来没真正生效过（2026-09-12 补）。
+        try { maybeDetectTongue(); } catch(e){}
         if(spk && !m.speaker && asrWs?.readyState===1) asrWs.send(JSON.stringify({type:'spk',who:spk,at:now}));
         persist(); render();
       }
@@ -2459,6 +2498,8 @@ highlights：要点/决定，一句话一条（若与「项目核心记忆」里
   };
   el.lang.onchange = () => { updateModeChip(); if (running) { note('这场进行中，识别方式结束后再换；语言可以随时切。', true); el.lang.value = (cur && cur.lang) || 'auto'; updateModeChip(); } };
   el.start.onclick = async () => {
+    if(!await checkMac()){note(ui==='en'?'Recording service unavailable. Reopen the installed app.':'录音服务未连接，请重新打开听会台；无需重复填写模型 Key。',true);return;}
+    await loadServerSettings();
     // 一把钥匙都没配的人，点开始时直接按本机转写起：不用注册、不用填任何东西。
     // 这一步也会顺带拉起系统的语音识别授权弹窗。这台机器用不了本机转写才去设置页。
     if (!boot.asrConfigured) {
@@ -2488,11 +2529,26 @@ highlights：要点/决定，一句话一条（若与「项目核心记忆」里
   $('#k-room').onclick = () => { closeSheets(); startAll(null, 'asr-room'); };
   $('#k-online').addEventListener('contextmenu', e => { e.preventDefault(); selfTest(); });
   $('#k-test').onclick = () => selfTest();
-  function startAll(resume, force){
+  async function startAll(resume, force){
     const mode = force && force!=='auto' ? force : resolveMode();
     imeMode = mode === 'ime'; asrMode = mode.startsWith('asr');
-    if (asrMode && !cfg.relayToken) { openSettings(); note(T('needRelay')||'火山 ASR 需要先填「Mac 中转口令」。', true); return; }
-    if (!asrMode && !cfg.key) { openSettings(); note(T('needKey')||'Mac 不在线时会中分析要用 DeepSeek key，先填一下。', true); return; }
+    // 本机口令由服务端随页面注入（THT_BOOT），点开始时直接拿，不要求用户先「保存设置」一次。
+    // 以前要求 cfg.relayToken 非空，而它只有保存设置才写入、保存时又是从 THT_BOOT 抄的；
+    // THT_BOOT 拿不到（页面被判成非本机）时保存也补不上，就成了「开始→弹设置→保存→再弹」的死循环。
+    if (asrMode && !cfg.relayToken) {
+      const t = window.THT_BOOT && window.THT_BOOT.relayToken;
+      if (t) { cfg.relayToken = t; try { localStorage.setItem('tht-settings', JSON.stringify(cfg)); } catch(e){} }
+      else {
+        // bootstrap.js 被拒时页面拿不到任何信息；再问一次 /setup，它的 403 正文里写着是哪条没过
+        let why = '';
+        try { const r = await fetch('/setup', {cache:'no-store'}); if (!r.ok) { const j = await r.json().catch(()=>({})); if (j && j.error) why = '（' + String(j.error).replace(/^设置只能在本机打开：?/, '') + '）'; } } catch(e){}
+        note((ui==='en'
+          ? 'This window did not get the local token, so recording cannot start. Use the window that 启动.command opens (http://127.0.0.1:' + location.port + '/) and turn off any browser proxy.'
+          : '这个窗口没拿到本机口令，开不了录音。请用「启动.command」打开的那个窗口（http://127.0.0.1:' + location.port + '/），并关掉浏览器代理再试。') + why, true);
+        return;
+      }
+    }
+    // Model credentials live on the server, not in cfg.key.
     if (!imeMode && !asrMode) { rec = makeRec(); if (!rec) return; }
     if (viewWs) { try { viewWs.close(); } catch(e){} viewWs = null; }
     if (resume) { cur = resume; cur.end = null;cur.fixes=parseFixes(briefFix); } else { cur = newSession(asrMode?'mac':(imeMode?'ime':'browser'), mode); state.sessions.push(cur); }
@@ -2520,7 +2576,7 @@ highlights：要点/决定，一句话一条（若与「项目核心记忆」里
           }
         }
         if (!wsBad && quiet < 90000) { stallTries = 0; stallWarned = false; fellBack=false; }
-      } if (imeMode) imeIngest(false); if (sec % 40 === 0 && cfg.key && !asrMode) analyze(false); const lastAt = cur.transcript.length ? cur.transcript[cur.transcript.length-1].at : cur.start; if (!asrMode && sec > 120 && Date.now() - lastAt > (cfg.autoEndMin||12)*60000) { note(`超过 ${cfg.autoEndMin||12} 分钟没人说话，自动结束。`); stopAll(true); } }, 1000);
+      } if (imeMode) imeIngest(false); if (sec % 40 === 0 && macOnline && !asrMode) analyze(false); const lastAt = cur.transcript.length ? cur.transcript[cur.transcript.length-1].at : cur.start; if (!asrMode && sec > 120 && Date.now() - lastAt > (cfg.autoEndMin||12)*60000) { note(`超过 ${cfg.autoEndMin||12} 分钟没人说话，自动结束。`); stopAll(true); } }, 1000);
   }
   el.stop.onclick = () => stopAll(true);
   async function stopAll(summarize){

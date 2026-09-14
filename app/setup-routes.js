@@ -1,10 +1,12 @@
 'use strict';
-module.exports=async function(req,res,u,{isLocal,settings,active,testModel}){
+module.exports=async function(req,res,u,{isLocal,localReason,settings,active,testModel}){
  const bootstrap=u.pathname==='/tinghuitai/bootstrap.js',setup=u.pathname==='/setup';
  const detect=u.pathname==='/setup/detect';
  if(!bootstrap&&!setup&&!detect&&u.pathname!=='/setup/test')return false;
  const json=(code,j)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(j));return true;};
- if(!isLocal)return json(403,{error:'设置只能在本机打开'});
+ // 非本机一律 403（跨站页面连 bootstrap.js 都不该拿到）；原因写在 403 的正文里，
+ // 首页自己 fetch('/setup') 就能读到并展示，跨站页面因为没有 CORS 读不到。
+ if(!isLocal){const why=(typeof localReason==='function'?localReason():'')||'页面来源不是本机';return json(403,{error:'设置只能在本机打开：'+why});}
  const c=settings.load();
  const macAsr=(()=>{try{return require('./mac-asr').available();}catch(e){return false;}})();
  const asrLocal=c.ASR_PROVIDER==='mac';

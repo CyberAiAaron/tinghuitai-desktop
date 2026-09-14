@@ -20,21 +20,28 @@ if ! command -v node >/dev/null || ! node -e 'process.exit(Number(process.versio
  fi
  export PATH="$THT_INSTALL_ROOT/runtime/$THT_NODE/bin:$PATH"
 fi
-if ! command -v python3 >/dev/null || ! python3 -c 'import sys; assert sys.version_info >= (3,9)' >/dev/null 2>&1; then
- echo '会后归档需要 Python 3.9+。请安装官网版本，然后再次打开本安装文件。'
- open 'https://www.python.org/downloads/macos/'
- exit 1
-fi
+# Python is needed for post-processing, not to launch or record. Do not invoke the CLT stub.
+THT_PYTHON_EXEC=""
+for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /Library/Frameworks/Python.framework/Versions/Current/bin/python3; do
+ if [[ -x "$candidate" ]] && "$candidate" -c 'import sys; assert sys.version_info >= (3,9)' >/dev/null 2>&1; then THT_PYTHON_EXEC="$candidate";break;fi
+done
+if [[ -z "$THT_PYTHON_EXEC" ]] && /usr/bin/xcode-select -p >/dev/null 2>&1 && /usr/bin/python3 -c 'import sys; assert sys.version_info >= (3,9)' >/dev/null 2>&1; then THT_PYTHON_EXEC=/usr/bin/python3;fi
+if [[ -z "$THT_PYTHON_EXEC" ]]; then echo '可以先录音和转写。会后自动整理需要 Python 3.9+，未安装时原始记录保留。';fi
 if [[ "$PWD" != "$THT_INSTALL_ROOT/program" ]]; then
-for item in app web scripts docs tests package.json package-lock.json README.md AI-SETUP.md '安装.command' '启动.command' '自检.command'; do
+for item in app web scripts docs tests node_modules version.json CHANGELOG.json 开始用.md package.json package-lock.json README.md AI-SETUP.md '安装.command' '启动.command' '自检.command'; do
  [[ -e "$item" ]] && /usr/bin/ditto "$item" "$THT_INSTALL_ROOT/program/$item"
 done
 fi
-THT_NODE_EXEC="$(command -v node)";THT_PYTHON_EXEC="$(command -v python3)"
+THT_NODE_EXEC="$(command -v node)"
 printf '%s\n' "$THT_NODE_EXEC" > "$THT_INSTALL_ROOT/node-path"
 printf '%s\n' "$THT_PYTHON_EXEC" > "$THT_INSTALL_ROOT/python-path"
 cd "$THT_INSTALL_ROOT/program"
-npm ci --ignore-scripts --no-audit --no-fund
+if ! node -e "require('ws');require('busboy')" >/dev/null 2>&1; then
+ echo '修复缺失的运行依赖…'
+ npm ci --ignore-scripts --no-audit --no-fund
+fi
 chmod +x ./*.command
-THT_PYTHON="$THT_PYTHON_EXEC" node scripts/doctor.js
+export THT_DATA_DIR="$THT_INSTALL_ROOT"
+export THT_PYTHON="${THT_PYTHON_EXEC:-/nonexistent/tinghuitai-python}"
+node scripts/doctor.js
 node scripts/launch.js

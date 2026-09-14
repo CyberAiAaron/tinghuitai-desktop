@@ -1,8 +1,26 @@
 'use strict';
-const fs=require('fs'),path=require('path'),{spawn}=require('child_process'),net=require('net');
+const fs=require('fs'),path=require('path'),{spawn,execFileSync}=require('child_process'),net=require('net');
 const settings=require('../app/config'),port=Number(process.env.THT_PORT||47823),base='http://127.0.0.1:'+port;
-async function health(){try{const r=await fetch(base+'/health',{signal:AbortSignal.timeout(1500)});const j=await r.json();return j.app==='tinghuitai-desktop'&&j.ok;}catch{return false;}}
-async function launch(){if(!await health()){
+async function health(){try{const r=await fetch(base+'/health',{signal:AbortSignal.timeout(1500)});const j=await r.json();return j.app==='tinghuitai-desktop'&&j.ok?j:null;}catch{return false;}}
+async function launch(){
+ const running=await health(),want=JSON.parse(fs.readFileSync(path.join(__dirname,'../package.json'),'utf8')).version;
+ if(running&&running.version!==want){
+   if(running.activeSessions!==0)throw Error('会议仍在进行，新版已下载。请结束会议后再打开听会台；当前录音没有被中断。');
+   const pid=Number(running.pid),serverPath=path.resolve(__dirname,'../app/server.js'),program=path.dirname(serverPath);
+   let owned=false;
+   if(Number.isInteger(pid)&&pid>1){try{
+     const cmd=execFileSync('/bin/ps',['-p',String(pid),'-o','command='],{encoding:'utf8'}).trim();
+     const cwd=execFileSync('/usr/sbin/lsof',['-a','-p',String(pid),'-d','cwd','-Fn'],{encoding:'utf8'}).split('\n');
+     owned=cmd===process.execPath+' '+serverPath || (cmd===process.execPath+' app/server.js'&&cwd.includes('n'+path.dirname(program)));
+   }catch{}}
+   if(!owned)throw Error('此端口运行着另一份听会台，未关闭它。请从原安装位置打开，或为另一份安装选择不同端口。');
+   // Recheck activity immediately before stopping only this installation's exact server command.
+   const latest=await health();if(!latest||latest.pid!==pid||latest.activeSessions!==0)throw Error('服务状态已变化，请稍后重新打开。');
+   process.kill(pid,'SIGTERM');
+   for(let i=0;i<40&&await health();i++)await new Promise(r=>setTimeout(r,100));
+   if(await health())throw Error('旧服务尚未退出，未强制关闭；请稍后再打开。');
+ }
+ if(!await health()){
  const free=await new Promise(resolve=>{const s=net.createServer();s.on('error',()=>resolve(false));s.listen(port,'127.0.0.1',()=>s.close(()=>resolve(true)));});if(!free)throw Error('端口 '+port+' 已被其他程序占用。未关闭该程序，请让AI设置另一个 THT_PORT。');
  const fd=fs.openSync(path.join(settings.dataDir,'launcher.log'),'a',0o600);const child=spawn(process.execPath,[path.join(__dirname,'../app/server.js')],{env:process.env,detached:true,stdio:['ignore',fd,fd]});child.on('error',()=>{});child.unref();fs.writeFileSync(path.join(settings.dataDir,'server.pid'),String(child.pid));fs.closeSync(fd);
  for(let i=0;i<30&&!await health();i++)await new Promise(r=>setTimeout(r,200));

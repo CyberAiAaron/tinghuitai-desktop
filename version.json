@@ -1,10 +1,10 @@
 {
-  "version": "0.6.1",
-  "released": "2026-09-12",
-  "zip": "tinghuitai-desktop-v0.6.1.zip",
-  "sha256": "f7bc1c5398495e23b76344a12f1ae273bf960f0e8fdfd9816026e2a904bcabbd",
-  "size": 354923,
-  "notes": "会议页多了「下载 / 分享」：总结 + 核心要点 + 核心纠错 + 核心待办 + 逐字稿，一份 Markdown，也能直接发飞书或 Slack。修了设置弹窗关不掉、抽屉按 Esc 没反应、检查更新报天书三处。",
+  "version": "0.6.4",
+  "released": "2026-09-14",
+  "zip": "tinghuitai-desktop-v0.6.4.zip",
+  "notes": "修复安装后打不开：自动寻找有效Node路径，缺少Python路径不再阻止打开；双击启动时检查版本，旧服务空闲才安全切换，进行中的会议不受影响。修复设置保存/测试仍检查浏览器Key的循环。修复包内含运行依赖，重装保留原会议与设置。Python未就绪时可以录音转写，会后自动整理需补装后重试。",
   "min_macos": 13,
-  "stable_zip": "tinghuitai-desktop.zip"
+  "stable_zip": "tinghuitai-desktop.zip",
+  "sha256": "d65a45774bc8de4c4da66d15b0691b96f62ea7223685ad37e0c5770d810776d8",
+  "size": 443961
 }

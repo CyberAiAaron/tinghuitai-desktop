@@ -87,7 +87,9 @@ async function refresh(){
   state=await r.json();
   form.elements.LLM_BASE_URL.value=state.base; form.elements.LLM_MODEL.value=state.model; form.elements.VOLC_RESOURCE_ID.value=state.resource;
   // 还没选过的话：中文系统默认火山（中文最准），非中文系统默认本机转写（火山要中国账号，对老外是死路）
-  const fallbackAsr = (L === 'zh' ? 'volc' : (state.macAsrAvailable ? 'mac' : 'deepgram'));
+  // 这台机器能本机转写就默认选它：一把钥匙都不用填，保存就能开会。
+  // 以前中文界面默认选火山，没有火山账号的人打开这页就被「请填写 App Key」挡住（2026-09-14）。
+  const fallbackAsr = state.macAsrAvailable ? 'mac' : (L === 'zh' ? 'volc' : 'deepgram');
   const pickAsr = ['mac','deepgram','volc'].includes(state.asrProvider) ? state.asrProvider : fallbackAsr;
   const r2=document.querySelector('input[name=asr][value="'+pickAsr+'"]'); if(r2) r2.checked=true;
   paintAsr();
@@ -98,7 +100,9 @@ function validate(){
   if(!state) throw Error(t('notloaded'));
   const pick=document.querySelector('input[name=asr]:checked')?.value||'volc';
   const localAsr=(pick!=='volc');
-  for(const [key,ready,label] of [['VOLC_APP_KEY',state.asrConfigured||localAsr,'App Key / APP ID'],['VOLC_ACCESS_KEY',state.asrConfigured||localAsr,'Access Key / Access Token'],['DEEPSEEK_API_KEY',state.modelConfigured||!!state.provider,t('l_key')],['DEEPGRAM_API_KEY',pick!=='deepgram'||state.deepgramConfigured,t('l_dg')]])
+  // 模型 key 只管会后写纪要，会中转写用不到它。以前把它列为必填，没有 key 的人连转写方式都保存不了，
+  // 于是「开始听会」永远把人弹回这一页（2026-09-14 Aaron 老婆那台机器就是这样卡死的）。
+  for(const [key,ready,label] of [['VOLC_APP_KEY',state.asrConfigured||localAsr,'App Key / APP ID'],['VOLC_ACCESS_KEY',state.asrConfigured||localAsr,'Access Key / Access Token'],['DEEPGRAM_API_KEY',pick!=='deepgram'||state.deepgramConfigured,t('l_dg')]])
     if(!ready&&!form.elements[key].value.trim()){form.elements[key].focus();throw Error(t('need')+label);}
 }
 async function save(){validate();const body=Object.fromEntries(new FormData(form));body.ASR_PROVIDER=document.querySelector('input[name=asr]:checked')?.value||'volc';delete body.asr;await send('/setup',body);for(const el of form.querySelectorAll('[type=password]'))el.value='';await refresh();}
