@@ -1,10 +1,10 @@
 {
-  "version": "0.6.3",
+  "version": "0.6.4",
   "released": "2026-09-14",
-  "zip": "tinghuitai-desktop-v0.6.3.zip",
-  "sha256": "a077833fbb879765bd6a8b9251d24416ed40ea34aa5494527eb00c6595732fb5",
-  "size": 360445,
-  "notes": "首次设置不再要求模型 API Key；能本机转写就默认本机转写，什么都不填直接保存就能开会。页面拿不到本机口令时说清原因。",
+  "zip": "tinghuitai-desktop-v0.6.4.zip",
+  "notes": "修复安装后打不开：自动寻找有效Node路径，缺少Python路径不再阻止打开；双击启动时检查版本，旧服务空闲才安全切换，进行中的会议不受影响。修复设置保存/测试仍检查浏览器Key的循环。修复包内含运行依赖，重装保留原会议与设置。Python未就绪时可以录音转写，会后自动整理需补装后重试。",
   "min_macos": 13,
-  "stable_zip": "tinghuitai-desktop.zip"
+  "stable_zip": "tinghuitai-desktop.zip",
+  "sha256": "d65a45774bc8de4c4da66d15b0691b96f62ea7223685ad37e0c5770d810776d8",
+  "size": 443961
 }
