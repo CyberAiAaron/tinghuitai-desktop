@@ -64,8 +64,7 @@ test('first paint scrolls to whichever end holds the newest item', ()=>{
   const i=html.indexOf('if (hlPaintedFor !== (cur && cur.id))');
   assert.ok(i>0, '找不到首屏滚动那段');
   const blk=html.slice(i, i+420);
-  assert.ok(/newestOnTop/.test(blk), '首屏滚动没有区分排序方向');
-  assert.ok(/scrollTop\s*=\s*newestOnTop\s*\?\s*0\s*:/.test(blk), '会中（最新在上）必须滚到顶');
+  assert.ok(/scrollTop\s*=\s*running\s*\?\s*el.hl.scrollHeight\s*:\s*0/.test(blk), 'live opens at newest bottom; ended outline opens at top');
 });
 
 // ——— 3. 文案：属性写法合法，且英文有对应 ———

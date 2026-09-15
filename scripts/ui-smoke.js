@@ -124,6 +124,14 @@ async function shot(name){ const r=await send('Page.captureScreenshot',{}); fs.w
     await evaluate(`document.querySelector('.cw-close').click(); return 1`);
     if(!await evaluate(`return document.querySelector('.cw-panel').hidden`))bad('助手关闭');else ok('助手可关闭');
 
+    // Synthetic ended meeting: summaries above, fresh points below, ascending numbers.
+    await send('Page.navigate',{url:`http://127.0.0.1:${PORT}/tinghuitai/index.html`});await sleep(800);
+    await evaluate(`const rows=['先讨论需求范围','范围确定为桌面版','再讨论发布节奏','先给小组试用','手机方案继续讨论','成本还需要核对'];const start=Date.now()-600000;localStorage.setItem('tht-ui','zh');localStorage.setItem('tht-state',JSON.stringify({sessions:[{id:'outline-test',start,end:Date.now(),viewOnly:true,transcript:[],todos:[],factchecks:[],highlights:rows.map((text,i)=>({text,at:start+i*60000})),hlGroups:{at:Date.now(),groups:[{title:'先把桌面版做稳定',summary:'本轮先完成桌面端核心需求，手机方案后续讨论。',keys:rows.slice(0,2)},{title:'先在小组中试用',summary:'确认稳定后再扩大试用范围。',keys:rows.slice(2,4)}]}}],names:{}}));return 1`);
+    await send('Page.reload');await sleep(1000);
+    const outline=await evaluate(`return {headings:[...document.querySelectorAll('.outline-section h3')].map(x=>x.textContent),numbers:[...document.querySelectorAll('.outline-pending .k')].map(x=>x.textContent),sources:document.querySelectorAll('.outline-section details').length}`);
+    if(outline.headings.length!==2||!outline.headings[0].startsWith('1.')||!outline.headings[1].startsWith('2.')||outline.numbers.join(',')!=='3.,4.'||outline.sources!==2)bad('凝练提纲顺序与原文展开');else ok('凝练1、2在上，近期3、4在下，原文可展开');
+    await shot('outline-chronological');
+
     console.log('\n截图在 '+SHOTS);
     console.log(fails.length ? `\n冒烟失败 ${fails.length} 条` : '\n冒烟全过');
     process.exitCode = fails.length ? 1 : 0;

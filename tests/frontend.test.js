@@ -45,7 +45,7 @@ test('upload acknowledgment cannot clear a correction made during request; faile
 function groups(live){
  const c={ui:'zh',running:live};
  vm.createContext(c);
- vm.runInContext(code('  function groupedHighlights(','  // 触发：要点比上次分组'),c);
+ vm.runInContext(code('  function groupedHighlights(','  // Wait for the recent discussion'),c);
  const at=m=>Date.UTC(2026,8,11,6,m,0);
  const items=[{text:'A1',at:at(5)},{text:'A2',at:at(7)},{text:'B1',at:at(12)},{text:'B2',at:at(14)},{text:'C1',at:at(30)}];
  const sess={hlGroups:{groups:[{title:'定了走方案二',keys:['A1','A2']},{title:'隐私不是阻力',keys:['B1','B2']}]}};
@@ -53,10 +53,10 @@ function groups(live){
 }
 test('live meeting marks the newest group and never labels it as not-grouped-yet',()=>{
  const out=groups(true);
- assert.equal(out[0].live,true);
- assert.notEqual(out[0].title,'还没归类');
- assert.equal(out[0].title,'刚刚聊到');
- assert.ok(out[1].to<out[0].to,'newest group must sit on top during a meeting');
+ assert.equal(out.at(-1).live,true);
+ assert.equal(out.at(-1).ungrouped,true);
+ assert.equal(out.at(-1).no,3);
+ assert.ok(out[0].from<out[1].from&&out[1].from<out[2].from,'outline stays chronological while live');
 });
 test('group numbers follow first-mention time, not the live ordering',()=>{
  const live=groups(true), back=groups(false);
@@ -113,7 +113,7 @@ test('one-line edit accepts the four shapes the model actually returns',()=>{
 // 上面几条测试靠字符串切片取函数体。签名一改标记就失配，indexOf 返回 -1，
 // 切片会一路切到文件末尾、报一个看不懂的语法错。这条直接检查标记还在不在。
 test('the source markers these tests slice on still exist',()=>{
- for (const m of ['  function groupedHighlights(','  // 触发：要点比上次分组','  function openFix(',
+ for (const m of ['  function groupedHighlights(','  // Wait for the recent discussion','  function openFix(',
                   '  // Literal,',"  $('#fix-save').onclick","  $('#fix-del').onclick",
                   '  function syncCorrectionContext()','  function rememberFix(',
                   '  const FIX_FIELDS =','  function fixTargetOf(']) {
@@ -132,4 +132,18 @@ test('every dialog has a close control that is not buried in a collapsed section
   if(!CLOSE.test(visible)) bad.push(m[1]);
  }
  assert.deepEqual(bad.length,0,'dialogs with no reachable close control: '+bad.join(', '));
+});
+
+function outlineValidator(){const c={};vm.createContext(c);vm.runInContext(code('  function validateOutline(', '  // ===== 录音管理看板'),c);return c.validateOutline;}
+test('outline rejects unknown references, duplicates and hiding manual edits',()=>{
+ const check=outlineValidator(),items=[{text:'one'},{text:'two',edited:true}];
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:['invented']}]},items).length,0);
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:['two']}]},items).length,0);
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:['one','one']}]},items).length,0);
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:['one']}]},items).length,1);
+});
+test('changed source invalidates condensation, unmatched points remain visible and numbered',()=>{
+ const c={ui:'zh',running:true};vm.createContext(c);vm.runInContext(code('  function groupedHighlights(','  // Wait for the recent discussion'),c);
+ const out=c.groupedHighlights({hlGroups:{groups:[{title:'old',summary:'old synthesis',keys:['one','two']}] }},[{text:'one',at:1},{text:'corrected two',at:2},{text:'new',at:3}]);
+ assert.equal(out[0].summary,'');assert.equal(out.flatMap(g=>g.list).length,3);assert.equal(out.map(g=>g.no).join(','),'1,2,3');
 });
