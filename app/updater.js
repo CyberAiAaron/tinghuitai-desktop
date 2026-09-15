@@ -26,17 +26,20 @@ function snapshot(fromVersion,names){
     fs.rmSync(old,{recursive:true,force:true});
   }catch(e){ fs.rmSync(tmp,{recursive:true,force:true}); throw e; }
 }
+function replaceFiles(source,names){
+ const stage=fs.mkdtempSync(path.join(ROOT,'.replace-')), moved=[],installed=[];
+ try{
+  for(const name of names)fs.cpSync(path.join(source,name),path.join(stage,name),{recursive:true});
+  const backup=path.join(stage,'.originals');fs.mkdirSync(backup);
+  try{for(const name of names){const to=path.join(ROOT,name);if(fs.existsSync(to)){fs.renameSync(to,path.join(backup,name));moved.push(name);}fs.renameSync(path.join(stage,name),to);installed.push(name);}}
+  catch(e){for(const name of installed.reverse())fs.rmSync(path.join(ROOT,name),{recursive:true,force:true});for(const name of moved.reverse())fs.renameSync(path.join(backup,name),path.join(ROOT,name));throw e;}
+ }finally{fs.rmSync(stage,{recursive:true,force:true});}
+}
 function prevVersion(){ try{ return fs.readFileSync(path.join(PREV,'.version'),'utf8').trim(); }catch(e){ return ''; } }
-async function rollback(log=()=>{}){
+async function rollbackUnlocked(log=()=>{}){
   const v=prevVersion(); if(!v) throw new Error('没有可回退的版本');
   log('正在回到 '+v);
-  for(const name of fs.readdirSync(PREV)){
-    if(name==='.version') continue;
-    const to=path.join(ROOT,name);
-    fs.rmSync(to,{recursive:true,force:true});
-    fs.cpSync(path.join(PREV,name),to,{recursive:true});
-    if(name.endsWith('.command')){try{fs.chmodSync(to,0o755);}catch(e){}}
-  }
+  replaceFiles(PREV,fs.readdirSync(PREV).filter(n=>n!=='.version'));
   fs.rmSync(PREV,{recursive:true,force:true});
   log('已回到 '+v+'，请重启听会台');
   return {version:v};
@@ -61,10 +64,10 @@ function get(url,{binary=false,timeout=30000,raw=false}={}){
 
 // 查有没有新版：任一来源可达即可
 async function fetchFile(src,name,binary=false){
-  if(src.kind==='raw') return get(src.base+name,{binary,timeout:180000});
+  if(src.kind==='raw') return get(src.base+name,{binary,timeout:binary?180000:8000});
   name=name.split('?')[0];   // API 路径不接受 query 参数
   // GitHub API：要原始内容得带这个 Accept
-  return get(src.base+name,{binary,timeout:20000,raw:true});
+  return get(src.base+name,{binary,timeout:binary?180000:8000,raw:true});
 }
 // 问遍所有来源，取版本最高的那份。两个仓库的 CDN 刷新有先后，只取第一个能连上的会装到旧版。
 async function check(){
@@ -83,7 +86,7 @@ async function check(){
 }
 
 // 下载并就地替换程序文件；失败时保留原样
-async function apply(log=()=>{}){
+async function applyUnlocked(log=()=>{},canApply=()=>true){
   const info=await check();
   if(!info.ok) throw new Error(info.error||'检查更新失败');
   if(!info.hasUpdate) return {updated:false,version:info.current};
@@ -103,14 +106,9 @@ async function apply(log=()=>{}){
   log('备份当前版本，万一不对可以回退');
   // 备份是回滚的唯一依据，备份失败就停手：宁可这次不升级，也不能升成一半又退不回去
   try{ snapshot(info.current,names); }catch(e){ throw new Error('备份当前版本失败，已取消更新（'+e.message+'）'); }
+  if(!canApply())throw Error('会议已经开始，暂不更新');
   log('替换程序文件');
-  for(const name of fs.readdirSync(src)){
-    if(KEEP.has(name)||name==='p.zip') continue;
-    const from=path.join(src,name),to=path.join(ROOT,name);
-    fs.rmSync(to,{recursive:true,force:true});
-    fs.cpSync(from,to,{recursive:true});
-    if(name.endsWith('.command')){try{fs.chmodSync(to,0o755);}catch(e){}}
-  }
+  replaceFiles(src,names);
   // 下载来的文件带隔离标记会打不开，顺手清掉
   try{ await new Promise(res=>execFile('/usr/bin/xattr',['-dr','com.apple.quarantine',ROOT],()=>res())); }catch(e){}
   fs.rmSync(tmp,{recursive:true,force:true});
@@ -126,4 +124,8 @@ async function fetchChangelog(){
   }
   return [];
 }
+let busy=false;
+async function exclusive(fn){if(busy)throw Error('另一个更新操作正在进行');busy=true;try{return await fn();}finally{busy=false;}}
+const apply=(log,canApply)=>exclusive(()=>applyUnlocked(log,canApply));
+const rollback=log=>exclusive(()=>rollbackUnlocked(log));
 module.exports={check,apply,localVersion,fetchChangelog,rollback,prevVersion};

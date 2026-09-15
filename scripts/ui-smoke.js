@@ -136,6 +136,14 @@ async function shot(name){ const r=await send('Page.captureScreenshot',{}); fs.w
     if(!await evaluate(`return document.querySelector('#hl-pinned>.outline-section').open`))bad('总结展开');else ok('点击标题可展开正文');
     await shot('outline-chronological');
 
+    // Keep memory in the recording page; verify the compact menu on phone width.
+    await evaluate(`document.querySelectorAll('dialog[open]').forEach(d=>d.close());document.querySelector('#b-memory').click();return 1`);
+    if(!await evaluate(`return document.querySelector('#memory-dialog').open && document.querySelector('#memory-dialog iframe').getAttribute('src')==='memory.html'`))bad('记忆没有内嵌');else ok('记忆在当前页面内打开');
+    await evaluate(`document.querySelector('#memory-dialog .archive-close').click();document.querySelector('#b-this').click();return 1`);
+    await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+    await shot('compact-menu-mobile');
+    if(!await evaluate(`const d=document.querySelector('#meeting-more-dialog');return d.getBoundingClientRect().height<844 && d.querySelectorAll('.meeting-more-menu>details').length===3`))bad('手机本场菜单未收拢');else ok('手机本场菜单可完整显示');
+    await evaluate(`document.querySelector('#meeting-more-dialog').close();return 1`);
     console.log('\n截图在 '+SHOTS);
     console.log(fails.length ? `\n冒烟失败 ${fails.length} 条` : '\n冒烟全过');
     process.exitCode = fails.length ? 1 : 0;

@@ -1,10 +1,10 @@
 {
-  "version": "0.6.8",
+  "version": "0.6.9",
   "released": "2026-09-15",
-  "zip": "tinghuitai-desktop-v0.6.8.zip",
-  "notes": "AI总结置顶，标题默认折叠，点击展开；下方继续显示新要点，实时更新保留展开状态。",
+  "zip": "tinghuitai-desktop-v0.6.9.zip",
+  "notes": "分享与归档、内嵌记忆、精简本场菜单；修复记忆归属、上下文更新与更新失败恢复",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "d15c68e1d1cb2ecbe35e2636772c957c0fbbc5048c377c4b45b9322c73ce96ec",
-  "size": 458755
+  "sha256": "9068c17a24ffe30664025cebef4fd9614bfc1551e4eb48c00dbef068bb33a463",
+  "size": 472118
 }

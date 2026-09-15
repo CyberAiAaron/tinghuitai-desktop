@@ -127,7 +127,7 @@ class NothingToArchive(RuntimeError):
 def archive_version(job, session, label, save):
     if not any(r.get('text','').strip() for r in session.get('transcript',[])):
         raise NothingToArchive('这场没有转写内容，录音已保留')
-    if read(ROOT/'settings.json',{}).get('ARCHIVE_TARGET','local') != 'lark':
+    if job.get('archiveTargetRequest',read(ROOT/'settings.json',{}).get('ARCHIVE_TARGET','local')) != 'lark':
         dest=ROOT/'archives'/job['key'];dest.mkdir(parents=True,exist_ok=True)
         content={'label':label,'session':session};version=digest(content)
         target=dest/(version+'.json');write(target,content)

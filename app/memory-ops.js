@@ -101,18 +101,18 @@ function linkSupersedes(db, written, mid, log) {
     if (!CHANGE_RE.test(String(nc.text || ''))) continue;   // 没有改口措辞就并存，让人自己去作废
     let olds = [];
     try {
-      olds = db.prepare("SELECT id,text FROM cards WHERE kind=? AND state='active' AND topic=? AND id<>? AND meeting_id<>? AND human_edited=0")
-        .all(nc.kind, topic, nc.id, mid).slice(0, 5);
+      olds = db.prepare("SELECT id,text FROM cards WHERE kind=? AND state='active' AND topic=? AND project=? AND id<>? AND meeting_id<>? AND human_edited=0")
+        .all(nc.kind, topic, nc.project || '', nc.id, mid).slice(0, 5);
     } catch (e) { log('memory: 找旧决定失败 ' + e.message); continue; }
     if (!olds.length) continue;
     const why = '被「' + String(nc.text || '').slice(0, 120) + '」替代（' + (nc.meeting_title || nc.meeting_id || '新一场会') + '）';
     for (const o of olds) {
       try {
-        mem.updateCard(db, o.id, { state: 'superseded', change_reason: why, needs_review: 0 }, '同议题出现明确改口的新决定');
-        log('memory: 旧决定被替代 — ' + String(o.text || '').slice(0, 40));
+        mem.updateCard(db, o.id, { change_reason: '同项目同议题出现新说法，请核对，旧决定仍有效。', needs_review: 1 }, '同项目议题出现变化，仅提示核对');
+        log('memory: 旧决定等待核对 — ' + String(o.text || '').slice(0, 40));
       } catch (e) { log('memory: 标记替代失败 ' + e.message); }
     }
-    try { mem.updateCard(db, nc.id, { supersedes_id: olds[0].id }, '替代了旧决定'); } catch (e) {}
+    // Topic similarity alone cannot establish that a specific decision was superseded.
   }
 }
 
@@ -226,7 +226,7 @@ async function ingest(dataDir, session, ask, log = () => {}) {
     // 同议题的旧卡标「待你核对」。放在事务外：flagPossiblyChanged 自己也要写事务。
     for (const row of written) {
       if (!row.topic) continue;
-      const olds = db.prepare('SELECT id FROM cards WHERE kind=? AND topic=? AND id<>? AND meeting_id<>? AND needs_review=0').all(row.kind, row.topic, row.id, mid);
+      const olds = db.prepare("SELECT id FROM cards WHERE kind=? AND topic=? AND project=? AND id<>? AND meeting_id<>? AND needs_review=0 AND human_edited=0 AND state='active'").all(row.kind, row.topic, row.project || '', row.id, mid);
       for (const o of olds.slice(0, 5)) { try { mem.flagPossiblyChanged(db, o.id, '同一议题有了新说法，等你核对'); } catch (e) { log('memory: 标记旧卡失败 ' + e.message); } }
     }
     // 明确改口的，把同议题的旧决定标成被替代，并留下是哪句话推翻的

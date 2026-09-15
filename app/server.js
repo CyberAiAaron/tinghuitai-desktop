@@ -663,8 +663,8 @@ class Session {
             const { condense } = require('./condense');
             const r = await condense(sess, (sysP, userP) => deepseek(loadEnv(), sysP, userP, 3000), log);
             if (r && !r.skipped && !r.failed) {
-              sess.condensed = r;
-              journal.write(this.pendingPath, sess);          // 原子写，和原始数据同一份文件
+              if(!saveCondensed(this.pendingPath,sess,r)){log('收敛期间内容已修改，保留最新记录');return;}
+              //          // 原子写，和原始数据同一份文件
               this.broadcast({ type: 'condensed', condensed: r });
             }
           } catch (e) { log('收敛异常（不影响这场）' + e.message); }
@@ -845,6 +845,10 @@ function serveStatic(req, res, p) {
   });
 }
 
+function saveCondensed(file,original,result){
+ const latest=journal.read(file);if(!latest||JSON.stringify(latest)!==JSON.stringify(original))return false;
+ journal.write(file,{...latest,condensed:result});return true;
+}
 function bjStamp() { return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-'); } // YYYYMMDD-HHMM 北京
 function queueArchive(j) {
   const target=j.target||'local';
@@ -877,8 +881,27 @@ process.on('unhandledRejection', e => { crashedSinceStart++; try { log('未处�
 process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获异常(' + crashedSinceStart + '): ' + (e && e.stack || e)); } catch (x) {} });
 
 const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,isLocal:isLocalReq,ask:deepseek,active:()=>[...SESSIONS.values()].some(s=>!s.finalized)});
+const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq});
 const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
+  if(p.endsWith('/sharing/lark') && req.method==='POST'){
+    const send=(status,j)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
+    if(!authed){send(401,{error:'请连接 Mac'});return;}
+    try{let body='';for await(const c of req){body+=c;if(Buffer.byteLength(body)>8e6)throw Error('会议过大，请从档案导出');}const j=JSON.parse(body);const session=j.session;
+    if(!session?.id||!session.transcript?.some(r=>String(r.text||'').trim()))throw Error('这场还没有转写内容');
+    const dir=path.join(DATA,'state','lark-exports');fs.mkdirSync(dir,{recursive:true});const key=crypto.createHash('sha256').update(String(session.id)).digest('hex').slice(0,16);const file=path.join(dir,key+'.json');const existing=meetingPipeline.list().find(x=>String(x.sessionId)===String(session.id));if(existing?.status==='running'&&existing?.docId)throw Error('这场正在归档，完成后再同步');let job=journal.read(file)||{...(existing?.docId?existing:{}),key,title:session.title,sessionId:session.id};
+    if(job.status==='running'){send(200,{ok:true,status:'running'});return;}
+    const revision=crypto.createHash('sha256').update(JSON.stringify(session)).digest('hex');if(job.status==='done'&&job.revision===revision){send(200,{ok:true,status:'done',url:job.url});return;}
+    job={...job,revision,session,status:'running'};journal.write(file,job);
+    const child=spawn('python3',[path.join(__dirname,'archive-export.py'),file],{env:{...process.env,THT_DATA_DIR:DATA},stdio:'ignore'});
+    child.on('error',()=>{const latest=journal.read(file)||job;latest.status='error';latest.error='飞书归档服务未启动';journal.write(file,latest);});
+    child.on('exit',()=>{});send(202,{ok:true,status:'running'});
+    }catch(e){send(400,{error:e.message});}return;
+  }
+  if(p.endsWith('/sharing/lark-status')&&req.method==='GET'){
+    if(!authed){res.writeHead(401);res.end();return;}const key=crypto.createHash('sha256').update(u.searchParams.get('id')||'').digest('hex').slice(0,16);const job=journal.read(path.join(DATA,'state','lark-exports',key+'.json'));res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({status:job?.status||'none',url:job?.fullTextVerified&&job?.privateVerified?job.url:undefined,error:job?.error}));return;
+  }
+  if(p.startsWith('/sharing/slack') || p.startsWith('/asr-relay/sharing/slack')){if(await slackShareRoute(req,res,u,authed))return;}
   if(await workspaceRoute(req,res,u))return;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),localReason:()=>localReqReason(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
   // ⚠️ 工作台这一段必须排在所有 p.endsWith('/xxx') 路由前面。
@@ -919,7 +942,7 @@ const server = http.createServer(async (req, res) => {
     return;}
   if(req.method==='POST'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
     if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再更新'}));}
-    require('./updater').apply(m=>log('update: '+m)).then(r=>{log('update done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r}));})
+    require('./updater').apply(m=>log('update: '+m),()=>![...SESSIONS.values()].some(s=>!s.finalized)).then(r=>{log('update done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r}));})
       .catch(e=>{log('update fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     return;}
   // 回到上一版：更新前留的那份原样搬回来
@@ -1064,7 +1087,7 @@ const server = http.createServer(async (req, res) => {
     setTimeout(()=>{(async()=>{try{
       const sess=JSON.parse(fs.readFileSync(file,'utf8'));
       const r=await require('./condense').condense(sess,(a,b)=>deepseek(loadEnv(),a,b,3000),log);
-      if(r&&!r.skipped&&!r.failed){ sess.condensed=r; journal.write(file,sess); log('重新整理：收敛完成 '+rid); }
+      if(r&&!r.skipped&&!r.failed){ if(!saveCondensed(file,sess,r))throw Error('内容已有更新，请重新整理'); log('重新整理：收敛完成 '+rid); }
       else if(r&&r.failed){ log('重新整理：收敛没成，原始条目一条没动 '+rid); }
       else if(r&&r.skipped){ log('重新整理：条目不多，跳过收敛 '+rid); }
     }catch(e){ log('重新整理时的收敛失败（不影响归档）'+e.message); }})();},1500).unref?.();
@@ -1104,8 +1127,7 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
         const r = await require('./condense').condense(sess, (sysP, userP) => deepseek(loadEnv(), sysP, userP, 3000), log);
         if (r && r.skipped) return reply(200, { ok: false, skipped: true, error: r.reason === 'small' ? '这场条目本来就不多，不用收敛' : '这场条目太多，暂时收不了' });
         if (!r || r.failed) return reply(200, { ok: false, error: '模型这次没给出可用结果，原始条目一条没动，可以再试一次' });
-        sess.condensed = r;
-        journal.write(file, sess);
+        if(!saveCondensed(file,sess,r))return reply(409,{ok:false,error:'整理期间内容已更新，已保留最新修改，请重试'});
         log('按最新格式整理完成 ' + sid);
         return reply(200, { ok: true, condensed: { source: r.source, highlights: r.highlights.length, todos: r.todos.length, factchecks: r.factchecks.length } });
       } catch (e) { log('按最新格式整理失败 ' + e.message); return reply(200, { ok: false, error: e.message }); }
