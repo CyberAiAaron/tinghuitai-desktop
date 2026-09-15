@@ -1,10 +1,10 @@
 {
-  "version": "0.6.9",
+  "version": "0.6.10",
   "released": "2026-09-15",
-  "zip": "tinghuitai-desktop-v0.6.9.zip",
-  "notes": "分享与归档、内嵌记忆、精简本场菜单；修复记忆归属、上下文更新与更新失败恢复",
+  "zip": "tinghuitai-desktop-v0.6.10.zip",
+  "notes": "结构化分享总结、两份 Markdown 附件、默认分享给自己及个人频道列表",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "38a7a4ab77d9e753bf392ff32686d572d8b595146878779a410a445d243557f7",
-  "size": 472412
+  "sha256": "773bdaf21e45616ca70fd17e7e96e785b4e4eae2b6842fd3441f567cc7bcde05",
+  "size": 481748
 }
