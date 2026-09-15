@@ -890,12 +890,13 @@ const server = http.createServer(async (req, res) => {
     try{let body='';for await(const c of req){body+=c;if(Buffer.byteLength(body)>8e6)throw Error('会议过大，请从档案导出');}const j=JSON.parse(body);const session=j.session;
     if(!session?.id||!session.transcript?.some(r=>String(r.text||'').trim()))throw Error('这场还没有转写内容');
     const dir=path.join(DATA,'state','lark-exports');fs.mkdirSync(dir,{recursive:true});const key=crypto.createHash('sha256').update(String(session.id)).digest('hex').slice(0,16);const file=path.join(dir,key+'.json');const existing=meetingPipeline.list().find(x=>String(x.sessionId)===String(session.id));if(existing?.status==='running'&&existing?.docId)throw Error('这场正在归档，完成后再同步');let job=journal.read(file)||{...(existing?.docId?existing:{}),key,title:session.title,sessionId:session.id};
-    if(job.status==='running'){send(200,{ok:true,status:'running'});return;}
+    if(job.status==='running'){let alive=false;try{if(job.workerPid){process.kill(job.workerPid,0);alive=true;}}catch{}if(alive){send(200,{ok:true,status:'running'});return;}}
     const revision=crypto.createHash('sha256').update(JSON.stringify(session)).digest('hex');if(job.status==='done'&&job.revision===revision){send(200,{ok:true,status:'done',url:job.url});return;}
     job={...job,revision,session,status:'running'};journal.write(file,job);
     const child=spawn('python3',[path.join(__dirname,'archive-export.py'),file],{env:{...process.env,THT_DATA_DIR:DATA},stdio:'ignore'});
+    job.workerPid=child.pid||null;journal.write(file,job);
     child.on('error',()=>{const latest=journal.read(file)||job;latest.status='error';latest.error='飞书归档服务未启动';journal.write(file,latest);});
-    child.on('exit',()=>{});send(202,{ok:true,status:'running'});
+    child.on('exit',()=>{const latest=journal.read(file);if(latest?.status==='running'&&latest.revision===revision){latest.status='error';latest.error='归档进程中断，原始记录未改动，可重试';journal.write(file,latest);}});send(202,{ok:true,status:'running'});
     }catch(e){send(400,{error:e.message});}return;
   }
   if(p.endsWith('/sharing/lark-status')&&req.method==='GET'){

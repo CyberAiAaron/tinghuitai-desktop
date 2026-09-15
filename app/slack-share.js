@@ -20,10 +20,10 @@ module.exports=function({settings,isLocal,fetcher=fetch}){
  if(!j.confirmed||!j.channel||typeof j.text!=='string'||!j.text.trim()||j.text.length>12000)throw Error('请选择频道并确认分享内容（最多12000字）');
  const list=await channels(token);if(!list.some(c=>c.id===j.channel))throw Error('此频道不可发送，请先将应用加入频道');
  const key=crypto.createHash('sha256').update(JSON.stringify([j.channel,j.text])).digest('hex');const dir=path.join(settings.dataDir,'state','slack-shares');fs.mkdirSync(dir,{recursive:true});const file=path.join(dir,key+'.json');
- if(locks.has(key))throw Error('正在发送，请勿重复点击');if(fs.existsSync(file)){const previous=JSON.parse(fs.readFileSync(file));if(previous.status!=='sent')throw Error('上次发送结果尚未确认，请先在 Slack 频道核对，避免重复发送');send(200,{ok:true,...previous,alreadySent:true});return true;}
- locks.add(key);fs.writeFileSync(file,JSON.stringify({status:'pending',channel:j.channel}),{mode:0o600});try{const out=await api(token,'chat.postMessage',{channel:j.channel,markdown_text:j.text,unfurl_links:false,unfurl_media:false});const receipt={status:'sent',channel:out.channel,ts:out.ts};fs.writeFileSync(file,JSON.stringify(receipt),{mode:0o600});send(200,{ok:true,...receipt});}catch(e){if(e.definite)fs.rmSync(file,{force:true});throw e;}finally{locks.delete(key);}return true;
+ if(locks.has(key))throw Error('正在发送，请勿重复点击');if(fs.existsSync(file)){const previous=JSON.parse(fs.readFileSync(file));if(previous.status!=='sent'){if(!j.retryConfirmed){const e=Error('上次发送结果尚未确认，请先在 Slack 频道核对，避免重复发送');e.uncertain=true;throw e;}fs.rmSync(file,{force:true});}else{send(200,{ok:true,...previous,alreadySent:true});return true;}}
+ locks.add(key);fs.writeFileSync(file,JSON.stringify({status:'pending',channel:j.channel}),{mode:0o600});try{const out=await api(token,'chat.postMessage',{channel:j.channel,markdown_text:j.text,unfurl_links:false,unfurl_media:false});const receipt={status:'sent',channel:out.channel,ts:out.ts};fs.writeFileSync(file,JSON.stringify(receipt),{mode:0o600});send(200,{ok:true,...receipt});}catch(e){if(e.definite)fs.rmSync(file,{force:true});else e.uncertain=true;throw e;}finally{locks.delete(key);}return true;
  }
  send(404,{error:'未知分享操作'});
- }catch(e){send(400,{error:e.message});}return true;
+ }catch(e){send(400,{error:e.message,uncertain:!!e.uncertain});}return true;
  };
 };
