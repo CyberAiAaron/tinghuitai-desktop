@@ -41,6 +41,24 @@ async function shot(name){ const r=await send('Page.captureScreenshot',{}); fs.w
       m.error?p.rej(new Error(m.error.message)):p.res(m.result); } });
     await send('Page.enable'); await send('Runtime.enable');
 
+    if(process.env.SMOKE_SETUP){
+      await send('Page.navigate',{url:`http://127.0.0.1:${PORT}/tinghuitai/setup.html`});
+      await sleep(2500);
+      await evaluate(`document.querySelector('[data-l=en]').click(); document.querySelector('input[value=deepgram]').checked=true; paintAsr(); form.elements.DEEPGRAM_API_KEY.value='synthetic-test-only'; return 1`);
+      await evaluate(`return run(true)`);
+      const first=await evaluate(`return {text:message.textContent,empty:form.elements.DEEPGRAM_API_KEY.value==='',dg:state.deepgramConfigured}`);
+      if(!first.empty||!first.dg||!first.text.includes('No AI connected'))bad('首次设置无模型测试反馈');else ok('无模型也可保存转写；测试提示明确');
+      await evaluate(`document.querySelector('input[value=volc]').checked=true; paintAsr(); return run(false)`);
+      const blocked=await evaluate(`return location.pathname.endsWith('setup.html')&&message.textContent.includes('App Key')`);
+      if(!blocked)bad('切火山未阻止漏填凭证');else ok('切换服务要求对应凭证');
+      await evaluate(`document.querySelector('input[value=deepgram]').checked=true; paintAsr(); return 1`);
+      await shot('setup-en');
+      await evaluate(`document.querySelector('[data-l=zh]').click();return 1`);await shot('setup-zh');
+      await evaluate(`void run(false);return 1`);await sleep(2000);
+      const after=await evaluate(`return location.pathname.endsWith('index.html')`);
+      if(!after)bad('保存并进入未导航');else ok('重新保存保留凭证且直接进入');
+    }
+
     console.log('打开听会台 …');
     await send('Page.navigate',{url:`http://127.0.0.1:${PORT}/tinghuitai/index.html`});
     await sleep(5000);

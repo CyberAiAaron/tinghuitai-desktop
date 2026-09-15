@@ -11,15 +11,15 @@
 ## 安装
 
 1. 检查完整文件夹内 package-lock.json、app/、web/、三个 .command 文件都存在。ZIP 可离线转交；私有 GitHub clone 必须由用户自己的有效授权访问，不能索取发布者凭证。
-2. macOS 13+、Apple Silicon 或 Intel；Python 3.9+。运行 `bash 安装.command`。安装器复用 Node22+，否则下载固化的 Node22.23.2（nodejs.org 官方 SHA256 已固定在脚本），再 npm ci --ignore-scripts。不要绕过校验、Gatekeeper 或权限拒绝。
+2. macOS 13+。Apple Silicon 支持本机转写；当前 Intel 请用云端转写。Python 3.9+ 用于会后整理，缺少不阻止录音。运行 `bash 修复并打开.command`。安装器复用 Node22+，否则下载固化的 Node22.23.2（nodejs.org 官方 SHA256 已固定在脚本），优先使用包内依赖，缺失才 npm ci --ignore-scripts。不要绕过校验、Gatekeeper 或权限拒绝。
 3. Python 不可用时协助从 https://www.python.org/downloads/macos/ 安装。Mac 自带 `/usr/bin/python3` 可能只是命令行工具提示，必须实际执行版本检查；不要假设文件存在就可运行。
 4. 稳定启动入口为安装目录下 `启动.command`，安装器会自动打开 http://127.0.0.1:47823/tinghuitai/setup.html 或已配置的主页。端口占用时不杀其他程序，可设置 THT_PORT 并在后续启动沿用。不要自动启动多个实例。
 
 ## 配置
 
-让用户在本机设置页填写，API Key 不需要发到聊天。获取入口见 docs/RAY.md。先明确只需两项服务：火山语音应用凭证、自有大模型 API；火山官方列出20小时试用，资格和有效期以用户控制台为准。让用户直接在设置页粘贴；已有公司兼容API可展开高级设置填写地址和模型名。后台 settings.json 仅本人可读写（600），数据目录700；浏览器只获取随机本机连接口令，不获取供应商密钥。不要把供应商密钥写进源码、localStorage、命令历史、日志、截图或 git commit。
+让用户在本机设置页选择转写方式。支持时可先用本机转写，无语音 Key，不区分说话人；也可选择火山或 Deepgram，填本人服务凭证。API Key 不发到聊天。AI 配置可跳过，但实时翻译、要点、初步核查和智能纪要需要模型。可测试已安装且登录的 Codex/Claude Code（消耗其账户额度），或填自有兼容模型 API。不要承诺订阅/额度免费或给用户使用 Aaron 的 Key。
 
-必填语音：VOLC_APP_KEY、VOLC_ACCESS_KEY、VOLC_RESOURCE_ID。默认使用大模型流式服务，不能把通用云 AK/SK 或方舟 Key 当作语音凭证。必填模型：DEEPSEEK_API_KEY（兼容接口也沿用此字段名）、LLM_BASE_URL、LLM_MODEL。默认 deepseek-chat 可按用户账户实际可用模型更改。兼容服务只支持 /chat/completions，不能直接接原生 Claude Messages API。
+火山填写 VOLC_APP_KEY、VOLC_ACCESS_KEY；资源编号使用控制台匹配值。Deepgram 填 DEEPGRAM_API_KEY。模型接口默认 DeepSeek，可在高级项设置 LLM_BASE_URL 与 LLM_MODEL；兼容接口仅支持 chat/completions，不能直接填 Claude Messages 地址。凭证入口在设置页与开始用.md。保存并进入后试录30秒；模型测试不等于语音连通测试。
 
 默认 ARCHIVE_TARGET=local。不要使用已有共享飞书登录直接启用归档。若用户另行要求飞书：用其已授权的 lark-cli / 专用飞书工具确认当前身份；建立或选用本人私有档案文档，核对成员仅本人及链接/外部分享关闭。把本人 open_id 写入 settings.json 的 THT_ARCHIVE_OWNER_ID；把其档案文档 ID/URL 写入 state/meeting-pipeline/config.json 的 indexDoc/indexUrl；最后才设置 ARCHIVE_TARGET=lark。文件变更前读取当前值并保留其他字段。当前CLI命令/授权流程以所用工具官方文档或已安装技能为准，不猜指令。用明确标注的合成会议测试创建、写入、回读及权限后才称飞书可用；失败恢复local，本地资料保留。此可选流程未在Ray账户验收，不是安装前置。
 

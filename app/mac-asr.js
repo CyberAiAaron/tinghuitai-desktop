@@ -7,7 +7,7 @@ const {execFile}=require('child_process'), path=require('path'), fs=require('fs'
 const APP=path.join(__dirname,'mac-asr','TinghuitaiSpeech.app');
 const BIN=path.join(APP,'Contents','MacOS','transcriber');
 const LOCALE={zh:'zh-CN',en:'en-US',id:'id-ID',pt:'pt-BR',es:'es-ES'};
-const available=()=>{ try{ return process.platform==='darwin' && fs.existsSync(BIN); }catch(e){ return false; } };
+const available=()=>{ try{ return process.platform==='darwin' && process.arch==='arm64' && fs.existsSync(BIN); }catch(e){ return false; } };
 
 class MacAsr {
   constructor(lang,onResult,log=()=>{}){

@@ -11,12 +11,13 @@ module.exports=async function(req,res,u,{isLocal,localReason,settings,active,tes
  const macAsr=(()=>{try{return require('./mac-asr').available();}catch(e){return false;}})();
  const asrLocal=c.ASR_PROVIDER==='mac';
  const asrDg=c.ASR_PROVIDER==='deepgram';
- const publicState={provider:c.LLM_PROVIDER||'',asrProvider:c.ASR_PROVIDER||'',macAsrAvailable:macAsr,deepgramConfigured:!!c.DEEPGRAM_API_KEY,ready:!!((asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY))&&(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER)),asrConfigured:!!(asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY)),modelConfigured:!!(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER),base:c.LLM_BASE_URL,model:c.LLM_MODEL,resource:c.VOLC_RESOURCE_ID,archive:c.ARCHIVE_TARGET};
+ const publicState={provider:c.LLM_PROVIDER||'',asrProvider:c.ASR_PROVIDER||'',volcConfigured:!!(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY),macAsrAvailable:macAsr,deepgramConfigured:!!c.DEEPGRAM_API_KEY,ready:!!((asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY))&&(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER)),asrConfigured:!!(asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY)),modelConfigured:!!(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER),base:c.LLM_BASE_URL,model:c.LLM_MODEL,resource:c.VOLC_RESOURCE_ID,archive:c.ARCHIVE_TARGET};
  if(bootstrap&&req.method==='GET'){res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end('window.THT_BOOT='+JSON.stringify({...publicState,relayToken:c.RELAY_TOKEN})+';');return true;}
  if(setup&&req.method==='GET')return json(200,publicState);
  // 本机装没装 AI 命令行：装了就不用申请 API Key
  if(detect&&req.method==='GET'){const found=require('./cli-llm').detect();return json(200,{found:Object.keys(found),provider:c.LLM_PROVIDER||''});}
  if(detect&&req.method==='POST'){
+  if(active())return json(409,{error:'正在录音，请结束本场后再改设置'});
   if(req.headers['x-tht-token']!==c.RELAY_TOKEN)return json(403,{error:'请从本机设置页面操作'});
   let body='';for await(const chunk of req){body+=chunk;if(body.length>2000)return json(413,{error:'请求过长'});}
   let kind='';try{kind=String(JSON.parse(body||'{}').kind||'');}catch{}
@@ -33,7 +34,7 @@ module.exports=async function(req,res,u,{isLocal,localReason,settings,active,tes
  let body='';for await(const chunk of req){body+=chunk;if(body.length>12000)return json(413,{error:'配置过长'});}
  try{const j=JSON.parse(body);
  if(typeof j.ASR_PROVIDER==='string'){const v=j.ASR_PROVIDER.trim();if(!['','volc','mac','deepgram'].includes(v))throw Error('转写方式取值不对');c.ASR_PROVIDER=v;}
- for(const k of Object.keys(settings.defaults)){if(k==='ASR_PROVIDER')continue;if(j[k]===undefined||['ARCHIVE_TARGET','THT_ARCHIVE_OWNER_ID','LLM_PROVIDER'].includes(k))continue;if(typeof j[k]!=='string'||j[k].length>4000||/[\r\n]/.test(j[k]))throw Error('字段格式不正确');if(['VOLC_APP_KEY','VOLC_ACCESS_KEY','DEEPSEEK_API_KEY'].includes(k)&&!j[k])continue;c[k]=j[k].trim();}
+ for(const k of Object.keys(settings.defaults)){if(k==='ASR_PROVIDER')continue;if(j[k]===undefined||['ARCHIVE_TARGET','THT_ARCHIVE_OWNER_ID','LLM_PROVIDER'].includes(k))continue;if(typeof j[k]!=='string'||j[k].length>4000||/[\r\n]/.test(j[k]))throw Error('字段格式不正确');if(['VOLC_APP_KEY','VOLC_ACCESS_KEY','DEEPSEEK_API_KEY','DEEPGRAM_API_KEY'].includes(k)&&!j[k])continue;c[k]=j[k].trim();}
  const base=new URL(c.LLM_BASE_URL);if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash)throw Error('模型地址须为不含密钥的 HTTPS 地址');
  settings.save(c);
  // 选了本机转写就先把那个 .app 拉起来一次：系统的语音识别授权弹窗只认 GUI 会话，
