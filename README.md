@@ -1,87 +1,39 @@
-## Meeting LiveMate 0.6.5 · 更简单的首次设置
+# Meeting LiveMate · Mac 独立版
 
-下载 [最新版](./tinghuitai-desktop.zip)，解压后双击 **修复并打开.command**。安装和更新使用同一入口，保留原设置和会议。首次设置选择转写方式，点 **保存并进入**；AI 可稍后配置。
+边开会边看字幕、译文、要点和待核查内容。会后全文与总结保存在自己的 Mac，原句与人工修改都保留。**GitHub 只分发程序，不需要租服务器。**
 
-Apple Silicon 可用本机转写，无需语音 Key，不区分说话人；Intel 当前使用云端转写。实时翻译、要点、初步核查与纪要需要本人模型服务。服务凭证只填本机页面，公开包不含私人密钥。
+- **第一次用：**[准备与安装说明](docs/RAY.md)
+- **让 AI 替你安装：**把 [AI-SETUP.md](AI-SETUP.md) 连同整个项目文件夹交给能操作电脑的 AI。
+- **已经装好：**双击 `启动.command`。
 
-修复了重新保存可能清空 Deepgram Key、切换到火山误判凭证已配置，以及会议中切换 CLI 模型的问题。
+## 最短安装路径
 
-[中文安装说明](./开始用.md) · [English guide](./docs/RAY.md) · [交给你的 AI 安装](./AI-SETUP.md)
+下载最新 ZIP → 解压 → 双击 **修复并打开.command** → 选择转写方式 → **保存并进入**。安装与更新使用同一入口，保留已有会议和设置。详见 [开始用](开始用.md)。
 
----
+Apple Silicon Mac 可先用本机转写，不填语音 Key；Intel Mac 当前使用云端转写。AI 为可选配置，实时翻译、要点、核查与纪要需要可用模型。密钥只填本机设置页。macOS 13+；安装器复用 Node 22+，缺少时下载并校验。Python 3.9+ 用于会后整理，未安装不阻止打开录音。
 
-## Mac 打不开或反复弹设置：0.6.4 修复
+## 实时与会后
 
-下载 [最新修复包](./tinghuitai-desktop.zip)，解压后双击 **修复并打开.command**。保留原设置和会议。进行中的会议不会被自动重启，请先结束后再打开。
+| 能力 | 本版行为 |
+|---|---|
+| 实时字幕 | 本机或云端识别；独立保存 PCM 录音，断流会提示 |
+| 实时翻译 | 近期字幕异步翻译，原文仍显示；跟随中文 / EN；有模型延迟 |
+| 实时要点、待办 | 定期增量分析，不等会议结束 |
+| 纠错 | 点逐字稿改句；本场错词表作用于已有和后续内容，保留原句 |
+| 实时初步核查 | 模型根据常识提出判断，明确“未核实”；没有自动联网证据核验 |
+| 会后归档 | 本机会议档案提供逐字稿、总结和下载；总结失败仍保留全文 |
+| 说话人 | 展示语音服务实际返回的编号；不会凭文字猜真人身份，不保证分人准确 |
 
-本版修复失效的 Node 路径、缺少 Python 路径导致无法启动、更新后继续使用旧服务以及设置循环。包内含运行依赖；没有任何私人 API 凭据。Python 未安装时可先录音转写，会后自动整理需补装后重试。
+当前优先桌面试用。iPhone 独立转写、锁屏录音、联网查证、大型离线模型不属于这份首版。电脑端网页会议使用 Chrome 分享会议标签页音频，同时采自己的麦克风；桌面 Zoom / Teams / 飞书客户端需要另行验证系统音频采集，不能只凭“有自己的字幕”判断对方声音也录到了。
 
-已验证本机全新安装、0.6.3 修复升级、设置保留及页面入口；具体用户设备仍须试用确认。
+运行资料：`~/Library/Application Support/Tinghuitai/`。不要把此目录上传 GitHub，也不要放进共享云盘。音频会发给火山；文字会发给所选模型。独立保存不等于供应商不处理数据。
 
----
+可选飞书归档需连接**使用者本人**的飞书身份与档案文档，见 [AI 安装说明](AI-SETUP.md)。默认本机模式不需要飞书授权。
 
-# 听会台 Meeting LiveMate · Mac
+开发者：`npm ci --ignore-scripts`、`npm test`、`npm start`。入口默认 `http://127.0.0.1:47823/tinghuitai/`，服务只监听本机，不提供公网多人服务。测试请指定独立 `THT_DATA_DIR` 和 `THT_PORT`。
 
-开会时它在旁边听着，实时出字幕、要点和待办；开完自动整理成纪要。跑在你自己的 Mac 上。
+## 0.6.6 工作台
 
-**当前版本 0.5.9**
+工作台、日报和动态支持选中文字询问当前配置的 AI。日报和动态只在本机配置数据源后显示；安装包不附带个人资料。连接现有 Claude 任务通道后可交办，排队不代表执行完成。运行细节默认折叠，日报标明来源日期。
 
-## 装它（一行命令，不用管什么隔离属性）
-
-打开「终端」，粘这一行，回车：
-
-```bash
-cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop.zip && unzip -oq tinghuitai-desktop.zip -d 听会台 && bash 听会台/安装.command
-```
-
-装完浏览器会自己打开设置页。以后每次用，双击「启动.command」。
-
-## 要准备什么
-
-**语音转文字**，三选一：火山语音（要注册，官方列了 20 小时免费额度，中文最准、能区分说话人）；本机转写（不用注册，用你 Mac 自带的语音识别，完全离线，分不出说话人）；Deepgram（邮箱注册即可，不要中国手机号，官方送额度，英文强）。
-
-**谁来写总结**，三选一：你电脑上已装的 Codex 或 Claude Code（设置页会自动认出来，点一下就行，不用申请 Key）；DeepSeek API Key；你公司给的 OpenAI 兼容接口。
-
-不想自己弄的话，设置页第 3 步有个「复制引导词」，把那段发给你自己的 ChatGPT 或 Claude，它会一步步带你配完。
-
-## 更新
-
-打开听会台，点右下角「检查更新」。装完不对可以在同一个地方退回上一版。
-
-## 关于你的数据
-
-会议记录、录音和记忆都存在你自己的 Mac 上。本地存储和编排，不做联网检索；内容是否离开本机，取决于你选的转写服务和模型服务。
-
----
-
-# Meeting LiveMate for Mac
-
-It listens while you meet: live captions, key points and action items, then a written summary when you stop. Everything runs on your own Mac.
-
-**Current version 0.5.9**
-
-## Install (one line, no quarantine dance)
-
-Open Terminal, paste this, press return:
-
-```bash
-cd ~/Downloads && curl -fsSLO https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/tinghuitai-desktop.zip && unzip -oq tinghuitai-desktop.zip -d MeetingLiveMate && bash MeetingLiveMate/安装.command
-```
-
-The setup page opens by itself. To use it later, double-click `启动.command`.
-
-## What you need
-
-**Speech to text**, pick one: on-device (no signup, uses the speech recognition built into macOS, fully offline, no speaker separation); Deepgram (email signup, free credit to start, strong on English); Volcano Engine (best for Chinese and separates speakers, but signup needs a Chinese account).
-
-**Who writes the summary**, pick one: Codex or Claude Code already installed on your Mac (the setup page detects it, one click, no API key); a DeepSeek API key; any OpenAI-compatible endpoint your company gives you.
-
-Step 3 of the setup page has a "copy the walkthrough" button. Paste that into your own ChatGPT or Claude and it will walk you through the whole thing.
-
-## Updates
-
-Open the app and click "检查更新" at the bottom right. You can roll back to the previous version from the same place.
-
-## Your data
-
-Meetings, recordings and memory stay on your Mac. Local storage and orchestration, no web lookups; whether content leaves your machine depends on the transcription and model services you pick.
+若检查更新提示连接不到服务，重新打开 App 或双击「启动.command」，再检查。关闭网页不会启动后台服务。
