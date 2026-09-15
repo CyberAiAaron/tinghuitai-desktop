@@ -1,10 +1,10 @@
 {
-  "version": "0.6.6",
+  "version": "0.6.7",
   "released": "2026-09-15",
-  "zip": "tinghuitai-desktop-v0.6.6.zip",
-  "notes": "个人工作台接入日报、动态与页面助手；来源日期提示、模型来源标注、交办状态入口。普通安装不显示未配置数据源。",
+  "zip": "tinghuitai-desktop-v0.6.7.zip",
+  "notes": "要点改为正序编号提纲，较完整讨论自动凝练，近期细项保留在底部，原始要点可展开编辑。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "44ce2e1d8d9bc299d0a899110922d74b1ec5db70132d74ae92e0d11b865ef9fc",
-  "size": 458599
+  "sha256": "06d550bc3dd03559cdeb767b759a9cb0714c05f731fe65c8be4ac614c87a9b33",
+  "size": 458342
 }
