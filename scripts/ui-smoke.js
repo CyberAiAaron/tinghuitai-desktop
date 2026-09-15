@@ -130,6 +130,10 @@ async function shot(name){ const r=await send('Page.captureScreenshot',{}); fs.w
     await send('Page.reload');await sleep(1000);
     const outline=await evaluate(`return {headings:[...document.querySelectorAll('.outline-section h3')].map(x=>x.textContent),numbers:[...document.querySelectorAll('.outline-pending .k')].map(x=>x.textContent),sources:document.querySelectorAll('.outline-section details').length}`);
     if(outline.headings.length!==2||!outline.headings[0].startsWith('1.')||!outline.headings[1].startsWith('2.')||outline.numbers.join(',')!=='3.,4.'||outline.sources!==2)bad('凝练提纲顺序与原文展开');else ok('凝练1、2在上，近期3、4在下，原文可展开');
+    const folded=await evaluate(`return [...document.querySelectorAll('#hl-pinned>.outline-section')].every(x=>!x.open)`);
+    if(!folded)bad('总结默认折叠');else ok('总结置顶且默认只显示标题');
+    await evaluate(`document.querySelector('#hl-pinned>.outline-section>summary').click();return 1`);
+    if(!await evaluate(`return document.querySelector('#hl-pinned>.outline-section').open`))bad('总结展开');else ok('点击标题可展开正文');
     await shot('outline-chronological');
 
     console.log('\n截图在 '+SHOTS);

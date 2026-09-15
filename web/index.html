@@ -230,6 +230,7 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .fix-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
 .fix-said-msg{margin:6px 0 0;font-size:13px;line-height:1.5;color:#b3261e}
 #fix-say-row.busy .btn{opacity:.55;pointer-events:none}
+#hl-pinned{flex:0 1 auto;max-height:42%;overflow:auto;padding:0 16px;border-bottom:1px solid var(--line);overscroll-behavior:contain}#hl-pinned[hidden]{display:none}#hl-pinned .outline-section{padding:9px 0}#hl-pinned .outline-section>summary{font-size:14px;line-height:1.6;font-weight:600;cursor:pointer;color:var(--text)}#hl-pinned .outline-section>summary h3{display:inline;font:inherit}#hl-pinned .outline-summary{margin-top:8px}#hl-pinned .outline-label{position:sticky;top:0;background:var(--panel);padding:9px 0;font-size:12px;color:var(--muted);z-index:1}
 .outline-section{padding:16px 0;border-bottom:1px solid var(--line);color:var(--text)}.outline-section h3{font:600 16px/1.5 var(--font, sans-serif);margin:0 0 8px}.outline-summary{font:400 15px/1.75 var(--font, sans-serif);margin:0 0 10px}.outline-section details>summary{font-size:12px;color:var(--muted);cursor:pointer}.outline-section .card{margin-top:8px}.outline-pending{margin:12px 0}.outline-time{display:block;text-align:right;font-size:11px;color:var(--muted);margin-top:3px}.outline-pending .card{color:var(--text)}
 .hl-headline{font-size:13px;font-weight:650;line-height:1.5;padding:9px 11px;margin:0 0 12px;border-radius:10px;background:var(--panel-2);border-left:3px solid var(--live)}
 .grp{display:flex;flex-direction:column;gap:6px;margin:0 0 12px}
@@ -373,6 +374,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     </section>
     <section class="pane" id="p-hl" data-p="hl">
       <h2><i></i><span data-i18n="h_hl">要点</span></h2>
+      <div id="hl-pinned" hidden></div>
       <div class="scroll list" id="hl"><div class="empty">约 40 秒分析一次。冲突用红条；待办在右上角单独查看。</div></div>
     </section>
     <section class="pane" id="p-ck" data-p="ck">
@@ -1181,20 +1183,21 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       // 原始要点仍可编辑；凝练正文不覆盖原始记录。
       const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}${x.stale?' stale':''}${x.revised?' revised':''}${x.recomputed&&!x.stale?' recomputed':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:(x.at?hms(x.at).slice(0,5):'')}</span><div>${esc(tt(x.text))}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}${x.k==='todo'?`<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button>`:''}</div></div>`;
 
-      keepScroll(el.hl, () => {
-        el.hl.innerHTML = !items.length ? `<div class="empty">${T('e_hl')||'约 40 秒分析一次。冲突用红条；待办在右上角单独查看。'}</div>`
-          : grouped ? (('')
-              + grouped.map((g,gi)=>{
-                  // 同一分钟内的一组显示单个时间点，跨分钟才显示区间（at 是毫秒时间戳，别按秒算差值）
-                  const a0 = g.from==null ? '' : hms(g.from).slice(0,5), b0 = g.to==null ? '' : hms(g.to).slice(0,5);
-                  const span = !a0 ? '' : (b0 && b0!==a0 ? a0+'–'+b0 : a0);
-                  const now = g.live ? `<em class="grp-live">${ui==='en'?'● Now':'● 正在聊'}</em>` : '';
-                  const no = g.no || (gi+1);
-                  if(g.ungrouped)return `<section class="outline-pending">${cardOf(g.list[0],g.live,no+'.')}<small class="outline-time">${esc(span)}</small></section>`;
-                  return `<section class="outline-section"><h3>${no}. ${esc(tt(g.title))}</h3>${g.summary?`<p class="outline-summary">${esc(tt(g.summary))}</p><details><summary>${ui==='en'?'Original points':'原始要点'}${span?' · '+esc(span):''}</summary>${g.list.map(x=>cardOf(x,false,'')).join('')}</details>`:g.list.map(x=>cardOf(x,false,'')).join('')}</section>`;
-                }).join(''))
-          : items.map((x,i)=>cardOf(x, !first && i===items.length-1, null)).join('');
-      });
+      const pinned=$('#hl-pinned');
+      const openKeys=new Set(pinned.dataset.session===String(cur.id)?[...pinned.querySelectorAll('details[data-outline-key][open]')].map(d=>d.dataset.outlineKey):[]);
+      const pinnedTop=pinned.scrollTop;
+      const settled=[],pending=[];
+      for(const g of grouped){
+        const a=g.from==null?'':hms(g.from).slice(0,5),b=g.to==null?'':hms(g.to).slice(0,5);
+        const span=a+(b&&b!==a?'–'+b:'');
+        if(g.ungrouped){pending.push(`<section class="outline-pending">${cardOf(g.list[0],g.live,g.no+'.')}<small class="outline-time">${esc(span)}</small></section>`);continue;}
+        const key=String(cur.id)+':'+hlKey(g.list[0].text);
+        settled.push(`<details class="outline-section" data-outline-key="${esc(key)}" ${openKeys.has(key)?'open':''}><summary><h3>${g.no}. ${esc(tt(g.title))}</h3></summary>${g.summary?`<p class="outline-summary">${esc(tt(g.summary))}</p>`:''}<details data-outline-key="${esc(key+':raw')}" ${openKeys.has(key+':raw')?'open':''}><summary>${ui==='en'?'Original points':'原始要点'}${span?' · '+esc(span):''}</summary>${g.list.map(x=>cardOf(x,false,'')).join('')}</details></details>`);
+      }
+      pinned.hidden=!settled.length;
+      pinned.innerHTML=settled.length?`<div class="outline-label">${ui==='en'?'AI summary':'AI 总结'}</div>`+settled.join(''):'';
+      pinned.dataset.session=String(cur.id);pinned.scrollTop=pinnedTop;
+      keepScroll(el.hl,()=>{el.hl.innerHTML=pending.join('')||`<div class="empty">${settled.length?(ui==='en'?'New points will appear here.':'新的要点会显示在这里。'):(T('e_hl')||'要点会显示在这里。')}</div>`;});
       if (hlPaintedFor !== (cur && cur.id)) {
         el.hl.scrollTop = running ? el.hl.scrollHeight : 0;
         hlPaintedFor = cur && cur.id;
@@ -2328,6 +2331,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   };
   el.tr.addEventListener('click',e=>{const b=e.target.closest('[data-asr-expand]');if(b){const raw=b.nextElementSibling;raw.hidden=!raw.hidden;b.textContent=raw.hidden?'异常重复转写 · 展开原文':'收起异常原文';return;}const c=e.target.closest('[data-fix="tr"]');if(c&&cur&&!cur.viewOnly)openFix(c);});
   el.tr.addEventListener('keydown',e=>{if(e.target.closest('[data-asr-expand]'))return;if(e.key==='Enter'||e.key===' '){const c=e.target.closest('[data-fix="tr"]');if(c&&cur&&!cur.viewOnly){e.preventDefault();openFix(c);}}});
+  $('#hl-pinned').addEventListener('click',e=>{const c=e.target.closest('.card[data-fix]');if(c&&cur&&!cur.viewOnly)openFix(c);});
   el.hl.addEventListener('click', e => { const c = e.target.closest('.card[data-fix]'); if (c && cur && !cur.viewOnly) openFix(c); });
   el.ck.addEventListener('click', e => { const c = e.target.closest('.card[data-fix]'); if (c && cur && !cur.viewOnly) openFix(c); });
 
@@ -2984,7 +2988,7 @@ ${cur.factchecks.length?`<h2>${ui==='en'?'To verify':'待核查'} · ${cur.factc
     note(T('pdf_hint')||'打印面板里选「存储为 PDF / Save as PDF」。'); setTimeout(()=>note(''), 6000);
   };
   $('#copy').onclick = async () => { if (!cur) return; try { await navigator.clipboard.writeText(mdText()); note(T('copied')||'已复制 Markdown，粘进飞书 / Notion 直接有格式。'); setTimeout(()=>note(''),2500); } catch(e){ note('复制失败，请用「导出纪要」。', true); } };
-  $('#clear').onclick = () => { if (running || !cur) return; if (!confirm(T('clearConfirm')||'删除这一场的转写和分析？')) return; state.sessions = state.sessions.filter(s=>s.id!==cur.id); cur = null; persist(); el.tr.innerHTML='<div class="empty">已清空。</div>'; el.hl.innerHTML=''; el.ck.innerHTML=''; el.sum.innerHTML=''; el.ctr.textContent=el.chl.textContent=el.cck.textContent='0'; };
+  $('#clear').onclick = () => { if (running || !cur) return; if (!confirm(T('clearConfirm')||'删除这一场的转写和分析？')) return; state.sessions = state.sessions.filter(s=>s.id!==cur.id); cur = null; persist(); el.tr.innerHTML='<div class="empty">已清空。</div>'; el.hl.innerHTML=''; $('#hl-pinned').innerHTML='';$('#hl-pinned').hidden=true; el.ck.innerHTML=''; el.sum.innerHTML=''; el.ctr.textContent=el.chl.textContent=el.cck.textContent='0'; };
 
   cfg.key='';cfg.relayToken=window.THT_BOOT?.relayToken||cfg.relayToken;
   ['s-provider','s-key','s-base','s-quick','s-model','s-relay'].forEach(id=>document.getElementById(id)?.closest('.field')?.setAttribute('hidden',''));
