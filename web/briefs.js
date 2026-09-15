@@ -103,7 +103,7 @@
       const hs = e.highlights && e.highlights.length ? e.highlights : [{ title: t.summary || '（这期没抽到要点）', summary: '' }];
       hs.forEach((h, idx) => cards.push(`
         <button class="feed-item" data-key="${esc(t.key)}">
-          <div class="feed-src">${esc(t.icon)} ${esc(t.name)}<span class="feed-when">${esc(when(e.date))}</span></div>
+          <div class="feed-src">${esc(t.icon)} ${esc(t.name)}<span class="feed-when">${esc(when(e.date))}${e.dateWarning?' · 日期待核对':''}</span></div>
           <div class="feed-title">${esc(h.title)}</div>
           ${h.summary ? `<div class="feed-sum">${esc(h.summary)}</div>` : ''}
         </button>`));
@@ -114,7 +114,8 @@
     $('content').querySelectorAll('.feed-item').forEach((b) =>
       b.addEventListener('click', () => go(b.dataset.key)));
     $('heading').textContent = '今日';
-    $('subtitle').textContent = '每天推给你的几份，要点都在这';
+    $('subtitle').textContent = '各主题最近一期，日期标在每条旁；较早内容保留供回看';
+    window.claudeAssistantContext = () => ({ source: '日报看板 · 今日', detail: '五份日报的今日要点' });
     $('foot').textContent = `${state.data.topics.length} 份 · 共 ${cards.length} 条要点`;
     $('lark-link').hidden = true;
   }
@@ -135,12 +136,14 @@
 
     const hs = e.highlights || [];
     const points = hs.length
-      ? `<ol class="points">${hs.map((h) => `<li><div class="p-title">${esc(h.title)}</div>${
-        h.summary ? `<div class="p-sum">${esc(h.summary)}</div>` : ''}</li>`).join('')}</ol>`
+      ? `<ol class="points">${hs.map((h, i) => `<li><button class="p-hit" data-i="${i}">
+          <div class="p-title">${esc(h.title)}</div>${
+        h.summary ? `<div class="p-sum">${esc(h.summary)}</div>` : ''}
+          <span class="p-go">看原文 →</span></button></li>`).join('')}</ol>`
       : '<div class="blank">这期没抽到要点，直接看全文。</div>';
 
     $('content').innerHTML =
-      `<div class="eyebrow">${esc(e.date)} · ${esc(t.name)}${e.kind === 'card' ? ' · 只有推送卡片正文' : ''}</div>
+      `<div class="eyebrow">${esc(e.date)} · ${esc(t.name)}${e.dateWarning?' · 正文与归档日期不一致，按正文显示':''}${e.kind === 'card' ? ' · 只有推送卡片正文' : ''}</div>
        ${points}
        <button class="expand" id="toggle">${state.expanded ? '收起全文 ▴' : '展开全文 ▾'}</button>
        <div class="full" id="full" ${state.expanded ? '' : 'hidden'}>${md(e.body)}${
@@ -151,6 +154,33 @@
       $('full').hidden = !state.expanded;
       $('toggle').textContent = state.expanded ? '收起全文 ▴' : '展开全文 ▾';
       if (state.expanded) $('full').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    // 点一条要点 → 展开全文并跳到它在原文里的位置，高亮两秒
+    $('content').querySelectorAll('.p-hit').forEach((b) => b.addEventListener('click', () => {
+      const h = hs[Number(b.dataset.i)];
+      if (!h) return;
+      state.expanded = true;
+      $('full').hidden = false;
+      $('toggle').textContent = '收起全文 ▴';
+      const needle = h.title.replace(/\s+/g, '').slice(0, 14);
+      let hit = null;
+      $('full').querySelectorAll('h2,h3,h4,h5,p,li,blockquote').forEach((el) => {
+        if (hit || !needle) return;
+        if (el.textContent.replace(/\s+/g, '').includes(needle)) hit = el;
+      });
+      const target = hit || $('full');
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (hit) {
+        hit.classList.add('hit-flash');
+        setTimeout(() => hit.classList.remove('hit-flash'), 2000);
+      }
+    }));
+
+    // 告诉划词助手：现在看的是哪份、哪一期
+    window.claudeAssistantContext = () => ({
+      source: `${t.icon} ${t.name}`,
+      detail: `${e.date} 这期`,
     });
 
     $('heading').textContent = t.name;
@@ -173,9 +203,12 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  fetch('briefs.json?t=' + Date.now(), {cache:'no-store'})
+  fetch('briefs.json?t=' + Date.now())
     .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then((data) => {
+      // Preserve the source date and flag conflicting document headings instead of relabelling old text as today.
+      for(const t of data.topics||[])for(const e of t.entries||[]){const m=String(e.body||'').slice(0,300).match(/^#{1,4}[^\n]*?(20\d{2}-\d{2}-\d{2})/m);if(m&&m[1]!==e.date){e.dateWarning=true;e.exportDate=e.date;e.date=m[1];}}
+      for(const t of data.topics||[]){t.entries.sort((a,b)=>b.date.localeCompare(a.date));t.latest=t.entries[0]?.date||'';}
       state.data = data;
       if (!data.topics || !data.topics.length) {
         $('content').innerHTML = '<div class="blank">还没有日报数据。</div>';
@@ -187,6 +220,6 @@
     })
     .catch((err) => {
       $('content').innerHTML = `<div class="blank">读不到日报数据（${esc(err.message)}）。<br>
-        在 Mac 上跑一次：<code>python3 ~/.claude-maint/hub/briefs-export.py</code></div>`;
+        请稍后刷新，或在助手中询问如何恢复数据源。</div>`;
     });
 })();

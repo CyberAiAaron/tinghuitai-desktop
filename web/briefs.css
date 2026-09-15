@@ -77,3 +77,12 @@ article#content th{background:#fafafb;font-weight:600;white-space:nowrap}
   .points li{padding-left:28px}
   .p-title{font-size:15px}
 }
+
+/* 要点可点击 → 跳全文 */
+.points li{padding-right:0}
+.p-hit{display:block;width:100%;text-align:left;background:none;border:0;padding:0;cursor:pointer;position:relative;
+  -webkit-user-select:text;user-select:text}
+.p-hit:hover .p-title{color:var(--red)}
+.p-go{display:inline-block;margin-top:7px;font:11px 'Space Mono',monospace;color:#a5a5ac}
+.p-hit:hover .p-go{color:var(--red)}
+.hit-flash{background:#fff4b8;border-radius:6px;transition:background .5s;box-shadow:0 0 0 6px #fff4b8}

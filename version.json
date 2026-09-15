@@ -1,10 +1,10 @@
 {
-  "version": "0.6.5",
+  "version": "0.6.6",
   "released": "2026-09-15",
-  "zip": "tinghuitai-desktop-v0.6.5.zip",
-  "notes": "简化首次设置为保存并进入，AI配置可选。修复重新保存清空Deepgram Key、切换转写误判火山凭证、会议中切换CLI模型。统一安装与修复说明，明确各功能所需服务。",
+  "zip": "tinghuitai-desktop-v0.6.6.zip",
+  "notes": "个人工作台接入日报、动态与页面助手；来源日期提示、模型来源标注、交办状态入口。普通安装不显示未配置数据源。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "3d5fcb8d550af5fd8e2db9d18522e2e2f1e916eaa1673b0f2286d3f88e0388e4",
-  "size": 442005
+  "sha256": "44ce2e1d8d9bc299d0a899110922d74b1ec5db70132d74ae92e0d11b865ef9fc",
+  "size": 458599
 }

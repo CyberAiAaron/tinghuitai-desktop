@@ -2841,7 +2841,7 @@ ${cur.factchecks.length?`<h2>${ui==='en'?'To verify':'待核查'} · ${cur.factc
         const back=$('#upd-back');
         if(info.prev){ back.hidden=false; back.textContent=(ui==='en'?'Roll back to ':'回到 ')+info.prev; }
         else back.hidden=true;
-      }catch(e){ now.textContent=(ui==='en'?'Check failed: ':'没查成：')+(e.message||e); }
+      }catch(e){ const offline=e instanceof TypeError || /failed to fetch|load failed/i.test(e.message||''); now.textContent=offline?(ui==='en'?'Cannot reach the meeting service. Open Meeting LiveMate or double-click 启动.command, then check again.':'连接不到听会台服务。请打开 Meeting LiveMate，或双击「启动.command」，再重新检查。'):(ui==='en'?'Check failed: ':'检查失败：')+(e.message||e); }
     }
     $('#m-update').onclick=()=>{ closeSheets(); $('#meeting-more-dialog').close(); $('#upd-dlg').showModal(); load(); renderLog(); };
     $('#upd-recheck').onclick=load;

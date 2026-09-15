@@ -1,0 +1,48 @@
+/* 页面里的 Claude：划词浮条 + 问答面板。样式独立，不覆盖任何既有类名。 */
+.cw-bar{position:absolute;z-index:9998;background:#252527;border-radius:999px;padding:4px;box-shadow:0 6px 20px #0000002e}
+.cw-bar .cw-ask{border:0;background:none;color:#fff;font-size:13px;padding:6px 14px;border-radius:999px;cursor:pointer}
+.cw-bar .cw-ask:hover{background:#3a3a3f}
+
+.cw-panel{position:fixed;z-index:9999;right:24px;bottom:24px;width:min(420px,calc(100vw - 32px));max-height:min(560px,calc(100vh - 48px));
+  display:flex;flex-direction:column;background:#fff;border:1px solid #e0e0e5;border-radius:16px;
+  box-shadow:0 18px 50px #00000026;padding:16px;overflow:auto}
+.cw-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.cw-title{font-size:14px;font-weight:650;color:#1d1d20}
+.cw-close{border:0;background:none;color:#8a8a92;font-size:15px;cursor:pointer;padding:2px 6px;border-radius:6px}
+.cw-close:hover{background:#f0f0f3;color:#333}
+.cw-quote{margin:0 0 12px;padding:9px 12px;background:#fafafb;border-left:3px solid #e5e5e8;border-radius:0 8px 8px 0;
+  font-size:12.5px;line-height:1.6;color:#55555c;max-height:96px;overflow:auto}
+.cw-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.cw-chip{border:1px solid #e5e5e8;background:#fff;border-radius:999px;padding:5px 11px;font-size:12px;color:#4a4a51;cursor:pointer}
+.cw-chip:hover{border-color:#a4a4ab}
+.cw-input{width:100%;border:1px solid #dedee3;border-radius:10px;padding:10px 12px;font-size:13.5px;line-height:1.6;resize:vertical;color:#222}
+.cw-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:9px}
+.cw-handoff,.cw-send{border-radius:9px;padding:8px 14px;font-size:13px;cursor:pointer}
+.cw-handoff{border:1px solid #dedee3;background:#fff;color:#4a4a51}
+.cw-handoff:hover{border-color:#a4a4ab}
+.cw-send{border:1px solid #c8102e;background:#c8102e;color:#fff}
+.cw-send:disabled,.cw-handoff:disabled{opacity:.5;cursor:default}
+.cw-answer{margin-top:12px;padding-top:12px;border-top:1px solid #ececef;font-size:13.5px;line-height:1.75;color:#2b2b30;white-space:pre-wrap;overflow-wrap:anywhere}
+
+@media(max-width:600px){
+  .cw-panel{right:8px;left:8px;bottom:8px;width:auto;max-height:72vh;border-radius:14px}
+  .cw-bar .cw-ask{padding:8px 16px;font-size:14px}
+}
+
+/* 常驻入口：右下角一直在，不用划词也能问 */
+.cw-fab{position:fixed;z-index:9997;right:24px;bottom:24px;display:inline-flex;align-items:center;gap:8px;
+  border:0;background:#252527;color:#fff;border-radius:999px;padding:12px 20px;font-size:14px;font-weight:600;
+  box-shadow:0 8px 24px #00000033;cursor:pointer;font-family:inherit}
+.cw-fab:hover{background:#35353a}
+.cw-fab-dot{width:7px;height:7px;border-radius:50%;background:#c8102e;box-shadow:0 0 0 3px #c8102e33}
+.cw-quote[hidden]{display:none}
+@media(max-width:600px){.cw-fab{right:14px;bottom:14px;padding:11px 17px;font-size:13px}}
+
+/* 在线访问缺口令时的提示条 */
+.cw-tip{position:fixed;z-index:9996;left:50%;transform:translateX(-50%);top:12px;max-width:min(720px,calc(100vw - 24px));
+  display:flex;align-items:flex-start;gap:10px;background:#fff7f8;border:1px solid #f3d9de;border-radius:12px;
+  padding:11px 14px;font-size:13px;line-height:1.65;color:#7d2735;box-shadow:0 6px 20px #0000001a}
+.cw-tip-how{color:#8a5560;display:block;margin-top:3px;font-size:12px}
+.cw-tip code{background:#fff;border:1px solid #f0dde1;border-radius:4px;padding:1px 5px;font:11px 'Space Mono',monospace;overflow-wrap:anywhere}
+.cw-tip-x{border:0;background:none;color:#b08a92;cursor:pointer;font-size:14px;padding:0 2px;margin-left:auto;flex:0 0 auto}
+@media(max-width:600px){.cw-tip{top:8px;font-size:12px;padding:10px 12px}}

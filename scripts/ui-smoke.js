@@ -113,6 +113,17 @@ async function shot(name){ const r=await send('Page.captureScreenshot',{}); fs.w
     if (noClose.length) bad('这些弹窗里没有看得见的关闭按钮：'+noClose.join(', '));
     else ok('每个弹窗都有看得见的关闭按钮');
 
+    // Optional personal pages remain absent without a configured data source.
+    await send('Page.navigate',{url:`http://127.0.0.1:${PORT}/tinghuitai/work.html`});
+    await sleep(1200);
+    const workspace=await evaluate(`return {hidden:[...document.querySelectorAll('[href="briefs.html"],[href="activity.html"]')].every(a=>a.hidden),button:!!document.querySelector('.cw-fab')}`);
+    if(!workspace.hidden||!workspace.button)bad('工作台可选入口');else ok('未配置的日报动态隐藏，助手入口可用');
+    await evaluate(`document.querySelector('.cw-fab').click(); return 1`);
+    const panel=await evaluate(`return !document.querySelector('.cw-panel').hidden && document.querySelector('.cw-handoff').hidden`);
+    if(!panel)bad('助手打开或未配置交办隐藏');else ok('助手可打开；无执行通道不显示交办');
+    await evaluate(`document.querySelector('.cw-close').click(); return 1`);
+    if(!await evaluate(`return document.querySelector('.cw-panel').hidden`))bad('助手关闭');else ok('助手可关闭');
+
     console.log('\n截图在 '+SHOTS);
     console.log(fails.length ? `\n冒烟失败 ${fails.length} 条` : '\n冒烟全过');
     process.exitCode = fails.length ? 1 : 0;

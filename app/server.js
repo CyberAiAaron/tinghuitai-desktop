@@ -105,14 +105,15 @@ function parseFrame(buf) { const hb = (buf[0] & 0x0f) * 4, mt = (buf[1] >> 4) & 
 const cliLlm = require('./cli-llm');
 // 模型调用：优先用本机已登录的 AI 命令行（不用申请 Key），失败再退回 API。
 // tier='quick' 用会中那颗快模型（没配就用同一颗）。会中分诊每 40 秒一次，慢模型会拖住字幕。
-async function deepseek(env, system, user, maxTokens, tier) {
+async function deepseek(env, system, user, maxTokens, tier, trace) {
   const kind = env.LLM_PROVIDER;
   if (kind === 'codex' || kind === 'claude') {
     const text = await cliLlm.ask(kind, system + '\n\n' + user, { dataDir: DATA, log });
-    if (text) return text;
+    if (text) {if(trace)trace.provider=kind==='claude'?'Claude':'Codex';return text;}
     log('CLI 模型没回应，退回 API');
   }
   const key = env.DEEPSEEK_API_KEY; if (!key) return null;
+  if(trace)trace.provider=/deepseek/i.test(env.LLM_BASE_URL||'')?'DeepSeek':(env.LLM_MODEL||'AI');
   try { const r = await fetch(env.LLM_BASE_URL.replace(/\/$/,'')+'/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: (tier === 'quick' && env.LLM_MODEL_QUICK) ? env.LLM_MODEL_QUICK : env.LLM_MODEL, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], max_tokens: maxTokens || 800, temperature: 0.2, stream: false }), signal:AbortSignal.timeout(90000) }); const d = await r.json(); return (((d.choices || [])[0] || {}).message || {}).content || null; } catch (e) { log('deepseek err ' + e.message); return null; }
 }
 function larkPush() { /* No automatic external messages in the standalone edition. */ }
@@ -832,7 +833,7 @@ async function proxyHub(req, res, u, upstream) {
 
 function serveStatic(req, res, p) {
   let rel;try{rel=decodeURIComponent(p.replace(/^\/tinghuitai\/?/, '')).split('?')[0]||'index.html';}catch{res.writeHead(400);return res.end('invalid path');}
-  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json']);
+  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json','workspace-nav.js','activity.html','activity.js','activity.css','assistant-widget.js','assistant-widget.css']);
   if(!allowed.has(rel)){res.writeHead(404);return res.end('not found');}
   const full = path.join(STATIC_DIR, rel);
   if (!full.startsWith(STATIC_DIR + path.sep) && full !== STATIC_DIR) { res.writeHead(403); return res.end('forbidden'); }
@@ -875,8 +876,10 @@ let crashedSinceStart = 0;
 process.on('unhandledRejection', e => { crashedSinceStart++; try { log('未处理的 Promise 异常: ' + (e && e.message || e)); } catch (x) {} });
 process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获异常(' + crashedSinceStart + '): ' + (e && e.stack || e)); } catch (x) {} });
 
+const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,isLocal:isLocalReq,ask:deepseek,active:()=>[...SESSIONS.values()].some(s=>!s.finalized)});
 const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
+  if(await workspaceRoute(req,res,u))return;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),localReason:()=>localReqReason(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>deepseek(loadEnv(),'Reply exactly OK','OK',8)}))return;
   // ⚠️ 工作台这一段必须排在所有 p.endsWith('/xxx') 路由前面。
   // 它的子路径叫 /hub/update、/hub/session，会被下面的 endsWith('/update')（应用自更新）
@@ -1077,15 +1080,6 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
     const gone=new Set(meetingTrash.deletedIds().map(String));
     res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({v:1,sessions:rows.filter(r=>!gone.has(String(r.id))),deletedIds:[...gone]}));}
   if(req.method==='GET'&&p.endsWith('/meeting-status')){if(!authed){res.writeHead(401);return res.end('unauthorized');}res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({jobs:meetingPipeline.list()}));}
-  // 日报的数据是外部管线生成的，不在安装包里：按顺序找，都没有就回一个空壳，页面自己说「还没有日报」。
-  if (req.method === 'GET' && p.endsWith('/briefs.json')) {
-    const cands = [process.env.THT_BRIEFS_JSON, path.join(DATA,'briefs.json'), path.join(STATIC_DIR,'briefs.json'),
-      path.join(HOME,'This is my Chansey','tools','tinghuitai','briefs.json')].filter(Boolean);
-    const hit = cands.find(f => { try { return fs.statSync(f).isFile(); } catch (e) { return false; } });
-    res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-    if (!hit) return res.end(JSON.stringify({topics:[],generatedAt:''}));
-    try { return res.end(fs.readFileSync(hit)); } catch (e) { return res.end(JSON.stringify({topics:[],generatedAt:''})); }
-  }
   if (req.method === 'GET' && (p === '/tinghuitai' || p.startsWith('/tinghuitai/'))) { return serveStatic(req, res, p); }
   // 会后回听：把这场的原始 PCM 当成 WAV 发出去，支持 Range 才能拖动和点条目跳转。
   // 按最新格式整理一场老会议：给它补上收敛结果。
