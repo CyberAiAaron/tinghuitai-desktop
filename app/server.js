@@ -1471,6 +1471,19 @@ wss.on('connection', (ws, req) => {
 server.requestTimeout = 20 * 60000;   // 音频导入几十MB，放宽默认5分钟限制（2026-09-04 0800 信 补1）
 server.headersTimeout = Math.max(server.requestTimeout + 1000, server.headersTimeout || 0);
 server.on('error',e=>{console.error(e.code==='EADDRINUSE'?'端口已被使用，请勿关闭其他程序。可设置 THT_PORT 换一个端口。':'本地服务启动失败');process.exitCode=1;});
+// Opt-in local projection, independent of model extraction. Failed writes retry next tick.
+if (MEMORY_PROJECTION_DIR && !process.env.THT_TEST) {
+  const refreshContext = () => {
+    try {
+      const cfg = settings.load();
+      require('./context-sync').sync({dataDir: DATA, outputDir: MEMORY_PROJECTION_DIR,
+        extraPendingDirs: Array.isArray(cfg.CONTEXT_EXTRA_PENDING_DIRS) ? cfg.CONTEXT_EXTRA_PENDING_DIRS : [],
+        liveSessions: [...SESSIONS.values()].map(s => s.snapshot().session)});
+    } catch (e) { log('context projection failed: ' + e.message); }
+  };
+  refreshContext();
+  setInterval(refreshContext, 30000).unref();
+}
 server.listen(PORT, '127.0.0.1', () => log(`asr-relay v2.3 listening on 127.0.0.1:${PORT}`));
 
 if (!process.env.THT_TEST) { setTimeout(()=>{try{workHub.hub.syncDisk();workHub.hub.syncIndex();}catch(e){log('hub sync '+e.message);}},2000); setInterval(()=>{try{workHub.hub.syncDisk();const last=workHub.hub.data.sync.index?.at;if(!last||Date.now()-Date.parse(last)>6*3600000)workHub.hub.syncIndex();}catch(e){log('hub sync '+e.message);}},5*60000).unref(); }
