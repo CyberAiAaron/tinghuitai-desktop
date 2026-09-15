@@ -881,9 +881,11 @@ process.on('unhandledRejection', e => { crashedSinceStart++; try { log('未处�
 process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获异常(' + crashedSinceStart + '): ' + (e && e.stack || e)); } catch (x) {} });
 
 const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,isLocal:isLocalReq,ask:deepseek,active:()=>[...SESSIONS.values()].some(s=>!s.finalized)});
-const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq});
+const shareBundles=require('./share-bundles')({settings});
+const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
 const server = http.createServer(async (req, res) => {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
+  if(p.replace(/^\/asr-relay/,'').startsWith('/sharing/bundle') && await shareBundles.route(req,res,u,authed))return;
   if(p.endsWith('/sharing/lark') && req.method==='POST'){
     const send=(status,j)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
     if(!authed){send(401,{error:'请连接 Mac'});return;}

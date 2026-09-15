@@ -144,6 +144,11 @@ async function shot(name){ const r=await send('Page.captureScreenshot',{}); fs.w
     await shot('compact-menu-mobile');
     if(!await evaluate(`const d=document.querySelector('#meeting-more-dialog');return d.getBoundingClientRect().height<844 && d.querySelectorAll('.meeting-more-menu>details').length===3`))bad('手机本场菜单未收拢');else ok('手机本场菜单可完整显示');
     await evaluate(`document.querySelector('#meeting-more-dialog').close();return 1`);
+    await evaluate(`const original=window.fetch;window.fetch=async(u,o)=>{const p=String(u);if(p.includes('/sharing/slack/channels'))return new Response(JSON.stringify({ok:true,selfAvailable:true,team:'Test',channels:[]}));if(p.includes('/sharing/bundle'))return new Response(JSON.stringify({key:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',status:'done',bundle:{slackText:'会议主题\\n讨论内容与待办',brief:{title:'会议',overview:'范围',topics:[],conclusions:[],todos:[]}}}));return original(u,o);};document.querySelector('#share-slack').click();return 1`);
+    await sleep(400);
+    if(!await evaluate(`return document.querySelector('#slack-dialog').open && document.querySelector('#slack-channel').value==='self' && document.querySelector('#slack-files').querySelectorAll('a').length===2 && !document.querySelector('#slack-send').disabled`))bad('Slack 默认自己与双附件预览');else ok('Slack 默认自己与双附件预览');
+    await shot('slack-share-mobile');
+    await evaluate(`document.querySelector('#slack-dialog').close();return 1`);
     console.log('\n截图在 '+SHOTS);
     console.log(fails.length ? `\n冒烟失败 ${fails.length} 条` : '\n冒烟全过');
     process.exitCode = fails.length ? 1 : 0;
