@@ -279,6 +279,9 @@ dialog h2{margin:0 0 12px;font-size:16px}
 .ftr .spacer{flex:1 0 8px}
 .ftr button{flex:0 0 auto}
 .card.stale{opacity:.55;border-left-color:var(--muted)}
+.card.pending{opacity:.6;background-image:linear-gradient(90deg,transparent 0,rgba(0,0,0,.05) 50%,transparent 100%);background-size:200% 100%;animation:fixwait 1.2s linear infinite}
+@keyframes fixwait{from{background-position:200% 0}to{background-position:-200% 0}}
+.card .v.memo{white-space:pre-wrap;color:var(--text)}
 .card.stale::after{content:'原文已改，待重算';display:block;margin-top:4px;font:11px var(--mono);color:var(--muted)}
 .card.recomputed::after{content:'原文订正后已重算';display:block;margin-top:4px;font:11px var(--mono);color:var(--muted)}
 html[lang='en'] .card.stale::after{content:'Transcript edited · recomputing'}
@@ -417,9 +420,9 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   <h2 data-i18n="fix_title">这一条</h2>
   <p class="fix-orig" id="fix-orig"></p>
   <div class="seg fix-mode" id="fix-mode" role="group" aria-label="改记录 / 拿去干"><button type="button" data-mode="edit" aria-selected="true" data-i18n="fm_edit">改记录</button><button type="button" data-mode="task" aria-selected="false" data-i18n="fm_task">拿去干</button></div>
-  <div class="field"><label for="fix-say" id="fix-say-label" data-i18n="fix_say">哪儿不对、漏了什么？一句话</label>
-    <textarea id="fix-say" rows="2" data-i18n-ph="fix_say_ph" placeholder="例：不是同等难度，网页比 App 容易多了 ／ 他说的是 What's the post ／ 以后「可以考虑」别当成拍板 ／ 把这条查一下写个对比发我"></textarea>
-    <p class="hint" id="fix-say-hint" data-i18n="fix_say_hint">改正文、改判断、删掉、记听错的词、立长期规则——说哪件它就做哪件，可撤销。</p></div>
+  <div class="field"><label for="fix-say" id="fix-say-label" data-i18n="fix_say">哪儿不对、要补什么？一句话</label>
+    <textarea id="fix-say" rows="2" data-i18n-ph="fix_say_ph" placeholder="例：S0 是 Shawn ／ 这里还提到预算要砍一半 ／ 他说的是 What's the post ／ 以后「可以考虑」别当成拍板"></textarea>
+    <p class="hint" id="fix-say-hint" data-i18n="fix_say_hint">纠错、补充、给说话人起名、删掉、记听错的词、立规则——一句人话，它照做，可撤销。</p></div>
   <p class="fix-said-msg" id="fix-say-msg" hidden></p>
   <div id="fix-say-row" class="fix-actions"><button class="btn primary" id="fix-go" data-i18n="fix_go">改好</button><button class="btn" id="fix-say-cancel" data-i18n="cancel">取消</button></div>
   <details id="fix-detail"><summary data-i18n="fix_detail">自己动手改（细项）</summary>

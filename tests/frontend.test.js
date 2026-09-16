@@ -110,6 +110,21 @@ test('one-line edit accepts the four shapes the model actually returns',()=>{
  assert.equal(r({rule:'以后「可以考虑」不算拍板',ruleKeep:true},'hl').acts.join(','),'rule');
 });
 
+// 补充信息、起名、认日历：Aaron 09-16 说「S0 是 shawn，这个会我日历上有」被退回细项表单。
+// 这三种形状都得认，而且可以和别的动作同时出现；名字只收干净的 {"0":"Shawn"}。
+test('one-line window accepts memo / names / calendar, alone or together',()=>{
+ const r=intent();
+ assert.equal(r({memo:'还提到预算要砍一半'},'hl').acts.join(','),'memo');
+ const n=r({names:{'S0':'Shawn','1':'Cary','x':'bad','2':''}},'hl');
+ assert.equal(n.acts.join(','),'names'); assert.equal(JSON.stringify(n.intent.names),'{"0":"Shawn","1":"Cary"}');
+ assert.equal(r({calendar:'confirm'},'hl').acts.join(','),'calendar');
+ assert.equal(r({calendar:'maybe'},'hl').bad,'empty');
+ assert.equal(r({names:{'0':'Shawn'},calendar:'confirm'},'tr').acts.join(','),'names,calendar');
+ assert.equal(r({text:'x',memo:'y'},'ck').acts.join(','),'text,memo');
+ assert.equal(r({drop:true,memo:'y'},'hl').bad,'conflict');
+ assert.equal(r({handoff:'x',names:{'0':'a'}},'hl').bad,'conflict');
+});
+
 // 按钮点「改好」和文本框按回车必须走同一套分发：task 模式下两者都要交给 handoffSaid，
 // 不能只改了按钮、漏了键盘（这正是 Codex 20260916-1920 报的缺陷）。
 test('Enter in the one-line box dispatches on fixMode, same as the button',()=>{
