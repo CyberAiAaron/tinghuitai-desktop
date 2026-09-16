@@ -1,18 +1,14 @@
 'use strict';
-const fs=require('fs'),path=require('path'),{spawn,execFileSync}=require('child_process'),net=require('net');
+const fs=require('fs'),path=require('path'),{spawn}=require('child_process'),net=require('net'),{ownsServer}=require('./process-owner');
 const settings=require('../app/config'),port=Number(process.env.THT_PORT||47823),base='http://127.0.0.1:'+port;
 async function health(){try{const r=await fetch(base+'/health',{signal:AbortSignal.timeout(1500)});const j=await r.json();return j.app==='tinghuitai-desktop'&&j.ok?j:null;}catch{return false;}}
 async function launch(){
  const running=await health(),want=JSON.parse(fs.readFileSync(path.join(__dirname,'../package.json'),'utf8')).version;
  if(running&&running.version!==want){
    if(running.activeSessions!==0)throw Error('会议仍在进行，新版已下载。请结束会议后再打开听会台；当前录音没有被中断。');
-   const pid=Number(running.pid),serverPath=path.resolve(__dirname,'../app/server.js'),program=path.dirname(serverPath);
-   let owned=false;
-   if(Number.isInteger(pid)&&pid>1){try{
-     const cmd=execFileSync('/bin/ps',['-p',String(pid),'-o','command='],{encoding:'utf8'}).trim();
-     const cwd=execFileSync('/usr/sbin/lsof',['-a','-p',String(pid),'-d','cwd','-Fn'],{encoding:'utf8'}).split('\n');
-     owned=cmd===process.execPath+' '+serverPath || (cmd===process.execPath+' app/server.js'&&cwd.includes('n'+path.dirname(program)));
-   }catch{}}
+   const pid=Number(running.pid),serverPath=path.resolve(__dirname,'../app/server.js'),rootDir=path.resolve(__dirname,'..');
+   const configuredNode=(()=>{try{return fs.readFileSync(path.join(settings.dataDir,'node-path'),'utf8').trim();}catch{return '';}})();
+   const owned=ownsServer(pid,{serverPath,rootDir,nodePaths:[process.execPath,configuredNode]});
    if(!owned)throw Error('此端口运行着另一份听会台，未关闭它。请从原安装位置打开，或为另一份安装选择不同端口。');
    // Recheck activity immediately before stopping only this installation's exact server command.
    const latest=await health();if(!latest||latest.pid!==pid||latest.activeSessions!==0)throw Error('服务状态已变化，请稍后重新打开。');

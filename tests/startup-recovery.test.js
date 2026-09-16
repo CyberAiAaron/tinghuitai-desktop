@@ -1,6 +1,21 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),path=require('path'),os=require('os'),net=require('net'),{execFile}=require('child_process'),{promisify}=require('util');
 const exec=promisify(execFile),root=path.resolve(__dirname,'..');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
+test('process ownership accepts a Node symlink only for the exact installed server',()=>{
+ const {ownsServer}=require('../scripts/process-owner'),serverPath='/Applications/LiveMate/program/app/server.js',rootDir='/Applications/LiveMate/program';
+ let commandLine='/Users/test/bin/node-link '+serverPath,cwd='/tmp/unrelated',executable='/opt/node/bin/node';
+ const run=(command,args)=>{
+  if(command==='/bin/ps')return commandLine;
+  if(args.includes('cwd'))return 'p42\nfcwd\nn'+cwd;
+  return 'p42\nftxt\nn'+executable;
+ };
+ const realpath=file=>file==='/Users/test/bin/node-link'?'/opt/node/bin/node':file;
+ const check=()=>ownsServer(42,{serverPath,rootDir,nodePaths:['/Users/test/bin/node-link'],run,realpath});
+ assert.equal(check(),true);
+ executable='/opt/other/node';assert.equal(check(),false);
+ executable='/opt/node/bin/node';commandLine='/Users/test/bin/node-link app/server.js';cwd=rootDir;assert.equal(check(),true);
+ cwd='/Applications/Other/program';assert.equal(check(),false);
+});
 test('installed launcher recovers stale Node path, missing Python path and an idle old process without changing settings',async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'livemate-start-')),program=path.join(dir,'program');fs.mkdirSync(program);
  for(const n of ['app','web','scripts','node_modules','package.json','package-lock.json','启动.command'])fs.cpSync(path.join(root,n),path.join(program,n),{recursive:true});
