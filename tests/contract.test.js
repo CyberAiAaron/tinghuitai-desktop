@@ -141,3 +141,16 @@ test('stutter detection catches repeats with and without separators', ()=>{
   assert.equal(c.repeatedASR('Yeah'.repeat(20)), true);
   assert.equal(c.repeatedASR('这是一句正常的话，没有任何重复，长度也够了，应该原样显示出来不被折叠起来。'), false, '正常长句不能被当成重复');
 });
+
+// ——— 7. index.html 必须是 web/src + 模板拼出来的那一份 ———
+// 2026-09-16 起 index.html 是构建产物：只改 web/src 下的小文件，跑 `npm run build`。
+// 有人直接改了 index.html 又忘了改源文件，这条会把它抓出来，避免下次构建把改动冲掉。
+test('index.html is exactly the build output of web/src + template', ()=>{
+  const fs=require('fs'),path=require('path');
+  const root=path.join(__dirname,'..','web');
+  const files=fs.readdirSync(path.join(root,'src')).filter(f=>f.endsWith('.js')).sort();
+  const js=files.map(f=>fs.readFileSync(path.join(root,'src',f),'utf8')).join('\n');
+  const tpl=fs.readFileSync(path.join(root,'index.template.html'),'utf8');
+  const built=tpl.replace('/*@@APP_JS@@*/',()=>js);
+  assert.equal(fs.readFileSync(path.join(root,'index.html'),'utf8'), built, 'index.html 与构建产物不一致：请改 web/src 并运行 npm run build');
+});

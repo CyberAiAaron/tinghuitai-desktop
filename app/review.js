@@ -74,6 +74,19 @@ function shareNote(session, decisions, condensed) {
     L.push('# ' + (session.topicTitle || session.title || '会议纪要'));
     if (when) L.push('', when);
   }
+  // 会议信息头：能从日历里对上就写，时间以日历为准、录音实际起止另注。参会人读不到就明说，不编。
+  const ev = session.calendarEvent;
+  if (ev && (ev.title || ev.start)) {
+    const hm = v => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString('zh-CN', { timeZone:'Asia/Shanghai', hour:'2-digit', minute:'2-digit' }); };
+    const day = ev.start ? new Date(ev.start).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai', year:'numeric', month:'2-digit', day:'2-digit' }) : '';
+    const rec = (session.start && session.end) ? '；录音 ' + hm(session.start) + '–' + hm(session.end) : '';
+    L.push('', '## 会议信息' + (ev.confidence === 'low' ? '（按时间猜的，待确认）' : ''));
+    if (ev.title) L.push('- 日程：' + ev.title + (ev.confidence === 'low' && ev.candidates && ev.candidates.length > 1 ? '（同一时段还有：' + ev.candidates.slice(1).map(c => c.title).join('、') + '）' : ''));
+    if (ev.start) L.push('- 时间：' + day + ' ' + hm(ev.start) + (ev.end ? '–' + hm(ev.end) : '') + rec);
+    if (ev.location) L.push('- 地点：' + ev.location);
+    if (ev.organizer) L.push('- 组织者：' + ev.organizer);
+    L.push('- 参会：' + (ev.attendees && ev.attendees.length ? ev.attendees.join('、') : (ev.attendeesNote || '日历里读不到参会人')));
+  }
   // 四段，顺序固定：总结 → 核心要点 → 核心纠错 → 核心待办。
   // 会议过程中的那几百条明细一律不进这份——那是翻不动的，也不是给人读的。
   // 总结就是一小段：这是一场什么会、从多少条里收敛出下面这些。
@@ -93,7 +106,7 @@ function shareNote(session, decisions, condensed) {
     else if (line) line += '。';
     // 智能总结开头若有一段散文（不是条目），留它一句，那往往是最像「总结」的一句
     const first = String(session.summary || '').split('\n').map(x => x.trim())
-      .filter(Boolean).find(x => !/^[#\-*\d]/.test(x) && !/按你要求的结构|仅基于所给/.test(x) && x.length > 12);
+      .filter(Boolean).find(x => !/^[#\-*\d|>]/.test(x) && !/按你要求的结构|仅基于所给/.test(x) && x.length > 12);
     if (first) line = (line ? line + '\n\n' : '') + first;
     if (line) L.push('', '## 总结', '', line);
   }

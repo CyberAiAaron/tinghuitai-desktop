@@ -38,6 +38,13 @@ body{margin:0;padding:0 0 60px}
 .rv-done pre{white-space:pre-wrap;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:40vh;overflow:auto;font:13px/1.7 var(--mono)}
 .note-box{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:0 0 6px;margin:0 0 14px}
 .note-box[hidden]{display:none}
+.cal-chip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:9px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);font-size:13px}
+.cal-chip[hidden]{display:none}
+.cal-chip .cal-k{font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+.cal-chip .cal-when,.cal-chip .cal-who{color:var(--muted)}
+.cal-chip .cal-ok{color:#2e7d32;font-weight:700}
+.cal-chip .cal-warn{color:#b3261e}
+.cal-chip button,.cal-chip select{padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text);font:inherit;font-size:12px;cursor:pointer}
 .take-dlg{border:0;border-radius:16px;padding:20px;max-width:520px;width:calc(100% - 32px);background:var(--panel);color:var(--text)}
 .take-dlg::backdrop{background:#0006}
 .take-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}

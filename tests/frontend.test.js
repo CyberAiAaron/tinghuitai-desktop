@@ -1,8 +1,8 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('fs'),vm=require('vm');
 const html=fs.readFileSync(__dirname+'/../web/index.html','utf8');
 const code=(start,end)=>html.slice(html.indexOf(start),html.indexOf(end,html.indexOf(start)));
-function fixture(){const els={};const $=k=>els[k]??={value:'',textContent:'',dataset:{},classList:{add(){},remove(){},contains:()=>false},showModal(){this.open=true},close(){this.open=false},focus(){}};
- const c={$,cur:{transcript:[{text:'hello'},{text:'hello'}],fixes:[]},briefFix:'',parseFixes:()=>[],setTimeout:()=>{},rememberFix:()=>{},rememberRule:()=>false,syncCorrectionContext:()=>{},persist:()=>{},resetSigs:()=>{},render:()=>{},note:()=>{},T:()=>'',ui:'zh'};
+function fixture(){const els={};const $=k=>els[k]??={value:'',textContent:'',placeholder:'',hidden:false,dataset:{},classList:{add(){},remove(){},contains:()=>false},querySelectorAll:()=>[],setAttribute(){},addEventListener(){},showModal(){this.open=true},close(){this.open=false},focus(){}};
+ const c={$,setFixMode(){},cur:{transcript:[{text:'hello'},{text:'hello'}],fixes:[]},briefFix:'',parseFixes:()=>[],setTimeout:()=>{},rememberFix:()=>{},rememberRule:()=>false,syncCorrectionContext:()=>{},persist:()=>{},resetSigs:()=>{},render:()=>{},note:()=>{},T:()=>'',ui:'zh'};
  vm.createContext(c);vm.runInContext(code('  function openFix(', '  // Literal,'),c);vm.runInContext(code("  $('#fix-save').onclick", "  $('#fix-del').onclick"),c);return{c,$,els};}
 test('all inline scripts parse',()=>{for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))new vm.Script(m[1]);});
 test('open edit shows existing sentence and saving only changes selected row',()=>{const {c,$}=fixture();c.openFix({dataset:{fix:'tr',key:'0'}});assert.equal($('#fix-text').value,'hello');assert.equal(c.cur.transcript[0].text,'hello');$('#fix-text').value='hello Person';$('#fix-save').onclick();assert.equal(c.cur.transcript[0].text,'hello Person');assert.equal(c.cur.transcript[1].text,'hello');assert.equal(c.cur.transcriptEdits[0].originalText,'hello');assert.equal(c.cur.fixes.length,0);});
@@ -110,13 +110,28 @@ test('one-line edit accepts the four shapes the model actually returns',()=>{
  assert.equal(r({rule:'以后「可以考虑」不算拍板',ruleKeep:true},'hl').acts.join(','),'rule');
 });
 
+// 按钮点「改好」和文本框按回车必须走同一套分发：task 模式下两者都要交给 handoffSaid，
+// 不能只改了按钮、漏了键盘（这正是 Codex 20260916-1920 报的缺陷）。
+test('Enter in the one-line box dispatches on fixMode, same as the button',()=>{
+ for (const mode of ['edit','task']) {
+  const calls=[];
+  const handlers={};
+  const c={fixMode:mode,applySaid:()=>calls.push('apply'),handoffSaid:()=>calls.push('handoff'),
+   $:()=>({addEventListener:(evt,fn)=>{handlers[evt]=fn;},onclick:null,close(){}})};
+  vm.createContext(c);
+  vm.runInContext(code("  $('#fix-say-cancel').onclick","  $('#fix-save').onclick"),c);
+  handlers.keydown({key:'Enter',shiftKey:false,isComposing:false,preventDefault(){}});
+  assert.deepEqual(calls, mode==='task' ? ['handoff'] : ['apply'], 'mode='+mode);
+ }
+});
+
 // 上面几条测试靠字符串切片取函数体。签名一改标记就失配，indexOf 返回 -1，
 // 切片会一路切到文件末尾、报一个看不懂的语法错。这条直接检查标记还在不在。
 test('the source markers these tests slice on still exist',()=>{
  for (const m of ['  function groupedHighlights(','  // Wait for the recent discussion','  function openFix(',
                   '  // Literal,',"  $('#fix-save').onclick","  $('#fix-del').onclick",
                   '  function syncCorrectionContext()','  function rememberFix(',
-                  '  const FIX_FIELDS =','  function fixTargetOf(']) {
+                  '  const FIX_FIELDS =','  function fixTargetOf(',"  $('#fix-say-cancel').onclick"]) {
   assert.ok(html.includes(m), 'missing slice marker: '+m);
  }
 });
@@ -146,4 +161,14 @@ test('changed source invalidates condensation, unmatched points remain visible a
  const c={ui:'zh',running:true};vm.createContext(c);vm.runInContext(code('  function groupedHighlights(','  // Wait for the recent discussion'),c);
  const out=c.groupedHighlights({hlGroups:{groups:[{title:'old',summary:'old synthesis',keys:['one','two']}] }},[{text:'one',at:1},{text:'corrected two',at:2},{text:'new',at:3}]);
  assert.equal(out[0].summary,'');assert.equal(out.flatMap(g=>g.list).length,3);assert.equal(out.map(g=>g.no).join(','),'1,2,3');
+});
+
+// 一句话窗口现在也能「交给主 Claude 去干」：handoff 是独占动作，和改字、删除、记词、立规则都不能同时出现。
+test('one-line window: handoff is exclusive and accepted on its own',()=>{
+ const r=intent();
+ assert.equal(r({handoff:'把这条查一下写个对比'},'hl').acts.join(','),'handoff');
+ assert.equal(r({handoff:'x',text:'y'},'hl').bad,'conflict');
+ assert.equal(r({handoff:'x',drop:true},'hl').bad,'conflict');
+ assert.equal(r({handoff:'x',verdict:'true'},'ck').bad,'conflict');
+ assert.equal(r({handoff:'   '},'hl').bad,'empty');
 });

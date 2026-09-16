@@ -45,6 +45,7 @@ function render(s){
   mountReviewButton(s);
   mountMemoryLink();
   mountNote(s);
+  mountCalendarChip();
   // 从会后卡片点「过一遍」过来的，直接开，不用再点一次按钮
   if(new URLSearchParams(location.search).get('review')==='1' && reviewReady(s) && !window.__rvAuto){
     window.__rvAuto=1; setTimeout(()=>startReview(s), 300);
@@ -193,6 +194,36 @@ async function mountNote(s){
   }catch(e){ box.hidden=true; }
 }
 
+// 日历匹配的结果要让你一眼看到、一下改掉：猜对了就一个 ✓，猜得不稳就标「待确认」，点开能换一场或说「不是日历上的会」。
+// 匹配错了不改，参会人和时间就会跟着错进纪要和分享文档。
+async function mountCalendarChip(){
+  let box=document.getElementById('cal-chip');
+  if(!box){ box=document.createElement('div'); box.id='cal-chip'; box.className='cal-chip';
+    (document.getElementById('note-box')||document.getElementById('player-box')).insertAdjacentElement('beforebegin', box); }
+  if(source!=='mac'){ box.hidden=true; return; }
+  const tok=encodeURIComponent(settings.relayToken||'');
+  const paint=(j)=>{
+    const ev=j.event; box.hidden=false;
+    if(!ev){ box.innerHTML='<span class="cal-k">日历</span><span>'+esc(j.chosen==='none'?'你标了：不是日历上的会':(j.reason||'没对上日程'))+'</span>'+(j.chosen==='none'?'<button type="button" data-cal="reset">重新匹配</button>':''); }
+    else {
+      const low=ev.confidence==='low'&&!ev.chosenByUser;
+      const when=(ev.start||'').slice(11,16)+(ev.end?'–'+ev.end.slice(11,16):'');
+      box.innerHTML='<span class="cal-k">日历</span><b>'+esc(ev.title)+'</b><span class="cal-when">'+esc(when)+'</span>'
+        +(ev.attendees&&ev.attendees.length?'<span class="cal-who">'+esc(ev.attendees.join('、'))+'</span>':'')
+        +(low?'<span class="cal-warn">按时间猜的，待确认</span>':'<span class="cal-ok">✓</span>')
+        +'<span style="flex:1"></span>'
+        +((ev.candidates||[]).length>1?'<select data-cal="pick">'+(ev.candidates||[]).map(c=>'<option value="'+esc(c.eventId)+'"'+(c.eventId===ev.eventId?' selected':'')+'>'+esc(c.title)+' '+esc((c.start||'').slice(11,16))+'</option>').join('')+'</select>':'')
+        +(low?'<button type="button" data-cal="'+esc(ev.eventId)+'">就是这场</button>':'')
+        +'<button type="button" data-cal="none">不是日历上的会</button>';
+    }
+    box.querySelectorAll('[data-cal]').forEach(el=>{
+      const send=async v=>{ box.style.opacity=.6; const r=await fetch('/asr-relay/calendar-match?id='+encodeURIComponent(id)+(v==='reset'?'&refresh=1':'')+'&token='+tok, v==='reset'?{cache:'no-store'}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({eventId:v})}); box.style.opacity=1; paint(await r.json()); mountNote(record); };
+      if(el.tagName==='SELECT') el.onchange=()=>send(el.value); else el.onclick=()=>send(el.dataset.cal);
+    });
+  };
+  try{ const r=await fetch('/asr-relay/calendar-match?id='+encodeURIComponent(id)+'&token='+tok,{cache:'no-store',signal:AbortSignal.timeout(60000)}); paint(await r.json()); }
+  catch(e){ box.hidden=true; }
+}
 // 会后带走：下载和分享是同一件事的三个去处，共用同一份正文（纪要 + 逐字稿）。
 // 分开做成三个按钮的话，三处各生成一遍，内容迟早对不上。
 const tok=()=>encodeURIComponent(settings.relayToken||'');

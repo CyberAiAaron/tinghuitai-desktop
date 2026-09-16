@@ -57,7 +57,7 @@
     <form class="cw-form">
       <textarea class="cw-input" rows="2" placeholder="想问什么？回车发送，Shift+回车换行"></textarea>
       <div class="cw-actions">
-        <button type="button" class="cw-handoff" title="交给本机的 Claude 处理，在待办查看结果">交给 Claude 处理</button>
+        <button type="button" class="cw-handoff" title="发给桌面 Claude 的「听会台任务处理界面」会话，它在那里回你">交给 Claude 处理</button>
         <button type="submit" class="cw-send">问</button>
       </div>
     </form>
@@ -176,26 +176,25 @@
     busy = true;
     $('.cw-handoff').disabled = true;
     $('.cw-answer').hidden = false;
-    $('.cw-answer').textContent = '正在放进待办…';
-    // 走工作台现成的建待办接口：这条待办就是给 Claude 的工单，
-    // 后端那侧（Claude App 会话 / 信箱执行体）从同一个池子里认领，不需要另开通道。
-    const text = [
-      `[划词交办] ${q}`,
+    $('.cw-answer').textContent = '正在发给 Claude…';
+    // 2026-09-16 Aaron 定：这一下等于他亲手发给桌面 Claude 的「听会台任务处理界面」会话。
+    // 直接走中转的 /handoff 写信（毫秒级到那边），不再先建工作台待办、等 10 分钟轮询去搬。
+    const detail = [
       `来源：${c.source || '工作台'}${c.detail ? ' · ' + c.detail : ''}`,
-      `原文：${selected.length > 600 ? selected.slice(0, 600) + '…' : selected}`,
-    ].join('\n');
+      selected ? `原文：${selected.length > 600 ? selected.slice(0, 600) + '…' : selected}` : '',
+    ].filter(Boolean).join('\n');
     try {
-      const r = await fetch(`${BASE}/create${authQuery()}`, {
+      const r = await fetch(`/asr-relay/handoff${authQuery()}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ kind: 'tasks', text, owner: 'Claude' }),
+        body: JSON.stringify({ title: q.slice(0, 200), detail, sessionId: c.sessionId || '', meetingTitle: c.meetingTitle || '' }),
         signal: AbortSignal.timeout(30000),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.id) throw new Error(j.error || ('HTTP ' + r.status));
-      $('.cw-answer').textContent = '已排队，负责人 Claude。可在待办查看处理进度；尚未执行完成。';
+      if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      $('.cw-answer').textContent = j.summary || '已发给 Claude。';
     } catch (e) {
-      $('.cw-answer').textContent = '没放进去：' + e.message;
+      $('.cw-answer').textContent = '没发出去：' + e.message;
     } finally {
       busy = false;
       $('.cw-handoff').disabled = false;
