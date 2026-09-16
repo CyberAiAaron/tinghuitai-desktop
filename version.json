@@ -1,10 +1,10 @@
 {
-  "version": "0.6.11",
+  "version": "0.6.12",
   "released": "2026-09-16",
-  "zip": "tinghuitai-desktop-v0.6.11.zip",
-  "notes": "历史会议直接回到主界面回看；要点可「改记录 / 拿去干」；会中助手能建飞书文档、发 Slack、交主 Claude；纪要头自动带日历时间地点参会人；每场显示用量；待核查须带原文依据。",
+  "zip": "tinghuitai-desktop-v0.6.12.zip",
+  "notes": "「这一条」一句话可补充、起名、认日历、纠错、删除；提交后不再卡界面，后台处理完给撤销；没接住的话记成批注。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "b9b8f0b8079c06c435e9a18a423a280fc0895a4d6d4efbb5038b5f2a36013a90",
-  "size": 546854
+  "sha256": "7bffe85ba1fe44271ec982c03b1f8f2178447c306e90e967263bb537ef6ed5ce",
+  "size": 551566
 }
