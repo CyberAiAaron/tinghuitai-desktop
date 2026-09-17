@@ -1,10 +1,10 @@
 {
-  "version": "0.6.12",
-  "released": "2026-09-16",
-  "zip": "tinghuitai-desktop-v0.6.12.zip",
-  "notes": "「这一条」一句话可补充、起名、认日历、纠错、删除；提交后不再卡界面，后台处理完给撤销；没接住的话记成批注。",
+  "version": "0.6.13",
+  "released": "2026-09-17",
+  "zip": "tinghuitai-desktop-v0.6.13.zip",
+  "notes": "逐字稿每行只显示界面语言那一行：中文界面只有中文，英文界面只有英文，不再在下面重复一行。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "7bffe85ba1fe44271ec982c03b1f8f2178447c306e90e967263bb537ef6ed5ce",
-  "size": 551566
+  "sha256": "994fcc197a5a7d87e441c6f17ce3bf2bd0b5109bb6294e49a1e15f9094424adc",
+  "size": 553204
 }
