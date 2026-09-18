@@ -377,12 +377,17 @@ def _epoch(v):
     try:return datetime.datetime.fromisoformat(str(v).replace('Z','+00:00')).timestamp()
     except Exception:return 0.0
 
+def _evt(t):
+    t=t or {}
+    if str(t.get('timestamp') or '').isdigit():return float(t['timestamp'])
+    return _epoch(t.get('datetime') or t.get('date_time') or '')
+
 def pick_calendar_name(events,start,end):
     """按时间重叠挑日历会议名。空闲/已拒绝/全天类日程不算会议；重叠不到 10 分钟且不到本场一半的不算。"""
     best=None
     for x in events or []:
         if x.get('free_busy_status')=='free' or x.get('self_rsvp_status')=='decline':continue
-        a=_epoch(int((x.get('start_time') or {}).get('timestamp') or 0));b=_epoch(int((x.get('end_time') or {}).get('timestamp') or 0))
+        a,b=_evt(x.get('start_time')),_evt(x.get('end_time'))
         if not a or not b or b-a>8*3600:continue
         ov=min(end,b)-max(start,a)
         if ov>0 and (best is None or ov>best[0]):best=(ov,x.get('summary') or '')
@@ -394,10 +399,10 @@ def calendar_name(session):
     try:
         s,e=_epoch(session.get('start')),_epoch(session.get('end'))
         if not s or not e:return ''
-        iso=lambda t:datetime.datetime.fromtimestamp(t,datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        iso=lambda t:datetime.datetime.fromtimestamp(t).astimezone().isoformat(timespec='seconds')
         env=dict(os.environ,LARKSUITE_CLI_NO_UPDATE_NOTIFIER='1',LARKSUITE_CLI_NO_SKILLS_NOTIFIER='1')
         p=subprocess.run([CLI,'calendar','+agenda','--as','user','--start',iso(s-1800),'--end',iso(e+1800),'--format','json'],text=True,capture_output=True,timeout=40,env=env)
-        return pick_calendar_name((json.loads(p.stdout) or {}).get('data') or [],s,e)
+        return pick_calendar_name((json.loads(p.stdout[p.stdout.index('{'):]) or {}).get('data') or [],s,e)
     except Exception:return ''
 
 def full_title(session, summary_text=''):
