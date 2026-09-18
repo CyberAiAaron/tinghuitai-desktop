@@ -17,7 +17,7 @@
       : (boot.macAsrAvailable ? (en?'On-device (offline)':'本机转写（离线）') : (en?'Not ready':'未就绪'));
     a.textContent = (en?'Transcription: ':'转写：') + asrName;
     a.classList.toggle('warn', !canListen);
-    const llmName = llmOk ? (boot.provider === 'codex' ? 'Codex' : boot.provider === 'claude' ? 'Claude Code' : (boot.model || (en?'Configured':'已配置')))
+    const llmName = llmOk ? 'MyAgent'
       : (en?'not connected':'未接');
     l.textContent = (en?'Notes: ':'纪要：') + llmName;
     l.classList.toggle('warn', !llmOk);
@@ -38,19 +38,9 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBoot(); });
 
   function assistantIdentity(config,online){
-    if(!config.key)return online?'My DeepSeek':'My AI';
-    if(config.provider==='anthropic'||config.provider==='claude')return 'My Claude';
-    if(config.provider==='codex')return 'My GPT';
-    if(config.provider==='deepseek')return 'My DeepSeek';
-    const model=String(config.model||'').toLowerCase();
-    if(model.includes('claude'))return 'My Claude';
-    if(model.includes('deepseek'))return 'My DeepSeek';
-    if(model.includes('gemini'))return 'My Gemini';
-    if(model.includes('gpt')||/^o[134](?:-|$)/.test(model))return 'My GPT';
-    if(model.includes('qwen'))return 'My Qwen';
-    return 'My AI';
+    return 'MyAgent';
   }
-  let serverModelIdentity='My AI';
+  let serverModelIdentity='MyAgent';
   fetch('/setup').then(r=>r.ok?r.json():null).then(c=>{if(c){serverModelIdentity=assistantIdentity({key:'server-held',model:c.model||'',provider:c.provider||''},true);updateAssistantIdentity();}}).catch(()=>{});
   function updateAssistantIdentity(){const name=serverModelIdentity;$('#b-assistant').textContent=name;$('#assistant-name').textContent=name;$('#assistant-panel').setAttribute('aria-label',name);}
   const assistantPending=new Map();let assistantBusy=false,assistantUndo=null,assistantLastRule='',assistantTrigger=null;

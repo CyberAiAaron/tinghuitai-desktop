@@ -1,5 +1,7 @@
+  // 导出与面板共用同一可见看法集合：旧数据里「无法核实」类条目面板不显示，导出也不带（0.6.14）
+  const visibleViews=()=>((cur&&cur.factchecks)||[]).filter(x=>!viewJunk(x));
   // ===== 分享 / 导出 =====
-  const fullText = () => cur ? `【听会台】${cur.title||''}｜${new Date(cur.start).toLocaleString()}｜${fmt(Math.round(((cur.end||Date.now())-cur.start)/1000))}\n\n` + (cur.summary?`收尾总结：\n${cur.summary}\n\n`:'') + (cur.highlights.length||cur.todos.length?`会中提醒（要点 ${cur.highlights.length} · 待办 ${cur.todos.length}）：\n${[...cur.highlights.map(x=>'· '+x.text), ...cur.todos.map(x=>'☐ '+x.text+(x.owner?' → '+x.owner:''))].join('\n')}\n\n`:'') + (cur.factchecks.length?`待核查（${cur.factchecks.length} 条）：\n${cur.factchecks.map(x=>`? ${x.claim}  [${x.verdict==='true'?'大概率对':x.verdict==='false'?'可能有误':'拿不准'}]${x.note?' '+x.note:''}`).join('\n')}\n\n`:'') + `转写全文：\n` + cur.transcript.map(x=>`[${hms(x.at)}]${x.spk?' '+spkName(x.spk)+':':''} ${x.text}`).join('\n') : '';
+  const fullText = () => cur ? `【听会台】${cur.title||''}｜${new Date(cur.start).toLocaleString()}｜${fmt(Math.round(((cur.end||Date.now())-cur.start)/1000))}\n\n` + (cur.summary?`收尾总结：\n${cur.summary}\n\n`:'') + (cur.highlights.length||cur.todos.length?`会中提醒（要点 ${cur.highlights.length} · 待办 ${cur.todos.length}）：\n${[...cur.highlights.map(x=>'· '+x.text), ...cur.todos.map(x=>'☐ '+x.text+(x.owner?' → '+x.owner:''))].join('\n')}\n\n`:'') + (visibleViews().length?`看法（${visibleViews().length} 条）：\n${visibleViews().map(x=>`? ${x.claim}  [${kindLabel(kindOf(x),false,x)}]${x.note?' '+x.note:''}`).join('\n')}\n\n`:'') + `转写全文：\n` + cur.transcript.map(x=>`[${hms(x.at)}]${x.spk?' '+spkName(x.spk)+':':''} ${x.text}`).join('\n') : '';
   const vLabel = v => v==='true'?'大概率对':v==='false'?'可能有误':'拿不准';
   const dtStr = () => `${new Date(cur.start).toLocaleString('zh-CN')}　·　${fmt(Math.round(((cur.end||Date.now())-cur.start)/1000))}　·　${cur.transcript.length} 句`;
   function mdText(localized=true){
@@ -7,7 +9,7 @@
     if(cur.summary)L.push(en?'## Summary':'## 收尾总结','',t(cur.summary),'');
     if(cur.highlights.length){L.push(en?'## Notes':'## 要点','');cur.highlights.forEach(x=>L.push('- '+t(x.text)));L.push('');}
     if(cur.todos.length){L.push(en?'## Tasks':'## 待办','');cur.todos.forEach(x=>L.push(`- [${x.done?'x':' '}] ${t(x.text)}${x.owner?' → '+t(x.owner):''}`));L.push('');}
-    if(cur.factchecks.length){L.push(en?'## To verify · preliminary, unverified':'## 待核查 · 常识初判，尚未核实','',en?'| Claim | Assessment | Note |':'| 说法 | 初判 | 说明 |','| --- | --- | --- |');cur.factchecks.forEach(x=>L.push(`| ${cell(t(x.claim))} | ${en?({true:'Likely',false:'May be incorrect',unsure:'Unsure'}[x.verdict]||'Unsure'):vLabel(x.verdict)} | ${cell(t(x.note))} |`));L.push('');}
+    if(visibleViews().length){L.push(en?'## Views · checked against project state':'## 看法 · 对照项目状态','',en?'| Kind | Claim | Why | Quote | Rated |':'| 类型 | 说法 | 为什么 | 原话 | 反馈 |','| --- | --- | --- | --- | --- |');visibleViews().forEach(x=>L.push(`| ${kindLabel(kindOf(x),en,x)} | ${cell(t(x.claim))} | ${cell(t(x.note))} | ${cell(x.evidence||'')} | ${cell((x.rating?({useful:en?'useful':'有用',useless:en?'useless':'没用',adopt:en?'adopted':'采纳'}[x.rating]||''):'')+(x.comment?' '+x.comment:''))} |`));L.push('');}
     L.push(en?'## Original transcript':'## 原始转写','');cur.transcript.forEach(x=>L.push(`**${hms(x.at)}**${x.spk?' '+spkName(x.spk):''} ${x.text}`,''));return L.join('\n');
   }
   function htmlDoc(){
@@ -40,7 +42,7 @@ details{margin-top:8px}summary{cursor:pointer;color:var(--mute);font-size:13px}
 <h1>${e(cur.title||'会议纪要')}</h1><div class="meta">${e(dtStr())}</div>
 ${cur.summary?`<h2>${ui==='en'?'Summary':'收尾总结'}</h2><div class="sum">${e(tt(cur.summary))}</div>`:''}
 ${hl.length?`<h2>${ui==='en'?'Notes & tasks':'要点与待办'} · ${hl.length}</h2><ul>${hl.map(x=>`<li class="${x.k}">${e(x.t)}</li>`).join('')}</ul>`:''}
-${cur.factchecks.length?`<h2>${ui==='en'?'To verify':'待核查'} · ${cur.factchecks.length}</h2><table><tr><th>${ui==='en'?'Claim':'说法'}</th><th>${ui==='en'?'Assessment':'初判'}</th><th>${ui==='en'?'Note':'说明'}</th></tr>${cur.factchecks.map(x=>`<tr><td>${e(tt(x.claim))}</td><td class="v"><span class="tag ${e(x.verdict)}">${ui==='en'?({true:'Likely',false:'May be incorrect',unsure:'Unsure'}[x.verdict]||'Unsure'):vLabel(x.verdict)}</span></td><td>${e(tt(x.note||''))}</td></tr>`).join('')}</table>`:''}
+${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().length}</h2><table><tr><th>${ui==='en'?'Kind':'类型'}</th><th>${ui==='en'?'Claim':'说法'}</th><th>${ui==='en'?'Why':'为什么'}</th><th>${ui==='en'?'Quote':'原话'}</th><th>${ui==='en'?'Rated':'反馈'}</th></tr>${visibleViews().map(x=>`<tr><td class="v"><span class="tag ${e(kindOf(x))}">${e(kindLabel(kindOf(x),ui==='en',x))}</span></td><td>${e(tt(x.claim))}</td><td>${e(tt(x.note||''))}</td><td>${e(x.evidence||'')}</td><td>${e((x.rating?({useful:ui==='en'?'useful':'有用',useless:ui==='en'?'useless':'没用',adopt:ui==='en'?'adopted':'采纳'}[x.rating]||''):'')+(x.comment?' '+x.comment:''))}</td></tr>`).join('')}</table>`:''}
 <h2>${ui==='en'?'Original transcript':'转写全文'} · ${cur.transcript.length}</h2>
 <details open><summary>${ui==='en'?'Expand / collapse':'展开 / 收起'}</summary><div class="tr">${cur.transcript.map(x=>`<p><time>${hms(x.at).slice(0,5)}</time><span class="spk">${x.spk?e(spkName(x.spk)):'·'}</span><span>${e(x.text)}</span></p>`).join('')}</div></details>
 </div></body></html>`;
@@ -76,7 +78,7 @@ ${cur.factchecks.length?`<h2>${ui==='en'?'To verify':'待核查'} · ${cur.factc
   async function sendSlack(retryConfirmed=false){if(!slackBundleKey)return;const b=$('#slack-send');b.disabled=true;try{const j=await slackAPI('send',{channel:$('#slack-channel').value,text:$('#slack-preview').value,bundleKey:slackBundleKey,confirmed:true,retryConfirmed});$('#slack-status').textContent=j.alreadySent?'这份内容已发送，无需重复发送':'总结与两份 MD 已发送';}catch(e){$('#slack-status').textContent=e.message;}finally{b.disabled=false;}};
   $('#slack-send').onclick=()=>sendSlack();
   $('#slack-retry').onclick=()=>sendSlack(true);
-  $('#b-this').onclick=()=>{closeSheets();$('#more-title').textContent=ui==='en'?'This meeting':'本场';$('#meeting-more-dialog').showModal();};
+  $('#b-this').onclick=()=>{closeSheets();$('#more-title').textContent=ui==='en'?'This meeting':'这场会';const nm=$('#this-name');if(nm){nm.textContent=cur?((cur.title||cur.name||'').trim()||(ui==='en'?'Current meeting':'当前这场')):(ui==='en'?'No meeting yet':'还没开始听会');}$('#meeting-more-dialog').showModal();};
   // 这两个按钮只是入口，真正的逻辑还在原来那两个（现已隐藏的）按钮上，不复制一份
   $('#m-notes').onclick=()=>{$('#meeting-more-dialog').close();$('#b-notes').onclick();};
   $('#m-sum').onclick=()=>{$('#meeting-more-dialog').close();$('#b-sum').onclick();};

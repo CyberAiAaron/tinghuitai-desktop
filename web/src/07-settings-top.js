@@ -15,10 +15,10 @@
       if (sel) { sel.value = c.asrProvider || (c.macAsrAvailable ? 'mac' : 'volc'); paintAsrHint(); }
       const now = $('#s-llm-now');
       if (now) now.textContent = c.modelConfigured
-        ? ('现在用：' + (c.provider === 'codex' ? 'Codex（你自己的订阅，不额外花钱）'
-            : c.provider === 'claude' ? 'Claude Code（你自己的订阅，不额外花钱）'
-            : (c.model || '已配置的接口')))
-        : '还没接。会后纪要需要它；本机装过 Codex 或 Claude Code 的话，点下面第一个按钮就行。';
+        ? '现在用：MyAgent'
+        : 'MyAgent 还没接。会后纪要需要它；可以在后台选择 Codex、Claude 或 DeepSeek。';
+      const agentProvider = $('#s-agent-provider');
+      if (agentProvider) agentProvider.value = ['codex','claude','deepseek'].includes(c.provider) ? c.provider : 'deepseek';
       const f = $('#f-asr'); if (f) f.hidden = false;
     } catch(e) {}
   }
@@ -46,9 +46,18 @@
         const j = await r.json();
         if (j.ok) { note(j.message); setTimeout(()=>note(''),5000); await loadServerSettings(); updateReadyBar(); return; }
       }
-      note('这台电脑上没找到 Codex 或 Claude Code。可以改用 API Key。', true); setTimeout(()=>note(''),5000);
+      note('这台电脑上没找到可用的 MyAgent 后台。可以改用 DeepSeek API。', true); setTimeout(()=>note(''),5000);
     } catch(err) { note('检测失败：'+(err.message||err), true); }
     finally { b.disabled = false; b.textContent = old; }
+  });
+  $('#s-agent-provider') && ($('#s-agent-provider').onchange = async (e) => {
+    const wanted=e.target.value,previous=boot.provider||'';e.target.disabled=true;
+    try{
+      const r=await fetch('/setup/agent',{method:'POST',headers:{'content-type':'application/json','x-tht-token':cfg.relayToken||''},body:JSON.stringify({kind:wanted})});
+      const j=await r.json();if(!r.ok||!j.ok)throw Error(j.error||'切换失败');
+      boot.provider=wanted;await loadServerSettings();updateReadyBar();note('MyAgent 后台已切换。');setTimeout(()=>note(''),3000);
+    }catch(err){e.target.value=previous||'deepseek';note('MyAgent 没切换：'+(err.message||err),true);}
+    finally{e.target.disabled=false;}
   });
   $('#s-open-setup') && ($('#s-open-setup').onclick = () => window.open('setup.html','_blank','noopener'));
 

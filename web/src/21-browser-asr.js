@@ -9,4 +9,4 @@
     return r;
   }
   async function keepAwake(){ try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch(e){} }
-  document.addEventListener('visibilitychange', () => { if (!running) return; if (document.visibilityState === 'visible') { keepAwake();if(asrCtx?.state==='suspended')asrCtx.resume().catch(e=>note('请点页面恢复采音：'+e.message,true)); } else note('保持页面在前台、设备唤醒；锁屏或切换 app 可能暂停采音。',true); });
+  document.addEventListener('visibilitychange', () => { if (!running) return; if (document.visibilityState === 'visible') { keepAwake();if(asrCtx?.state==='suspended')asrCtx.resume().catch(e=>note('请点页面恢复采音：'+e.message,true)); } else if (/Mobile|Android|iPhone|iPad/.test(navigator.userAgent)) note('保持页面在前台、设备唤醒；锁屏或切换 app 可能暂停采音。',true); });

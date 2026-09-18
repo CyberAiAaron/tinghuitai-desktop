@@ -14,7 +14,7 @@
     if(cur&&!cur.viewOnly){cur.uiLang=ui;persist();}
     applyI18n();
     if (running && asrMode && asrWs?.readyState===1) { asrWs.send(JSON.stringify({type:'uiLanguage',language:ui})); }
-    note(ui === 'en' ? I18N.en.uiSwitched : '界面已切到中文，之后新产生的要点和待核查会用中文。');
+    note(ui === 'en' ? I18N.en.uiSwitched : '界面已切到中文，之后新产生的要点和看法会用中文。');
     setTimeout(()=>note(''), 3500);
     translateSession();                                     // 已攒下的条目按需回译（只跑一次，结果缓存）
   });

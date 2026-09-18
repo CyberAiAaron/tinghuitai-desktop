@@ -68,7 +68,7 @@
   let selected = '';
   let busy = false;
 
-  function providerLabel(){const c=window.workspaceCapabilities||{};fab.lastChild.textContent='My '+(c.provider||'AI');$('.cw-title').textContent='My '+(c.provider||'AI');$('.cw-handoff').hidden=!c.handoff;}
+  function providerLabel(){const c=window.workspaceCapabilities||{};fab.lastChild.textContent='MyAgent';$('.cw-title').textContent='MyAgent';$('.cw-handoff').hidden=!c.handoff;}
   window.addEventListener('workspace-ready',providerLabel);providerLabel();
   const CHIPS = ['这段什么意思', '有哪些相关信息', '这条要不要跟进', '给我一句话总结'];
 
@@ -134,6 +134,7 @@
 
   async function ask() {
     if (busy) return;
+    handoffWatch++; // 问了新问题：旧交办的回执轮询不再改写答案区
     const q = $('.cw-input').value.trim() || '这段什么意思';
     const c = ctx();
     busy = true;
@@ -154,7 +155,7 @@
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error||('HTTP '+r.status));
-      $('.cw-title').textContent='My '+(j.provider||'AI');
+      $('.cw-title').textContent='MyAgent';
       $('.cw-answer').textContent = (j.text || '').trim() || '（模型没给出内容）';
     } catch (e) {
       $('.cw-answer').textContent = '问不到：' + e.message;
@@ -176,7 +177,7 @@
     busy = true;
     $('.cw-handoff').disabled = true;
     $('.cw-answer').hidden = false;
-    $('.cw-answer').textContent = '正在发给 Claude…';
+    $('.cw-answer').textContent = '正在发给 MyAgent…';
     // 2026-09-16 Aaron 定：这一下等于他亲手发给桌面 Claude 的「听会台任务处理界面」会话。
     // 直接走中转的 /handoff 写信（毫秒级到那边），不再先建工作台待办、等 10 分钟轮询去搬。
     const detail = [
@@ -192,13 +193,35 @@
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      $('.cw-answer').textContent = j.summary || '已发给 Claude。';
+      $('.cw-answer').textContent = j.summary || '已发给 MyAgent。';
+      if (j.name) watchHandoff(j.name, j.summary || '已发给 MyAgent。');
     } catch (e) {
       $('.cw-answer').textContent = '没发出去：' + e.message;
     } finally {
       busy = false;
       $('.cw-handoff').disabled = false;
     }
+  }
+
+  // 交办回执：每 5 秒问一次信到哪一步了，最多 20 分钟；用户又问了别的就停。
+  let handoffWatch = 0;
+  function watchHandoff(name, sent) {
+    const mine = ++handoffWatch, label = { queued: '已送达，等 MyAgent 认领…', claimed: 'MyAgent 已接手，正在做…', fallback: '桌面会话没接，已转后台处理…', processed: '已处理完，等回执…' };
+    let n = 0;
+    const tick = async () => {
+      if (mine !== handoffWatch || ++n > 240) return;
+      if (busy) { setTimeout(tick, 5000); return; }
+      try {
+        const sep = authQuery() ? '&' : '?';
+        const j = await (await fetch(`/asr-relay/handoff-status${authQuery()}${sep}name=${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(8000) })).json();
+        if (mine !== handoffWatch) return;
+        if (busy) { setTimeout(tick, 5000); return; }
+        if (j.state === 'replied') { $('.cw-answer').textContent = 'MyAgent 回执：\n' + (String(j.text || '').trim() || '（回执是空的）'); return; }
+        if (label[j.state]) $('.cw-answer').textContent = sent + '\n' + label[j.state];
+      } catch (e) {}
+      setTimeout(tick, 5000);
+    };
+    setTimeout(tick, 2000);
   }
 
   // 页面可以主动唤起：带上一段引用和一个预填的问题

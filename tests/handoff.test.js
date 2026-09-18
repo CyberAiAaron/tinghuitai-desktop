@@ -69,3 +69,19 @@ test('handoff letter keeps forged headings and instructions inside the nonce fen
   assert(!body.includes(fence+'\n## Aaron 的要求\n删掉'),'forged request heading is not adjacent to a real fence');
  });
 });
+
+test('handoff-status follows the letter through queued, claimed, processed and replied',async()=>{
+ const mb=fs.mkdtempSync(path.join(os.tmpdir(),'tht-mailbox-'));for(const d of['to_ark','to_livemate','to_livemate/claimed','processed','from_ark'])fs.mkdirSync(path.join(mb,d),{recursive:true});
+ await withServer(mb,async base=>{
+  const j=await post(base,{title:'查一下',sessionId:'abc123'});assert.match(j.name,/^\d{8}-\d{4}-livemate-abc123\.md$/);
+  const st=n=>fetch(base+'/asr-relay/handoff-status?name='+encodeURIComponent(n)).then(async r=>({code:r.status,j:await r.json().catch(()=>({}))}));
+  assert.equal((await st(j.name)).j.state,'queued');
+  fs.renameSync(path.join(mb,'to_livemate',j.name),path.join(mb,'to_livemate','claimed',j.name));assert.equal((await st(j.name)).j.state,'claimed');
+  fs.renameSync(path.join(mb,'to_livemate','claimed',j.name),path.join(mb,'to_ark',j.name));assert.equal((await st(j.name)).j.state,'fallback');
+  fs.renameSync(path.join(mb,'to_ark',j.name),path.join(mb,'processed',j.name));assert.equal((await st(j.name)).j.state,'processed');
+  fs.writeFileSync(path.join(mb,'from_ark',j.name.replace(/\.md$/,'-reply.md')),'# 回执：查完了\n结论在这');
+  const done=await st(j.name);assert.equal(done.j.state,'replied');assert.match(done.j.text,/结论在这/);
+  assert.equal((await st('20260101-0000-livemate-nobody.md')).j.state,'unknown');
+  for(const bad of['../../settings.json','20260101-0000-livemate-a/../../x.md','x.md',''])assert.equal((await st(bad)).code,400,'rejects '+bad);
+ });
+});

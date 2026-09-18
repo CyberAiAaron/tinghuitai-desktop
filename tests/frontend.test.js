@@ -187,3 +187,27 @@ test('one-line window: handoff is exclusive and accepted on its own',()=>{
  assert.equal(r({handoff:'x',verdict:'true'},'ck').bad,'conflict');
  assert.equal(r({handoff:'   '},'hl').bad,'empty');
 });
+function speakerFixture(transcript,names={}){const c={cur:{id:'m1',transcript,names},state:{names:{}},SPK_DEF:()=>({me:'我',them:'线上'})};vm.createContext(c);vm.runInContext(code('  const fillerASR =','  const spkCls ='),c);return c;}
+test('speaker numbers are shown densely in order of first appearance while raw ids stay in the data',()=>{
+ const tr=[{spk:'6',text:'a'},{spk:'0',text:'b'},{spk:'6',text:'c'},{spk:'9',text:'d'},{spk:'me',text:'e'}];const c=speakerFixture(tr);
+ const r=e=>vm.runInContext(e,c);
+ assert.equal(r("spkName('6')"),'S1');assert.equal(r("spkName('0')"),'S2');assert.equal(r("spkName('9')"),'S3');assert.equal(r("spkName('me')"),'我');
+ assert.equal(r("spkName('4')"),'S4','an id that never spoke falls back to its raw number');
+ assert.equal(tr[0].spk,'6');
+ tr.push({spk:'2',text:'f'});assert.equal(r("spkName('2')"),'S4','new speakers append without renumbering earlier ones');assert.equal(r("spkName('9')"),'S3');
+});
+test('S-numbers inside notes follow the same labels, use given names, and leave product names alone',()=>{
+ const c=speakerFixture([{spk:'6',text:'a'},{spk:'0',text:'b'}],{'0':'Shawn'});const r=e=>vm.runInContext(e,c);
+ assert.equal(r("spkText('S6 承认还没想清楚，S0 反驳；对标 S24 和 XS6，GS0')"),'S1 承认还没想清楚，Shawn 反驳；对标 S24 和 XS6，GS0');
+ assert.equal(r("spkText(null)"),'');
+});
+test('only pure interjections count as filler; agreement words are kept',()=>{
+ const c=speakerFixture([]);const r=t=>vm.runInContext('fillerASR('+JSON.stringify(t)+')',c);
+ for(const t of['啊。','嗯嗯，','哦…','Um.','hmm','呃啊'])assert.equal(r(t),true,t);
+ for(const t of['对','好。','是的','嗯行','啊对','ok','','谢谢'])assert.equal(r(t),false,t);
+});
+test('view cards keep the raw claim as their key so edit and feedback still find the item',()=>{
+ const src=fs.readFileSync(__dirname+'/../web/src/11-render.js','utf8');
+ assert.ok(src.includes('data-fix="ck" data-key="${esc(x.claim)}"'));assert.ok(!src.includes('data-key="${esc(tt('),'no card key may go through the display mapper');
+ assert.ok(src.includes('find(x=>x.claim===key)'));
+});

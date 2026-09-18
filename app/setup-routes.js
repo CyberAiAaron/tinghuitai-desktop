@@ -1,8 +1,8 @@
 'use strict';
 module.exports=async function(req,res,u,{isLocal,localReason,settings,active,testModel}){
  const bootstrap=u.pathname==='/tinghuitai/bootstrap.js',setup=u.pathname==='/setup';
- const detect=u.pathname==='/setup/detect';
- if(!bootstrap&&!setup&&!detect&&u.pathname!=='/setup/test')return false;
+ const detect=u.pathname==='/setup/detect',agent=u.pathname==='/setup/agent';
+ if(!bootstrap&&!setup&&!detect&&!agent&&u.pathname!=='/setup/test')return false;
  const json=(code,j)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(j));return true;};
  // 非本机一律 403（跨站页面连 bootstrap.js 都不该拿到）；原因写在 403 的正文里，
  // 首页自己 fetch('/setup') 就能读到并展示，跨站页面因为没有 CORS 读不到。
@@ -11,11 +11,25 @@ module.exports=async function(req,res,u,{isLocal,localReason,settings,active,tes
  const macAsr=(()=>{try{return require('./mac-asr').available();}catch(e){return false;}})();
  const asrLocal=c.ASR_PROVIDER==='mac';
  const asrDg=c.ASR_PROVIDER==='deepgram';
- const publicState={provider:c.LLM_PROVIDER||'',asrProvider:c.ASR_PROVIDER||'',volcConfigured:!!(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY),macAsrAvailable:macAsr,deepgramConfigured:!!c.DEEPGRAM_API_KEY,ready:!!((asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY))&&(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER)),asrConfigured:!!(asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY)),modelConfigured:!!(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER),base:c.LLM_BASE_URL,model:c.LLM_MODEL,resource:c.VOLC_RESOURCE_ID,archive:c.ARCHIVE_TARGET};
+ const publicState={agentLabel:'MyAgent',provider:c.LLM_PROVIDER||'',asrProvider:c.ASR_PROVIDER||'',volcConfigured:!!(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY),macAsrAvailable:macAsr,deepgramConfigured:!!c.DEEPGRAM_API_KEY,ready:!!((asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY))&&(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER)),asrConfigured:!!(asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY)),modelConfigured:!!(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER),base:c.LLM_BASE_URL,model:c.LLM_MODEL,resource:c.VOLC_RESOURCE_ID,archive:c.ARCHIVE_TARGET};
  if(bootstrap&&req.method==='GET'){res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end('window.THT_BOOT='+JSON.stringify({...publicState,relayToken:c.RELAY_TOKEN})+';');return true;}
  if(setup&&req.method==='GET')return json(200,publicState);
  // 本机装没装 AI 命令行：装了就不用申请 API Key
  if(detect&&req.method==='GET'){const found=require('./cli-llm').detect();return json(200,{found:Object.keys(found),provider:c.LLM_PROVIDER||''});}
+ if(agent&&req.method==='POST'){
+  if(active())return json(409,{error:'正在录音，请结束本场后再切换 MyAgent 后台'});
+  if(req.headers['x-tht-token']!==c.RELAY_TOKEN)return json(403,{error:'请从本机设置页面操作'});
+  let body='';for await(const chunk of req){body+=chunk;if(body.length>2000)return json(413,{error:'请求过长'});}
+  let kind='';try{kind=String(JSON.parse(body||'{}').kind||'');}catch{}
+  if(!['codex','claude','deepseek'].includes(kind))return json(400,{ok:false,error:'不认识这个 MyAgent 后台'});
+  if(kind==='deepseek'){
+   if(!c.DEEPSEEK_API_KEY)return json(409,{ok:false,error:'请先配置 DeepSeek API Key'});
+   c.LLM_PROVIDER='deepseek';settings.save(c);return json(200,{ok:true,agentLabel:'MyAgent',provider:kind});
+  }
+  const r=await require('./cli-llm').probe(kind,settings.dataDir);
+  if(!r.ok)return json(409,{ok:false,error:r.reason==='not_installed'?'这台电脑没有安装该后台':'该后台尚未登录或暂时不可用',reason:r.reason||''});
+  c.LLM_PROVIDER=kind;settings.save(c);return json(200,{ok:true,agentLabel:'MyAgent',provider:kind});
+ }
  if(detect&&req.method==='POST'){
   if(active())return json(409,{error:'正在录音，请结束本场后再改设置'});
   if(req.headers['x-tht-token']!==c.RELAY_TOKEN)return json(403,{error:'请从本机设置页面操作'});
