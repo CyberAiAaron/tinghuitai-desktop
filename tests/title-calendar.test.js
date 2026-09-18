@@ -3,5 +3,7 @@ const py=(code)=>{const r=spawnSync('python3',['-c',`import importlib.util,json,
 const ev=(name,a,b,extra={})=>({summary:name,start_time:{timestamp:String(a)},end_time:{timestamp:String(b)},free_busy_status:'busy',self_rsvp_status:'accept',...extra});
 test('日历名：取重叠最多的会议，去掉会议室后缀',()=>{const E=[ev('周会（17F 9 号会议室）',1000,4600),ev('别的会',4000,8000)];
   assert.equal(py(`print(json.dumps(mp.pick_calendar_name(${JSON.stringify(E)},1200,4200)))`),'周会');});
+test('日历名：飞书实际返回的 datetime 字段也能认',()=>{const E=[{summary:'周会',start_time:{datetime:'2026-09-18T11:00:00+08:00'},end_time:{datetime:'2026-09-18T12:00:00+08:00'},free_busy_status:'busy',self_rsvp_status:'accept'}];
+  assert.equal(py(`print(json.dumps(mp.pick_calendar_name(${JSON.stringify(E)},1789700880,1789703820)))`),'周会');});
 test('日历名：空闲备忘、已拒绝、重叠太短的都不算',()=>{const E=[ev('活动备忘',1000,4600,{free_busy_status:'free'}),ev('拒了的会',1000,4600,{self_rsvp_status:'decline'}),ev('擦边的会',4100,8000)];
   assert.equal(py(`print(json.dumps(mp.pick_calendar_name(${JSON.stringify(E)},1200,4200)))`),'');});
