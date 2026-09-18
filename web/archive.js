@@ -111,13 +111,20 @@ function renderBrief(s){
     +sec('我核过的',r.checked.map(c=>'<div class="bf-item"><span class="bf-tag '+(c.result==='已核实'?'ok':c.result==='矛盾'?'bad':'')+'">'+esc(c.result)+'</span>'+nm(c.claim,map)+(c.note?'<div class="bf-src">'+nm(c.note,map)+'</div>':'')+'</div>')));
   const qs=b.questions||[];ask.hidden=!qs.length;
   if(qs.length){const ans=b.answers||{};
-    ask.innerHTML='<h2>需要你定一下</h2>'+qs.map((q,i)=>{const a=ans[q.id];const cur=a?a.choice:q.recommend;return '<div class="bf-qrow" data-q="'+esc(q.id)+'"><b>'+(i+1)+'　'+nm(q.ask,map)+'</b>'+q.options.map((o,k)=>'<button type="button" class="bf-opt'+(k===cur&&!(a&&a.text)?' on':'')+'" data-k="'+k+'" title="'+(k===q.recommend?esc(q.why||'推荐'):'')+'">'+esc(o)+(k===q.recommend?' · 推荐':'')+'</button>').join('')+'<input type="text" placeholder="补一句（可选）" value="'+esc(a&&a.text||'')+'">'+(a?'<span class="bf-src">已保存</span>':'')+'</div>';}).join('');
+    ask.innerHTML='<h2>需要你定一下</h2>'+qs.map((q,i)=>{const a=ans[q.id];const cur=a?a.choice:q.recommend;return '<div class="bf-qrow" data-q="'+esc(q.id)+'"><b>'+(i+1)+'　'+nm(q.ask,map)+'</b>'+q.options.map((o,k)=>'<button type="button" class="bf-opt'+(k===cur&&!(a&&a.text)?' on':'')+'" data-k="'+k+'" title="'+(k===q.recommend?esc(q.why||'推荐'):'')+'">'+esc(o)+(k===q.recommend?' · 推荐':'')+'</button>').join('')+'<input type="text" placeholder="补一句（可选）" value="'+esc(a&&a.text||'')+'">'+(a?'<span class="bf-src">已保存</span>':'')+spkProof(s,q)+'</div>';}).join('');
     ask.querySelectorAll('.bf-qrow').forEach(row=>{const qid=row.dataset.q;const send=(choice,text)=>saveAnswer(qid,choice,text);
       row.querySelectorAll('.bf-opt').forEach(o=>o.onclick=()=>send(Number(o.dataset.k),row.querySelector('input').value));
       row.querySelector('input').onchange=e=>{const on=row.querySelector('.bf-opt.on');send(on?Number(on.dataset.k):0,e.target.value);};});
   }
-  document.querySelectorAll('#bf-grid [data-sec]').forEach(el=>el.onclick=()=>jumpTo(Number(el.dataset.sec)));
+  document.querySelectorAll('#bf-grid [data-sec],#ask-box [data-sec]').forEach(el=>el.onclick=()=>jumpTo(Number(el.dataset.sec)));
 }
+// 问「说话人 N 是谁」时，把这个人说得最长的几句原话摆出来，点时间能回听——不给证据这题没法答
+function spkProof(s,q){const k=(q.affects||[]).map(f=>/^speaker:S?(\w{1,12})$/i.exec(f)).filter(Boolean).map(m=>m[1])[0];if(!k)return '';
+  const start=ts(s.start),rows=(s.transcript||[]).filter(r=>String(r.speaker||r.spk||r.who||'')===k&&(r.text||'').length>=12);if(!rows.length)return '';
+  const all=(s.transcript||[]).filter(r=>String(r.speaker||r.spk||r.who||'')===k).length;
+  const pick=[...rows].sort((a,b)=>b.text.length-a.text.length).slice(0,4).sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+  const sec=r=>{const at=Number(r.at||0);return at>1e11?Math.round((at-start)/1000):at;};
+  return '<div class="bf-proof"><span class="bf-src">说话人 '+esc(k)+' 全场 '+all+' 句，说得最长的几句：</span>'+pick.map(r=>'<div class="bf-pq">「'+esc(r.text.length>90?r.text.slice(0,90)+'…':r.text)+'」<button type="button" class="bf-t" data-sec="'+sec(r)+'">'+mmss(sec(r))+'</button></div>').join('')+'</div>';}
 function jumpTo(sec){seekTo(sec);const box=$('#tr-box');box.open=true;const rows=[...document.querySelectorAll('#transcript [data-sec]')];let hit=rows[0];rows.forEach(r=>{if(Number(r.dataset.sec)<=sec+1)hit=r;});if(hit){hit.scrollIntoView({block:'center',behavior:'smooth'});const p=hit.closest('p');if(p){p.style.background='#fff8e1';setTimeout(()=>p.style.background='',2500);}}}
 async function saveAnswer(qid,choice,text){
   const b=record.brief;b.answers=b.answers||{};b.answers[qid]={choice,text:(text||'').trim(),at:Date.now()};
