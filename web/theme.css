@@ -45,6 +45,20 @@ a.btn{display:inline-flex;align-items:center}
 .card .v{color:var(--muted);font-size:12px}
 .card.conf{background:#fdf3f4}
 .verdict{font-family:var(--mono);font-size:11px;border-radius:6px}
+.card.ck .kind{display:inline-block;font:11px var(--mono);letter-spacing:.5px;padding:1px 6px;border-radius:6px;margin:0 6px 4px 0;background:#f1f1f3;color:var(--muted)}
+.card.ck.kind-doubt .kind{background:#fdf3f4;color:var(--live)}
+/*know 见下*/
+.card.ck.kind-ok .kind{background:#eef6f0;color:#1f7a3a}
+.card.ck.kind-know .kind{background:#eef1fa;color:#2b4fb0}
+.card.ck.kind-other .kind{background:#fff7e6;color:#8a5a00}
+.card.ck.kind-fix .kind{background:#eef6f0;color:#1f7a3a}
+.card.ck.kind-link .kind{background:#eef1fa;color:#2b4fb0}
+.card.ck.kind-add .kind{background:#f3eefa;color:#5b2ba0}
+.card.ck.kind-legacy .kind{background:#f1f1f3;color:var(--faint)}
+.card.ck .v.ev{color:var(--faint);font-style:italic}
+.card.ck .fb{display:flex;gap:6px;margin-top:8px}
+.card.ck .fb button{font:11px var(--mono);padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer}
+.card.ck .fb button.on{background:#111;color:#fff;border-color:#111}
 .empty{color:var(--muted);font-size:13px;line-height:1.7}
 .ftr{background:#fff;border-top:1px solid var(--line);padding:12px 16px calc(12px + env(safe-area-inset-bottom));gap:8px}
 .ftr .fdiv{background:var(--line)}
@@ -66,3 +80,16 @@ dialog h2{font-size:18px;margin:0 0 16px}
 select,input[type=text],input[type=password],input[type=number],textarea{border:1px solid #dedee3;background:#fff;border-radius:9px;padding:11px 12px;font-size:14px;color:#222}
 .row{gap:10px;margin-top:20px}
 #ver{color:var(--faint)}
+/* 这场会 sheet (0.6.14) */
+.this-menu{padding:4px 16px 16px;display:grid;gap:14px}
+.this-menu .this-sub{margin:0;display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted,#666)}
+.this-menu section h3{margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--muted,#666)}
+.this-menu .row{display:flex;flex-wrap:wrap;gap:8px}
+.this-menu .row .btn{flex:1 1 auto}
+.this-menu .this-foot{margin:4px 0 0;display:flex;gap:16px;font-size:12px}
+.linkish{background:none;border:0;padding:0;color:var(--muted,#666);text-decoration:underline;cursor:pointer;font:inherit;font-size:12px}
+.linkish.danger{color:#c0392b}
+
+/* 逐字稿里纯语气词的行：调淡，让有内容的句子更好找 */
+#tr p.filler{opacity:.42;font-size:.92em}
+#tr p.filler:hover{opacity:1}

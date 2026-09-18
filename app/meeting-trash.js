@@ -14,6 +14,13 @@ const TITLES = path.join(path.dirname(PIPE_DIR), 'meeting-titles.json');
 const SESSIONS_DIR = path.join(DATA, 'sessions');
 const INDEX_MD = path.join(DATA, 'meetings-index.md');
 const ARCHIVE_DIR = process.env.THT_ARCHIVE_DIR || path.join(DATA, 'exports');
+// 索引的增删交给 meeting-pipeline.py：和管线登记同一把 flock，顺带刷新记忆投影目录里的镜像。python 不可用时退回本地直写。
+function indexViaPipeline(op, line) {
+  try {
+    const r = require('child_process').spawnSync(process.env.THT_PYTHON || 'python3', [path.join(__dirname, 'meeting-pipeline.py'), op], { input: line, encoding: 'utf8', timeout: 15000, env: { ...process.env, THT_DATA_DIR: DATA, THT_PIPELINE_DIR: PIPE_DIR } });
+    return r.status === 0;
+  } catch (e) { return false; }
+}
 const TRASH = process.env.THT_TRASH_DIR || path.join(DATA, 'state', 'trash');
 const RETAIN_MS = 30 * 24 * 3600 * 1000;
 const HASH_MAX = 512 * 1024 * 1024;
@@ -129,7 +136,7 @@ function advance(man) {
         it.moved = true;
       } else if (it.kind === 'index') {
         const body = fs.readFileSync(INDEX_MD, 'utf8');
-        if (body.includes(it.payload)) writeAtomic(INDEX_MD, body.split('\n').filter(l => l !== it.payload).join('\n'));
+        if (body.includes(it.payload) && !indexViaPipeline('--index-drop-line', it.payload)) writeAtomic(INDEX_MD, body.split('\n').filter(l => l !== it.payload).join('\n'));
         it.moved = true;
       } else if (it.kind === 'sessindex') {
         const idx = readJSON(it.from, {}) || {};
@@ -174,7 +181,7 @@ function restore(id) {
         it.moved = false;
       } else if (it.kind === 'index') {
         const body = fs.existsSync(INDEX_MD) ? fs.readFileSync(INDEX_MD, 'utf8') : '';
-        if (it.payload && !body.includes(it.payload)) {
+        if (it.payload && !body.includes(it.payload) && !indexViaPipeline('--index-add-line', it.payload)) {
           // meeting-pipeline.py 维护的是「表头 + 倒序行」，插回去要保持同样的顺序
           const lines = body.split('\n');
           const head = lines.filter(l => !l.startsWith('| ') || l.startsWith('| 日期'));

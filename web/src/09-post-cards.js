@@ -32,7 +32,7 @@
       // 2026-09-12：这里原来并排放「看纪要」和「过一遍」，后者没人看得懂，前者还另弹一个窗。
       return `<div class="pc" data-pc="${esc(x.id)}">
         <div class="pc-main"><div class="pc-t">${t}</div>
-        <div class="pc-s">${en?'Sorted: ':'已整理：'}${c.highlights||0}${en?' points · ':' 条结论 · '}${c.todos||0}${en?' to-dos · ':' 条待办 · '}${c.factchecks||0}${en?' to verify':' 条待核实'}${n?(en?' · '+n+' to confirm':'　还有 '+n+' 条等你确认'):''}</div></div>
+        <div class="pc-s">${en?'Sorted: ':'已整理：'}${c.highlights||0}${en?' points · ':' 条结论 · '}${c.todos||0}${en?' to-dos · ':' 条待办 · '}${c.factchecks||0}${en?' views':' 条看法'}${n?(en?' · '+n+' to confirm':'　还有 '+n+' 条等你确认'):''}</div></div>
         <button type="button" class="primary" data-pc-open="${esc(x.id)}">${en?'Open':'打开这一场'}</button>
         <button type="button" class="x" data-pc-x="${esc(x.id)}" aria-label="${en?'Dismiss':'收起'}" title="${en?'Only hides this card':'只收起卡片，不影响这一场'}">×</button>
       </div>`;

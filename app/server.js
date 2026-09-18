@@ -88,7 +88,21 @@ function localReqReason(req) {
 function loadEnv() { return settings.load(); }
 
 function readTriagePrompt() { try { const s = fs.readFileSync(INDEX_HTML, 'utf8'); const m = s.match(/const\s+TRIAGE\s*=\s*([`"'])([\s\S]*?)\1/); return m ? m[2] : ''; } catch (e) { return ''; } }
-function readContext() { try { return fs.readFileSync(CONTEXT_MD, 'utf8'); } catch (e) { return ''; } }
+// 「看法」的聪明来源 = 凝练的项目状态（Aaron 2026-09-17 定）：优先读记忆区的 project-state.md，没有再退回 context.md。
+function projectStatePath() { try { const c = String(settings.load().PROJECT_STATE_FILE || '').trim(); if (c) return path.resolve(c); } catch (e) {} return path.join(MEMORY_PROJECTION_DIR, 'project-state.md'); }
+function readContext() { try { const p = projectStatePath(); if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8'); } catch (e) {} try { return fs.readFileSync(CONTEXT_MD, 'utf8'); } catch (e) { return ''; } }
+const VIEW_FEEDBACK_LOG = path.join(DATA, 'state', 'view-feedback.jsonl');
+const VIEW_KINDS = new Set(['fix', 'link', 'add', 'know', 'doubt', 'ok', 'other']);
+// 复述别人的话 + 「无法核实」= 无效信息（Aaron 2026-09-17 截图指出），服务端直接丢，不给前端。
+const VIEW_JUNK = /无法核实|未给出(原文)?依据|不可核实|无从核实|无法验证|cannot (be )?verif|no verbatim evidence|not verifiable/i;
+// 模型输出被 max_tokens 截断时，砍到最后一个完整对象再补上括号，保住已经完整的条目。
+function salvageJson(text) { const s = String(text || ''); for (let cut = s.lastIndexOf('}'); cut > 0; cut = s.lastIndexOf('}', cut - 1)) { let head = s.slice(0, cut + 1); let depthA = 0, depthO = 0, inStr = false; for (let i = 0; i < head.length; i++) { const ch = head[i]; if (inStr) { if (ch === '\\') i++; else if (ch === '"') inStr = false; continue; } if (ch === '"') inStr = true; else if (ch === '{') depthO++; else if (ch === '}') depthO--; else if (ch === '[') depthA++; else if (ch === ']') depthA--; } if (inStr || depthO < 0 || depthA < 0) continue; try { return JSON.parse(head + ']'.repeat(depthA) + '}'.repeat(depthO)); } catch (e) { try { return JSON.parse(head + '}'.repeat(depthO) + ']'.repeat(depthA)); } catch (e2) {} } if (cut < s.length - 4000) break; } return null; }
+function normalizeView(f) { if (!f || typeof f !== 'object') return f; let k = String(f.kind || '').toLowerCase(); if (k === 'view' || k === 'note') k = 'other'; if (!VIEW_KINDS.has(k)) k = (f.verdict === 'false' ? 'doubt' : (f.verdict === 'true' ? 'ok' : 'other')); f.kind = k; f.label = String(f.label || '').replace(/\s+/g, '').slice(0, 6); if (k === 'other' && !f.label) f.label = '提醒'; if (k === 'doubt') { if (f.verdict !== 'unsure') f.verdict = 'false'; } else if (k === 'ok' || k === 'fix') f.verdict = 'true'; else if (!f.verdict || f.verdict === 'false') f.verdict = 'unsure'; return f; }
+// 看法必须带一句能在最新转写里找到的原话；找不到就整条丢掉（Aaron：说不准的不说）。
+function viewNorm(s) { return String(s || '').replace(/[\s“”"'‘’「」『』（）()，。、,.!?！？：:；;…—\-]/g, ''); }
+function viewGrounded(f, hay) { const ev = viewNorm(f && f.evidence); if (ev.length < 6 || !hay) return false; if (hay.includes(ev.slice(0, 10)) || hay.includes(ev.slice(0, 8))) return true; for (let i = 5; i + 10 <= ev.length; i += 5) if (hay.includes(ev.slice(i, i + 10))) return true; return false; }
+function viewIsJunk(f) { if (!f || typeof f !== 'object') return true; if (!String(f.claim || '').trim()) return true; return VIEW_JUNK.test(String(f.note || '')) || VIEW_JUNK.test(String(f.claim || '')); }
+
 
 function resamplePCM16(buf, fromRate, toRate) {
   if (fromRate === toRate) return buf;
@@ -140,6 +154,8 @@ const SERVER_VERSION = (() => {
 
 const SESSIONS = new Map();  // sessionId -> Session
 
+  // 纯语气词的一行（嗯 / 啊 / 哦 / um…）：真实会议里占 14%–21%，不发给模型。「对 / 好 / 是 / 行」是表态，不算。
+  function fillerASR(text){return typeof text==='string'&&/^(嗯|啊|哦|噢|呃|额|哎|唉|诶|欸|哈|呀|呵|um+|uh+|mm+|hmm+|ah+|oh+)+$/i.test(text.replace(/[\s，。、,.!?！？…~—-]+/g,''));}
   function repeatedASR(text){return typeof text==='string'&&text.length>=80&&/(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}/u.test(text);}
 
 class Session {
@@ -171,14 +187,14 @@ class Session {
     this.lastTriageIndex = 0; this.charsSinceTriage = 0; this.lastPushTs = 0; this.triaging = false; this.finalized = false; this.graceTimer = null;
     this.dedupSeen = new Map();   // final 幂等去重：key(见 isDuplicateFinal) -> 首次出现时间，8s 内重复的 final 只广播/入库一次（2026-09-04 0800 信 补2）
     this.spkMarks = [];   // 线上会说话人标记（页面 spk 帧：who=me|them），随 transcript 落场次；0800 信 task2，等页面上线
-    this.triagePrompt = readTriagePrompt(); this.context = readContext();
+    this.triagePrompt = readTriagePrompt(); this.context = readContext(); this.viewFeedback = [];
     this.memoryBlock = '';
     try { const ops = require('./memory-ops');
       const q = [startMsg.title||'', Object.values(startMsg.names||{}).join(' '), startMsg.brief||''].join(' ');
       this.memoryCards = ops.retrieve(DATA, q, { log });
       this.memoryBlock = ops.toPromptBlock(this.memoryCards);
     } catch (e) { log('memory retrieve 失败 ' + e.message); }
-    this.triageTimer = setInterval(() => this.runTriage(), 40000);
+    this.triageTimer = setInterval(() => this.runTriage(), 25000);
     // 开场检索用的是会议标题和参会人，会开到一半议题往往已经变了。
     // 每 4 分钟按最近说过的话重新检索一次，让调出来的旧决定跟得上当前话题。
     this.memoryTimer = setInterval(() => this.refreshMemory(), 240000);
@@ -531,7 +547,7 @@ class Session {
         rows = this.transcript.filter(r => { const a = Number(r.at); return Number.isFinite(a) && a >= lo && a <= hi; });
       }
       if (!rows.length) return;
-      const text = rows.slice(-80).filter(x => !repeatedASR(x.text))
+      const text = rows.slice(-80).filter(x => !repeatedASR(x.text) && !fillerASR(x.text))
         .map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n').slice(-6000);
       if (!text.trim()) return;
       const payload = staleItems.slice(0, 20).map(x => ({ id: x.id, text: x.text, owner: x.owner || '', due: x.due || '' }));
@@ -582,11 +598,11 @@ class Session {
     this.triaging = true; const t0 = Date.now();
     let recentForDeep = '', segIdsForDeep = [], epochForDeep = this.editEpoch || 0;
     try {
-      const contextVersion=this.brief;const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
+      this.context = readContext(); const contextVersion=this.brief;const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
       const epochAtStart = this.editEpoch || 0;
       const segIds = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).map(x=>x.id).filter(Boolean);
       segIdsForDeep = segIds; epochForDeep = epochAtStart;
-      const recent = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).filter(x=>!repeatedASR(x.text)).map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n');
+      const recent = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).filter(x=>!repeatedASR(x.text)&&!fillerASR(x.text)).map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n');
       recentForDeep = recent;                 // 之前漏了这一行，深推理档一直没跑过
       const notStale = a => a.filter(x => !x.stale); const existed = JSON.stringify({ highlights: notStale(this.highlights).slice(-20), todos: notStale(this.todos).slice(-20), factchecks: notStale(this.factchecks).slice(-20) });
       // 语言锁三重（实测：只在开头插一句会被后面的中文 triage prompt + 中文转写盖过 → 前置 + 末尾强指令 + user 提醒）
@@ -597,12 +613,16 @@ class Session {
       const langTail = enUI
         ? '\n\n【输出语言 / OUTPUT LANGUAGE】Every text/claim/note value MUST be written in English, even though the meeting is spoken in Chinese. Do NOT output Chinese in these fields.'
         : '\n\n【输出语言】所有 text/claim/note 一律中文。';
-      const sys = langHead + this.buildBriefBlock() + (this.triagePrompt || '你是会议实时助手，从转写提取 highlights/todos/factchecks，只输出 JSON。') + langTail;
-        + '\n【依据】每条 factchecks 必须带 evidence 字段：从【最新转写】里逐字抄 ≤40 字作为依据。没有原文依据的判断，verdict 只能是 unsure。'
+      // 之前这一段写成了独立表达式（分号后 + '…'），依据要求从没进过 prompt（2026-09-17 修）
+      const sys = langHead + this.buildBriefBlock() + (this.triagePrompt || '你是会议实时助手，从转写提取 highlights/todos/factchecks，只输出 JSON。')
+        + '\n【依据】每条 factchecks（看法）必须带 evidence 字段：从【最新转写】里逐字抄 ≤40 字作为依据；note 写为什么（对照项目状态哪一条）。没有原文依据的「可能不对」只能标 unsure。'
+        + langTail;
+      const fbLines = (this.viewFeedback || []).slice(-12).map(x => `- [${x.rating}] ${x.kind || ''}：${x.claim}${x.comment ? '（他说：' + x.comment + '）' : ''}`).join('\n');
+      const fbBlock = fbLines ? `\n\n【他对你之前看法的反馈（useless 的这类少给，useful/adopt 的这类多给，comment 是他的原话）】\n${fbLines}` : '';
       const userReminder = enUI ? '\n\n(Reminder: write all text/claim/note fields in English.)' : '';
-      const raw = await deepseek(this.env, sys, `【项目核心记忆】\n${this.context.slice(0, 3000)}${this.memoryBlock||''}\n\n【已有条目】${existed}\n\n【最新转写】\n${recent}${userReminder}`, 700, { sessionId: this.id, purpose: 'triage' });
+      const raw = await deepseek(this.env, sys, `【项目状态（凝练版，看法以此为准）】\n${this.context.slice(0, 9000)}${this.memoryBlock||''}${fbBlock}\n\n【已有条目】${existed}\n\n【最新转写】\n${recent}${userReminder}`, 2000, '', { sessionId: this.id, purpose: 'triage' });
       if (!raw || this.brief!==contextVersion) { this.triaging = false; return; }
-      let j = null; try { j = JSON.parse(raw.replace(/^```json?|```$/g, '').trim()); } catch (e) {}
+      let j = null; const cleaned = raw.replace(/^```json?|```$/g, '').trim(); try { j = JSON.parse(cleaned); } catch (e) { j = salvageJson(cleaned); if (j) log('triage JSON 被截断，已抢救部分条目 ' + this.id); }
       if (j) {
         // 先判作废再动指针：反过来会把这段标记成「已分诊」而结果又被丢掉，
         // 用户改一句话就换来那 40 秒的要点永久缺失。
@@ -613,7 +633,7 @@ class Session {
         // 模型会把已有条目的 id 原样回显，一律由服务端重新发号，否则会出现重复 id
         const stamp = a => { for (const x of a) { if (!x) continue; x.id = 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1); x.sourceRefs = segIds.map(id => ({ segId: id })); } return a; };
         // 置信度不采信模型自述：说「大概率对/可能有误」必须能在最新转写里指出依据；指不出就降成「拿不准」
-        if (Array.isArray(j.factchecks)) { const hay = String(recent||'').replace(/\s+/g,''); j.factchecks = j.factchecks.map(f => { if (!f || typeof f !== 'object') return f; const ev = String(f.evidence||'').replace(/\s+/g,''); const grounded = ev.length >= 4 && hay.includes(ev.slice(0, 40)); if (!grounded && f.verdict && f.verdict !== 'unsure') { f.verdict = 'unsure'; f.note = (this.uiLang === 'en' ? '(no verbatim evidence given) ' : '（未给出原文依据）') + String(f.note||''); } return f; }); }
+        if (Array.isArray(j.factchecks)) { const hay = viewNorm(recent); const before = j.factchecks.length; j.factchecks = j.factchecks.filter(f => !viewIsJunk(f)).filter(f => { normalizeView(f); return viewGrounded(f, hay); }); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} views without verbatim evidence`); }
         const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`); this.maybePush(fb); }
     } catch (e) { log('triage exc ' + e.message); }
     this.triaging = false;
@@ -1259,6 +1279,41 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
   // 现在写信 + 唤醒轮询器，三分钟内就有人接。只在信箱目录存在的机器上开（普通用户没有这条）。
   // 2026-09-16 Aaron 定：信优先直达他桌面 Claude 的「听会台任务处理界面」会话（它用 Monitor 盯着 to_livemate/），等于他亲手在那里发给 Claude；
   // 那个会话没开时，ark-mailbox-poll 在 10 分钟后把信搬到 to_ark/ 无头处理并发飞书卡片兜底。没有 to_livemate/ 的机器保持原来的 to_ark 路径。
+  // 看法反馈：有用 / 没用 / 采纳 一击 + 一句话。写账本，并回流到这一场后续的 triage prompt（Aaron 2026-09-17：靠反馈收敛）。
+  if (p.endsWith('/view-feedback')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method'); }
+    const parts = []; let size = 0;
+    for await (const c of req) { parts.push(c); size += c.length; if (size > 8000) return reply(413, { ok: false, error: '请求太长' }); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+    const rating = ['useful', 'useless', 'adopt', ''].includes(String(j.rating ?? '')) ? String(j.rating ?? '') : null;
+    if (rating === null) return reply(400, { ok: false, error: 'rating 只能是 useful / useless / adopt / 空' });
+    const rec = { at: new Date().toISOString(), sessionId: String(j.sessionId || '').slice(0, 80), id: String(j.id || '').slice(0, 80), kind: String(j.kind || '').slice(0, 10), claim: String(j.claim || '').slice(0, 300), rating, comment: String(j.comment || '').replace(/\s+/g, ' ').slice(0, 300) };
+    if (!rec.claim && !rec.id) return reply(400, { ok: false, error: '缺 claim' });
+    try { fs.mkdirSync(path.dirname(VIEW_FEEDBACK_LOG), { recursive: true }); fs.appendFileSync(VIEW_FEEDBACK_LOG, JSON.stringify(rec) + '\n'); } catch (e) { return reply(500, { ok: false, error: '账本写不进去：' + e.message }); }
+    const sess = SESSIONS.get(rec.sessionId);
+    if (sess) { const same = x => (rec.id && x.id) ? x.id === rec.id : x.claim === rec.claim; sess.viewFeedback = (sess.viewFeedback || []).filter(x => !same(x)); if (rating || rec.comment) sess.viewFeedback.push(rec); const it = (sess.factchecks || []).find(x => x && (rec.id ? x.id === rec.id : x.claim === rec.claim)); if (it) { it.rating = rating; it.comment = rec.comment; } }
+    return reply(200, { ok: true, live: !!sess });
+  }
+  // ===== 交办回执：信写出去以后到哪一步了。状态全部从信箱目录推出来，不另存一份账。 =====
+  // queued 还没人接 / claimed 桌面会话已认领 / fallback 转给 Ark 信箱兜底 / processed 已处理 / replied 有回执（带正文）/ unknown 找不到
+  if (p.endsWith('/handoff-status')) {
+    if (!authed || !isLocalReq(req)) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'GET') { res.writeHead(405); return res.end('method'); }
+    const name = String(u.searchParams.get('name') || '');
+    if (!/^\d{8}-\d{4}-livemate-[A-Za-z0-9_-]{1,80}\.md$/.test(name)) return reply(400, { ok: false, error: '信名不对' });
+    const mailbox = String(process.env.THT_MAILBOX_DIR || loadEnv().HANDOFF_MAILBOX_DIR || path.join(HOME, 'This is my Chansey', 'agent_mailbox')).trim();
+    const has = (...seg) => { try { return fs.statSync(path.join(mailbox, ...seg)).isFile(); } catch (e) { return false; } };
+    const replyName = name.replace(/\.md$/, '-reply.md');
+    if (has('from_ark', replyName)) {
+      let text = ''; try { text = fs.readFileSync(path.join(mailbox, 'from_ark', replyName), 'utf8').slice(0, 4000); } catch (e) {}
+      return reply(200, { ok: true, state: 'replied', text });
+    }
+    const state = has('processed', name) ? 'processed' : has('to_livemate', 'claimed', name) ? 'claimed' : has('to_ark', name) ? 'fallback' : has('to_livemate', name) ? 'queued' : 'unknown';
+    return reply(200, { ok: true, state });
+  }
   if (p.endsWith('/handoff')) {
     if (!authed || !isLocalReq(req)) { res.writeHead(401); return res.end('unauthorized'); }
     const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
@@ -1284,7 +1339,7 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
     const fence = '--------' + nonce + '--------';
     const body = [
       '# 听会台交办：' + title, '',
-      '这条来自听会台的会中助手（My Claude）。Aaron 在会议窗口里提了一个那里做不了的要求，点了确认，转给你。', '',
+      '这条来自听会台的会中助手（MyAgent）。Aaron 在会议窗口里提了一个那里做不了的要求，点了确认，转给你。', '',
       sid ? ('- 会议 id：`' + sid + '`' + (meetingTitle ? '（' + meetingTitle + '）' : '')) : '- 会议 id：（未关联到某一场）',
       sid ? ('- 这场的资料：`curl -s "http://127.0.0.1:' + PORT + '/asr-relay/meeting-result?id=' + sid + '&token=<本机 settings.json 的 RELAY_TOKEN>"`；纪要与逐字稿 Markdown：`/asr-relay/share-export?id=' + sid + '`') : '',
       '- 投递方式：' + (direct ? '直达 Claude 桌面会话「听会台任务处理界面」（to_livemate/）；10 分钟没人认领则由 Ark 信箱轮询兜底' : 'Ark 信箱轮询（to_ark/）'),
@@ -1303,7 +1358,7 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
     // 直达路径不唤醒无头轮询器：桌面会话 1 秒内就认领；测试环境也不去碰真机的 launchd。
     if (!direct && !process.env.THT_TEST) { try { require('child_process').execFile('/bin/launchctl', ['kickstart', '-k', 'gui/' + process.getuid() + '/com.aaron.ark-mailbox-poll'], () => {}); } catch (e) {} }
     log('handoff 已写信 ' + name + (direct ? '（直达桌面会话）' : '（Ark 信箱）'));
-    return reply(200, { ok: true, direct, summary: direct ? '已发到你桌面 Claude 的「听会台任务处理界面」会话，它会在那里回你；那个会话没开的话，10 分钟后 Ark 信箱接手并在飞书上回你' : '已交给主 Claude，最多三分钟内它会在飞书上回你', file: name });
+    return reply(200, { ok: true, direct, name, summary: direct ? '已发到你桌面 Claude 的「听会台任务处理界面」会话，它会在那里回你；那个会话没开的话，10 分钟后 Ark 信箱接手并在飞书上回你' : '已交给主 Claude，最多三分钟内它会在飞书上回你', file: name });
   }
   // ===== 日历匹配：这场录音落在你飞书日历的哪个日程里 =====
   // 目的：纪要头上自动带「时间 / 地点 / 组织者 / 参会人」，不用事后手补。

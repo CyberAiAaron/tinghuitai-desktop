@@ -281,6 +281,8 @@ def summarize(session, on_phase=None):
     if not key and provider not in ('codex', 'claude'):
         raise RuntimeError('总结服务未配置，原文仍可归档')
     source=json.loads(json.dumps(session));apply_word_fixes(source)
+    # 纯语气词的行不进总结输入（归档的原文不受影响）；与 server.js 的 fillerASR 同一集合。
+    source['transcript']=[r for r in source.get('transcript',[]) if not FILLER.match(re.sub(r'[\s，。、,.!?！？…~—-]+','',r.get('text','') or '') or 'x')]
     for row in source.get('transcript', []):
         value = row.get('text', '')
         if len(value) >= 80 and re.search(r'(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}', value):
@@ -359,6 +361,59 @@ def title_for(session, summary_text=''):
     if not out or len(out) > 40: raise RuntimeError('标题为空或过长')
     return out
 
+FILLER=re.compile(r'^(嗯|啊|哦|噢|呃|额|哎|唉|诶|欸|哈|呀|呵|um+|uh+|mm+|hmm+|ah+|oh+)+$',re.I)
+INDEX_HEAD='# 会议索引（每场一行，自动维护；事实以整理结果为准）\n\n| 日期 | 主题 | id | 一句话结论 |\n|---|---|---|---|\n'
+def index_one_liner(summary):
+    """从总结里取一句话结论：先找显式的「一句话结论/核心结论」，没有就取第一段正文。不另外调模型。"""
+    flat=re.sub(r'\s+',' ',re.sub(r'[#*`]','',summary or '')).strip()
+    m=re.search(r'(?:一句话结论|核心结论|Key conclusions?)[：:\s]*(.{10,200}?)(?=\s*(?:关键决定|决定与分歧|待办|存疑|未决|Decisions|Action|$))',flat)
+    one=(m.group(1) if m else '').strip()
+    if len(one)<8:
+        for para in re.split(r'\n\s*\n',summary or ''):
+            t=re.sub(r'\s+',' ',re.sub(r'[*`]','',para)).strip()
+            if not t or t.startswith(('#','|','-','>','---')) or len(t)<12:continue
+            one=t;break
+    return one.replace('|','／').rstrip('。.;；')[:160]
+def index_targets():
+    out=[ROOT/'meetings-index.md']
+    mirror=(os.environ.get('THT_MEMORY_PROJECTION_DIR') or read(ROOT/'settings.json',{}).get('MEMORY_PROJECTION_DIR') or '').strip()
+    if mirror and pathlib.Path(mirror).is_dir():out.append(pathlib.Path(mirror)/'meetings-index.md')
+    return out
+def mutate_index(change):
+    """索引的唯一写入口：同一把 flock 下读-改-写主文件，再刷镜像。管线登记、回收站删除/恢复都走这里。"""
+    main=index_targets()[0];lock=main.with_suffix('.lock');lock.parent.mkdir(parents=True,exist_ok=True)
+    with lock.open('a') as lk:
+        fcntl.flock(lk,fcntl.LOCK_EX)
+        body=main.read_text() if main.exists() else INDEX_HEAD
+        rows=[r for r in body.splitlines() if r.startswith('| ') and not r.startswith('| 日期')]
+        rows=sorted(set(change(rows)),reverse=True);text=INDEX_HEAD+'\n'.join(rows)+('\n' if rows else '')
+        for target in index_targets():
+            try:tmp=target.with_suffix('.tmp');tmp.write_text(text);os.replace(tmp,target)
+            except Exception:
+                if target==main:raise
+def update_meetings_index(session,title,summary):
+    """跨会记忆的事实层：每场一行，重跑同 id 覆盖不重复。数据目录是真源，记忆投影目录是只读镜像。"""
+    sid=str(session.get('id') or '')
+    if not sid or not (title or '').strip():return False
+    start=str(session.get('start',''))
+    try:
+        if start.isdigit():start=datetime.datetime.fromtimestamp(int(start)/1000).strftime('%Y-%m-%d %H:%M')
+        else:start=datetime.datetime.fromisoformat(start.replace('Z','+00:00')).astimezone().strftime('%Y-%m-%d %H:%M')
+    except Exception:start=start[:16].replace('T',' ')
+    line='| '+start+' | '+re.sub(r'\s+',' ',str(title)).replace('|','／').strip()+' | '+sid+' | '+index_one_liner(summary)+' |'
+    mutate_index(lambda rows:[r for r in rows if ('| '+sid+' |') not in r]+[line])
+    return True
+def reindex_all():
+    """回填：把已有整理结果的场次全部登记进索引。只读总结，不调模型。"""
+    n=0
+    for e in sorted(STATE.glob('*.enhanced.json')):
+        data=read(e,{}) or {};jp=e.with_name(e.name.replace('.enhanced.json','.json'));job=read(jp,{}) or {}
+        title=data.get('topicTitle') or job.get('topicTitle') or ''
+        if not title or not (data.get('summary') or '').strip():continue
+        if not data.get('id'):data['id']=job.get('sessionId') or ''
+        if update_meetings_index(data,title,data.get('summary','')):n+=1
+    return n
+
 def save_title(session_id, title, participants=None):
     """meeting-titles.json：{id:{topicTitle,participants,at}}，服务端 /meeting-list 与 /meeting-result 读取。"""
     lock = TITLES.with_suffix('.lock')
@@ -427,6 +482,10 @@ def process(job_path):
             write(job_path.with_suffix('.enhanced.json'),enhanced); save()
         except Exception as e:
             job['titleWarning']=str(e)[:120]; save()
+    try:
+        if enhanced.get('summary') and update_meetings_index(enhanced if enhanced.get('id') else {**enhanced,'id':str(source.get('id') or job.get('sessionId') or '')},enhanced.get('topicTitle') or job.get('topicTitle') or '',enhanced.get('summary','')):job['indexed']=True;save()
+    except Exception as e:
+        job['indexWarning']=str(e)[:120];save()
     phase('归档整理版')
     archive_version(job,enhanced,'本地整理版' if job.get('localVersion') else '会议整理版',save)
     phase('更新会议档案')
@@ -445,6 +504,12 @@ def process(job_path):
     return job
 
 if __name__=='__main__':
+    import sys
+    if len(sys.argv)==2 and sys.argv[1] in ('--index-drop-line','--index-add-line'):
+        payload=sys.stdin.read().strip('\r\n')
+        if not payload.startswith('| ') or '\n' in payload:sys.exit(2)
+        mutate_index((lambda rows:[r for r in rows if r!=payload]) if sys.argv[1]=='--index-drop-line' else (lambda rows:rows+[payload]));print('{"ok":true}');sys.exit(0)
+    if len(sys.argv)==2 and sys.argv[1]=='--reindex':print(json.dumps({'indexed':reindex_all()}));sys.exit(0)
     parser=argparse.ArgumentParser();parser.add_argument('job');args=parser.parse_args();jp=pathlib.Path(args.job)
     with jp.with_suffix('.lock').open('a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

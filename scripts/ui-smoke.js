@@ -142,7 +142,7 @@ async function shot(name){ const r=await send('Page.captureScreenshot',{}); fs.w
     await evaluate(`document.querySelector('#memory-dialog .archive-close').click();document.querySelector('#b-this').click();return 1`);
     await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
     await shot('compact-menu-mobile');
-    if(!await evaluate(`const d=document.querySelector('#meeting-more-dialog');return d.getBoundingClientRect().height<844 && d.querySelectorAll('.meeting-more-menu>details').length===3`))bad('手机本场菜单未收拢');else ok('手机本场菜单可完整显示');
+    if(!await evaluate(`const d=document.querySelector('#meeting-more-dialog');return d.getBoundingClientRect().height<844 && d.querySelectorAll('.this-menu>section').length===3`))bad('手机本场菜单未收拢');else ok('手机本场菜单可完整显示');
     await evaluate(`document.querySelector('#meeting-more-dialog').close();return 1`);
     await evaluate(`const original=window.fetch;window.fetch=async(u,o)=>{const p=String(u);if(p.includes('/sharing/slack/channels'))return new Response(JSON.stringify({ok:true,selfAvailable:true,team:'Test',channels:[]}));if(p.includes('/sharing/bundle'))return new Response(JSON.stringify({key:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',status:'done',bundle:{slackText:'会议主题\\n讨论内容与待办',brief:{title:'会议',overview:'范围',topics:[],conclusions:[],todos:[]}}}));return original(u,o);};document.querySelector('#share-slack').click();return 1`);
     await sleep(400);

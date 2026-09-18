@@ -89,9 +89,26 @@
         if(!j){ msg.textContent=ui==='en'?'No receipt — check before retrying.':'没拿到回执，先去确认再重试。'; return; }
         msg.innerHTML=(j.ok?'✓ ':'✗ ')+esc(j.summary||j.error||'')+(j.link?' <a href="'+esc(j.link)+'" target="_blank" rel="noopener">打开 ↗</a>':'');
         if(!j.ok) ok.disabled=no.disabled=false;
+        if(j.ok&&j.name) watchHandoff(j.name,card);
       }catch(e){ msg.textContent=(ui==='en'?'Failed: ':'失败：')+(e.message||e); ok.disabled=no.disabled=false; }
     };
     $('#assistant-log').append(card); card.scrollIntoView({block:'nearest'});
+  }
+  // 交办回执：信发出去以后每 5 秒问一次到哪一步了，最多盯 20 分钟；回执正文按纯文本显示。
+  const HANDOFF_STATE={queued:'已送达，等 MyAgent 认领…',claimed:'MyAgent 已接手，正在做…',fallback:'桌面会话没接，已转后台处理…',processed:'已处理完，等回执…',unknown:'找不到这封信了，可能已被清理'};
+  function watchHandoff(name,card){
+    const line=document.createElement('div');line.className='hint handoff-receipt';line.textContent=HANDOFF_STATE.queued;card.append(line);
+    let n=0;const tick=async()=>{
+      if(!card.isConnected||++n>240)return;
+      try{
+        const j=await (await fetch(relayBase()+'/handoff-status?name='+encodeURIComponent(name)+'&token='+encodeURIComponent(cfg.relayToken||''),{signal:AbortSignal.timeout(8000)})).json();
+        if(j.state==='replied'){line.textContent='';const h=document.createElement('strong');h.textContent='MyAgent 回执';const pre=document.createElement('div');pre.style.whiteSpace='pre-wrap';pre.textContent=String(j.text||'').trim()||'（回执是空的）';line.append(h,pre);card.scrollIntoView({block:'nearest'});return;}
+        if(j.state&&HANDOFF_STATE[j.state])line.textContent=HANDOFF_STATE[j.state];
+        if(j.state==='unknown'&&n>3)return;
+      }catch(e){}
+      setTimeout(tick,5000);
+    };
+    setTimeout(tick,2000);
   }
   document.addEventListener('click',e=>{
     const b=e.target.closest('.ask-claude'); if(!b) return;
