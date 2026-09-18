@@ -36,5 +36,20 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
  const timer=setInterval(pump,30000);timer.unref();setTimeout(pump,3000).unref();
  function retry(id){const j=list().find(x=>x.sessionId===id);if(!j)throw Error('找不到归档任务');if(!['error','partial'].includes(j.status))return j;j.status='queued';j.attempts=0;j.error='';j.phase='等待整理';write(path.join(dir,j.key+'.job.json'),j);pump();return j;}
  function reviseTranscript(id,result){const j=list().find(x=>x.sessionId===id);if(!j)throw Error('请先归档原会议，再进行本地补转');const previous=read(j.input);return enqueue({...previous,transcript:result.transcript,names:{},summary:'',providedLocalTranscript:true,speakerWarning:result.diarizationError||((result.speakerCount>8||result.transcript.filter(r=>!r.speaker||r.speakerUncertain).length/result.transcript.length>0.35)?'声音分组不稳定，分人结果需要核对':''),speakerCount:result.speakerCount});}
- const api={enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>clearInterval(timer)};managers.set(dir,api);return api;
+ // 回看页数据（REQ-004）：单独补跑、读进度、存「需要你定一下」的回答
+ const briefRuns=new Map();
+ const paths=id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;return{enhanced:path.join(dir,j.key+'.job.enhanced.json'),state:path.join(dir,j.key+'.brief.json')};};
+ function brief(id){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))throw Error('这场会还没整理完');const jb=list().find(x=>x.sessionId===id);if(jb&&['queued','running'].includes(jb.status))throw Error('这场会还在整理，稍后再点');if(briefRuns.has(id))return{state:'running'};
+  write(p.state,{state:'running',phase:'排队',started:Date.now()/1000});
+  const c=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),'--brief',p.enhanced],{env:{...process.env,THT_PIPELINE_DIR:dir},stdio:'ignore'});briefRuns.set(id,c);
+  const fail=msg=>{try{const s=read(p.state);if(s.state==='running')write(p.state,{...s,state:'failed',error:msg});}catch{}};
+  c.on('error',()=>{briefRuns.delete(id);fail('整理进程未启动');});c.on('close',code=>{briefRuns.delete(id);if(code)fail('整理进程中断');});return{state:'running'};}
+ function briefState(id){const p=paths(id);if(!p||!fs.existsSync(p.state))return{state:'none'};const s=read(p.state);if(s.state==='running'&&!briefRuns.has(id)&&Date.now()/1000-(s.started||0)>2400)return{...s,state:'failed',error:'整理超时'};return s;}
+ function answer(id,qid,choice,text){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))throw Error('找不到这场会');const e=read(p.enhanced);const q=((e.brief||{}).questions||[]).find(x=>x.id===qid);if(!q)throw Error('没有这道题');
+  if(!Number.isInteger(choice)||choice<0||choice>=q.options.length)throw Error('选项不对');
+  e.brief.answers={...(e.brief.answers||{}),[qid]:{choice,text:String(text||'').slice(0,200),at:Date.now()}};
+  const value=String(text||'').trim().slice(0,40)||q.options[choice];
+  for(const f of q.affects||[]){const m=/^speaker:S?(\w{1,12})$/i.exec(f);if(m&&value){e.names={...(e.names||{}),[m[1]]:value};}}
+  write(p.enhanced,e);return{question:q,value,session:e};}
+ const api={brief,briefState,answer,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>clearInterval(timer)};managers.set(dir,api);return api;
 };

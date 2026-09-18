@@ -78,22 +78,61 @@ body{margin:0;padding:0 0 60px}
 button.k.play{cursor:pointer;background:none;border:0;padding:0;font:inherit;color:inherit}
 button.k.play:hover,time.play:hover{text-decoration:underline}
 time.play{cursor:pointer}
+
+.bf-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:14px;margin-bottom:14px;align-items:start}
+@media(max-width:980px){.bf-grid{grid-template-columns:1fr}}
+.bf-body{padding:14px;font-size:14px;line-height:1.65}
+.pane h2{display:flex;align-items:center;gap:8px}
+.bf-scope{color:var(--muted);margin:0 0 12px}
+.bf-h{font:11px var(--mono);letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin:16px 0 8px}
+.bf-h:first-child{margin-top:0}
+.bf-topics{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.bf-topics li{display:flex;gap:8px;align-items:baseline}
+.bf-n{flex:none;width:20px;height:20px;border-radius:50%;background:var(--text);color:#fff;font:11px/20px var(--mono);text-align:center}
+.bf-dur{margin-left:auto;color:var(--faint);font:11px var(--mono)}
+.bf-bar{display:flex;height:22px;border-radius:6px;overflow:hidden;background:var(--panel-2);margin:10px 0 2px}
+.bf-bar i{display:block;height:100%;font:10px/22px var(--mono);font-style:normal;color:#fff;text-align:center;border-right:1px solid #fff;cursor:pointer;overflow:hidden}
+.bf-bar i.gap{background:transparent;cursor:default}
+.bf-key{background:#fff8e1;border-left:3px solid #e0a800;border-radius:6px;padding:8px 12px;margin:0 0 6px}
+.bf-table{width:100%;border-collapse:collapse;font-size:13px}
+.bf-table th{text-align:left;font:11px var(--mono);color:var(--muted);font-weight:400;padding:4px 8px;border-bottom:1px solid var(--line)}
+.bf-table td{padding:7px 8px;border-bottom:1px solid #f0f0f2;vertical-align:top}
+.bf-table td:nth-child(n+2),.bf-table th:nth-child(n+2){white-space:nowrap}
+.bf-sug{color:var(--faint)}
+.bf-card{border:1px solid var(--line);border-radius:10px;padding:12px;margin:0 0 10px}
+.bf-card h3{display:flex;gap:8px;align-items:center;font-size:14px;margin:0 0 8px}
+.bf-card ul{margin:6px 0 0;padding-left:18px}.bf-card li{margin:3px 0}
+.bf-open{color:var(--muted);font-size:13px;margin-top:8px}
+.bf-t{border:0;background:var(--panel-2);color:var(--muted);font:11px var(--mono);border-radius:6px;padding:1px 6px;margin-left:6px;cursor:pointer}
+.bf-item{border-bottom:1px solid #f0f0f2;padding:8px 0}.bf-item:last-child{border-bottom:0}
+.bf-q{color:var(--text)}.bf-src{color:var(--faint);font-size:12px;margin-top:3px}
+.bf-tag{display:inline-block;font:11px var(--mono);border-radius:6px;padding:0 6px;margin-right:6px;background:var(--panel-2);color:var(--muted)}
+.bf-tag.ok{background:#e6f4ea;color:#1e7e34}.bf-tag.bad{background:#fdecea;color:#b3261e}
+.bf-note{color:var(--muted);font-size:13px}
+.bf-ask{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.bf-ask h2{font:11px var(--mono);letter-spacing:1.2px;color:var(--muted);margin:0 0 8px}
+.bf-qrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0}
+.bf-qrow b{font-weight:500;margin-right:4px}
+.bf-opt{border:1px solid var(--line);background:#fff;border-radius:16px;padding:3px 12px;font-size:13px;cursor:pointer}
+.bf-opt.on{background:var(--text);color:#fff;border-color:var(--text)}
+.bf-qrow input{border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:13px;min-width:140px}
+.bf-tr summary{list-style:none;cursor:pointer}.bf-tr summary::-webkit-details-marker{display:none}
+.bf-tr summary h2:after{content:"展开";margin-left:auto;font-size:11px}.bf-tr[open] summary h2:after{content:"收起"}
+.md h1,.md h2,.md h3{font-size:14px;margin:14px 0 6px;text-transform:none;letter-spacing:0;color:var(--text);border:0;padding:0;font-family:inherit;display:block}
+.md ul{padding-left:18px;margin:4px 0}.md table{border-collapse:collapse;font-size:13px}.md td,.md th{border:1px solid var(--line);padding:4px 8px}
 </style></head><body>
-<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="review-go" hidden>过一遍</button><button class="btn sm" id="download">下载 / 分享</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
+<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="review-go" hidden style="display:none">过一遍</button><button class="btn sm" id="download">下载 / 分享</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
 <div class="wrap">
 <div class="meta" id="meta"></div>
 <div class="player-box" id="player-box" hidden></div>
-<div class="grid">
-  <div>
-    <div class="pane" style="margin-bottom:14px"><h2>智能总结 · 待核对</h2><div class="scroll"><div class="summary" id="summary"></div></div></div>
-    <div class="pane"><h2>逐字稿 <span class="count" id="c-tr"></span></h2><div class="scroll tr" id="transcript"></div></div>
-  </div>
-  <div>
-    <div class="pane" style="margin-bottom:14px"><h2>要点 <span class="count" id="c-hl"></span></h2><div class="scroll" id="highlights"></div></div>
-    <div class="pane" style="margin-bottom:14px"><h2>待办 <span class="count" id="c-td"></span></h2><div class="scroll" id="todos"></div></div>
-    <div class="pane"><h2>待核查 <span class="count" id="c-ck"></span></h2><div class="scroll" id="factchecks"></div></div>
-  </div>
+<div id="ask-box" class="bf-ask" hidden></div>
+<div class="bf-grid" id="bf-grid" hidden>
+  <section class="pane bf-sum"><h2>智能总结</h2><div class="bf-body" id="bf-sum"></div></section>
+  <aside class="pane bf-rev"><h2>Claude 点评与指导</h2><div class="bf-body" id="bf-rev"></div></aside>
 </div>
+<div class="pane" id="legacy-box" hidden style="margin-bottom:14px"><h2>智能总结（旧版）<span style="flex:1"></span><button type="button" class="btn sm" id="bf-build">整理成新版</button></h2><div class="bf-body md" id="summary"></div></div>
+<details class="pane bf-tr" id="tr-box"><summary><h2>逐字稿 <span class="count" id="c-tr"></span></h2></summary><div class="scroll tr" id="transcript"></div></details>
+<div hidden><span id="c-hl"></span><span id="c-td"></span><span id="c-ck"></span><div id="highlights"></div><div id="todos"></div><div id="factchecks"></div></div>
 </div>
 <div id="rv" hidden>
   <div class="rv-box">
@@ -113,4 +152,4 @@ time.play{cursor:pointer}
     <div class="rv-done" id="rv-done" hidden></div>
   </div>
 </div>
-<script src="archive.js?v=3"></script></body></html>
+<script src="archive.js?v=4"></script></body></html>

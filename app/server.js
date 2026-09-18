@@ -1418,6 +1418,39 @@ return {id:s.id,title:s.title||'',topicTitle:t.topicTitle||j.topicTitle||'',part
     try { const f = path.join(PENDING_DIR, 'sess-' + sess.id + '.json'); if (sess.id && fs.existsSync(f)) { const cur = JSON.parse(fs.readFileSync(f,'utf8')); cur.calendar = sess.calendar; fs.writeFileSync(f, JSON.stringify(cur)); } } catch (e) {}
     return event;
   }
+  // ===== 回看页（REQ-004）：补跑结构化总结 / 读进度 / 存「需要你定一下」的回答 =====
+  // 会议记忆原来靠「过一遍」写入；那个流程撤了，改成这里把核心结论和待办写进去，下一场会才接得上。
+  const briefMemorized = (global.__thtBriefMemorized = global.__thtBriefMemorized || new Set());   // 同一次整理只写一遍会议记忆，重复轮询不重写
+  const briefToMemory = async (sess) => {
+    const b = sess && sess.brief; if (!b || !b.overview) return 0;
+    const names = sess.names || {}, nm = t => Object.keys(names).reduce((x, k) => (names[k] && /^\w{1,12}$/.test(k)) ? x.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)' + k + '(?!\\d)', 'g'), () => names[k]) : x, String(t || ''));
+    const condensed = { highlights: (b.overview.conclusions || []).map(t => ({ text: nm(t) })), todos: (b.overview.todos || []).map(t => ({ text: nm(t.what), owner: t.ownerSource === 'meeting' ? nm(t.owner) : '', due: t.due || '' })), factchecks: [] };
+    const decisions = [...condensed.highlights.map((_, i) => ({ kind: 'highlights', index: i, action: 'keep' })), ...condensed.todos.map((_, i) => ({ kind: 'todos', index: i, action: 'keep' }))];
+    if (!decisions.length) return 0;
+    const r = await require('./review').apply(DATA, { ...sess, title: sess.topicTitle || sess.title, condensed }, decisions, path.join(MEMORY_PROJECTION_DIR, 'meeting-memory.md'), log);
+    return r.written || 0;
+  };
+  if (p.endsWith('/meeting-brief') || p.endsWith('/meeting-answer')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const okId = v => /^[A-Za-z0-9_-]{1,80}$/.test(v);
+    if (req.method === 'GET') {
+      const sid = String(u.searchParams.get('id') || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
+      const st = meetingPipeline.briefState(sid);
+      if (st.state === 'done' && !briefMemorized.has(sid + ':' + (st.started || ''))) { briefMemorized.add(sid + ':' + (st.started || '')); try { await briefToMemory(meetingPipeline.result(sid)); } catch (e) { log('回看页：写会议记忆失败 ' + e.message); } }
+      return reply(200, st);
+    }
+    if (req.method !== 'POST') return reply(405, { ok:false });
+    const parts = []; let size = 0; for await (const c of req) { size += c.length; if (size > 4000) return reply(413, { ok:false, error:'太长' }); parts.push(c); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
+    const sid = String(j.id || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
+    try {
+      if (p.endsWith('/meeting-brief')) return reply(200, { ok:true, ...meetingPipeline.brief(sid) });
+      const r = meetingPipeline.answer(sid, String(j.qid || ''), Number(j.choice), j.text);
+      let written = 0; try { written = await briefToMemory(r.session); } catch (e) { log('回看页：写会议记忆失败 ' + e.message); }
+      return reply(200, { ok:true, value: r.value, memory: written });
+    } catch (e) { return reply(400, { ok:false, error: e.message }); }
+  }
   if (p.endsWith('/calendar-match')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };

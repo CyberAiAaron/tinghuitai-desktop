@@ -37,21 +37,14 @@ function render(s){
   parts.push('<span><b>'+(s.transcript||[]).length+'</b> 句</span>');
   if(s.topicTitle&&s.title&&s.title!==s.topicTitle)parts.push('<span title="原始标题">'+esc(s.title.slice(0,40))+'</span>');
   const ppl=Array.isArray(s.participants)?s.participants.filter(Boolean):[];
-  parts.push('<span>参会人 <b>'+(ppl.length?esc(ppl.join('、')):'未记录')+'</b></span>');
+  if(ppl.length)parts.push('<span>参会人 <b>'+esc(ppl.join('、'))+'</b></span>');
   if(s.speakerWarning)parts.push('<span>'+esc(s.speakerWarning)+'</span>');
   $('#meta').innerHTML=parts.join('');
   mountPlayer();
-  renderCondenseBar(s);
-  mountReviewButton(s);
   mountMemoryLink();
-  mountNote(s);
-  mountCalendarChip();
-  // 从会后卡片点「过一遍」过来的，直接开，不用再点一次按钮
-  if(new URLSearchParams(location.search).get('review')==='1' && reviewReady(s) && !window.__rvAuto){
-    window.__rvAuto=1; setTimeout(()=>startReview(s), 300);
-  }
+  mountHead(s);
   $('#src-chip').hidden=false;$('#src-chip').textContent=source==='mac'?'来源：Mac 归档'+(s.archiveNote?'（'+s.archiveNote+'）':''):'来源：本机记录（Mac 未同步）';
-  $('#summary').textContent=s.summary||'总结尚未完成，逐字稿已保留。';
+  renderBrief(s);
   // 会后收敛：默认只显示收敛过的那十几条，原始的几百条折在「看全部」后面。
   // 会中每 40 秒一轮、只看眼前一小段，所以宁可多记；这里才是该做取舍的地方。
   const cond = s.condensed && !showRaw ? s.condensed : null;
@@ -71,6 +64,92 @@ function render(s){
   const names=s.names||{};
   $('#transcript').innerHTML=tr.length?tr.map(row=>{const sp=row.speaker||row.spk||row.who||'';const rsec=(()=>{const at=Number(row.at||0);if(!at)return null;return at>1e11?(at-start)/1000:at;})();
     return '<p>'+(hasAudio&&rsec!=null?'<time class="play" role="button" tabindex="0" data-sec="'+rsec+'" title="'+(uiLang==='en'?'Replay this line':'回听这一句')+'">'+esc(clock(row,start))+'</time>':'<time>'+esc(clock(row,start))+'</time>')+(sp?'<span class="spk s'+esc(String(sp).replace(/\D/g,'')||'0')+'">'+esc(spkName(sp,names))+'</span>':'')+esc(row.text)+'</p>'+(row.originalText&&row.originalText!==row.text?'<span class="orig">原句：'+esc(row.originalText)+'</span>':'');}).join(''):'<div class="empty">没有转写内容。</div>';
+}
+
+// ---- 回看页新版（REQ-004）：页面只渲染结构化数据，不出现 Markdown 原始标记 ----
+const COLORS=['#202124','#c8102e','#1f5fbf','#1e7e34','#b26a00','#6a3fb5','#00838f','#8d6e63'];
+const mmss=sec=>{sec=Math.max(0,Math.round(sec||0));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0');};
+function spkMap(s){const m={...(s.names||{})};const b=s.brief||{};(b.questions||[]).forEach(q=>{const a=(b.answers||{})[q.id];if(!a)return;const v=(a.text||'').trim()||q.options[a.choice];(q.affects||[]).forEach(f=>{const k=/^speaker:(.+)$/.exec(f);if(k&&v)m[k[1].replace(/^S/i,'')]=v;});});return m;}
+function nm(text,map){let t=esc(text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),()=>esc(map[k]));});return t;}
+const tbtn=sec=>sec?'<button type="button" class="bf-t" data-sec="'+Number(sec)+'">'+mmss(sec)+'</button>':'';
+function mdLite(src){ // 旧会议只有 Markdown 长文时的兜底渲染
+  const out=[];let ul=false,tb=false;const inl=t=>esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'$1').replace(/\*([^*]+)\*/g,'$1');
+  const close=()=>{if(ul){out.push('</ul>');ul=false;}if(tb){out.push('</table>');tb=false;}};
+  String(src||'').split('\n').forEach(l=>{const x=l.trim();
+    if(!x||/^-{3,}$/.test(x)){close();return;}
+    let m;
+    if((m=/^(#{1,6})\s+(.*)$/.exec(x))){close();out.push('<h3>'+inl(m[2])+'</h3>');return;}
+    if(/^\|/.test(x)){if(/^\|[\s:|-]+\|?$/.test(x))return;if(ul){out.push('</ul>');ul=false;}if(!tb){out.push('<table>');tb=true;}out.push('<tr>'+x.replace(/^\||\|$/g,'').split('|').map(c=>'<td>'+inl(c.trim())+'</td>').join('')+'</tr>');return;}
+    if((m=/^(?:[-*+]|\d+[.)、])\s+(?:\[[ xX]\]\s*)?(.*)$/.exec(x))){if(tb){out.push('</table>');tb=false;}if(!ul){out.push('<ul>');ul=true;}out.push('<li>'+inl(m[1])+'</li>');return;}
+    close();out.push('<p>'+inl(x.replace(/^>\s*/,''))+'</p>');});
+  close();return out.join('');}
+function renderBrief(s){
+  const b=s.brief, grid=$('#bf-grid'), legacy=$('#legacy-box'), ask=$('#ask-box');
+  if(!b||!b.overview){
+    grid.hidden=true;ask.hidden=true;legacy.hidden=false;
+    $('#summary').innerHTML=s.summary?mdLite(s.summary):'<p class="bf-note">总结尚未完成，逐字稿已保留。</p>';
+    const btn=$('#bf-build');btn.hidden=source!=='mac'||!(s.transcript||[]).length;btn.onclick=()=>buildBrief(btn);
+    return;
+  }
+  legacy.hidden=true;grid.hidden=false;
+  const map=spkMap(s), ov=b.overview, dur=Math.max(b.duration||0,...ov.topics.map(t=>t.to||0),1);
+  let bar='',pos=0;ov.topics.forEach((t,i)=>{const f=Math.max(pos,t.from||0),to=Math.max(f,t.to||0);if(f>pos)bar+='<i class="gap" style="width:'+((f-pos)/dur*100)+'%"></i>';bar+='<i data-sec="'+f+'" title="'+esc(t.title)+' '+mmss(f)+'–'+mmss(to)+'" style="width:'+((to-f)/dur*100)+'%;background:'+COLORS[i%COLORS.length]+'">'+t.n+'</i>';pos=to;});
+  const todoRows=ov.todos.map(t=>'<tr><td>'+nm(t.what,map)+'</td><td>'+(t.owner?(t.ownerSource==='suggested'?'<span class="bf-sug">'+nm(t.owner,map)+' · 建议</span>':nm(t.owner,map)):'<span class="bf-sug">未定</span>')+'</td><td>'+(t.due?esc(t.due):'<span class="bf-sug">未定</span>')+'</td></tr>').join('');
+  $('#bf-sum').innerHTML=
+    (b.meta&&b.meta.scope?'<p class="bf-scope">'+nm(b.meta.scope,map)+'</p>':'')
+    +'<div class="bf-h">议题与时间分布</div><ul class="bf-topics">'+ov.topics.map((t,i)=>'<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+t.n+'</span><span>'+nm(t.title,map)+'</span><span class="bf-dur">'+mmss(t.from)+'–'+mmss(t.to)+'</span></li>').join('')+'</ul><div class="bf-bar">'+bar+'</div>'
+    +(ov.conclusions.length?'<div class="bf-h">核心结论</div>'+ov.conclusions.map(c=>'<div class="bf-key">'+nm(c,map)+'</div>').join(''):'')
+    +(ov.todos.length?'<div class="bf-h">待办</div><table class="bf-table"><tr><th>事项</th><th>负责人</th><th>期限</th></tr>'+todoRows+'</table>':'')
+    +'<div class="bf-h">议题展开</div>'+(b.topics||[]).map((t,i)=>{const head=ov.topics[i]||{};return '<div class="bf-card"><h3><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+t.n+'</span>'+nm(head.title||'',map)+'</h3>'+(t.conclusion?'<div class="bf-key">'+nm(t.conclusion,map)+'</div>':'')+'<ul>'+t.points.map(x=>'<li>'+nm(x.text,map)+tbtn(x.at)+'</li>').join('')+'</ul>'+(t.open&&t.open.length?'<div class="bf-open">未决：'+t.open.map(x=>nm(x,map)).join('；')+'</div>':'')+'</div>';}).join('');
+  const r=b.review, sec=(h,items)=>items&&items.length?'<div class="bf-h">'+h+'</div>'+items.join(''):'';
+  $('#bf-rev').innerHTML=!r?'<p class="bf-note">'+(b.reviewWarning?'点评这次没生成出来：'+esc(b.reviewWarning):'点评尚未生成。')+'</p>':
+    ((r.contextLoaded?'':'<p class="bf-note">未接项目背景，以下只依据会内内容。</p>')
+    +sec('可能讲错的',r.errors.map(e=>'<div class="bf-item"><div class="bf-q">「'+nm(e.quote,map)+'」'+tbtn(e.at)+'</div><div>→ '+nm(e.why,map)+'</div><div class="bf-src">依据：'+esc(e.source||'会内推断')+' · '+esc(e.confidence)+'</div></div>'))
+    +sec('补充背景',r.facts.map(f=>'<div class="bf-item">'+nm(f.text,map)+(f.source?'<div class="bf-src">'+esc(f.source)+'</div>':'')+'</div>'))
+    +sec('和项目目标的关系',r.alignment.map(a=>'<div class="bf-item"><span class="bf-tag '+(a.status==='推进'?'ok':a.status==='偏离'?'bad':'')+'">'+esc(a.status)+'</span><b>'+esc(a.goal)+'</b><div>'+nm(a.note,map)+'</div></div>'))
+    +sec('建议怎么做',r.advice.map((a,i)=>'<div class="bf-item"><span class="bf-tag">'+(i+1)+'</span>'+nm(a,map)+'</div>'))
+    +sec('我核过的',r.checked.map(c=>'<div class="bf-item"><span class="bf-tag '+(c.result==='已核实'?'ok':c.result==='矛盾'?'bad':'')+'">'+esc(c.result)+'</span>'+nm(c.claim,map)+(c.note?'<div class="bf-src">'+nm(c.note,map)+'</div>':'')+'</div>')));
+  const qs=b.questions||[];ask.hidden=!qs.length;
+  if(qs.length){const ans=b.answers||{};
+    ask.innerHTML='<h2>需要你定一下</h2>'+qs.map((q,i)=>{const a=ans[q.id];const cur=a?a.choice:q.recommend;return '<div class="bf-qrow" data-q="'+esc(q.id)+'"><b>'+(i+1)+'　'+nm(q.ask,map)+'</b>'+q.options.map((o,k)=>'<button type="button" class="bf-opt'+(k===cur&&!(a&&a.text)?' on':'')+'" data-k="'+k+'" title="'+(k===q.recommend?esc(q.why||'推荐'):'')+'">'+esc(o)+(k===q.recommend?' · 推荐':'')+'</button>').join('')+'<input type="text" placeholder="补一句（可选）" value="'+esc(a&&a.text||'')+'">'+(a?'<span class="bf-src">已保存</span>':'')+'</div>';}).join('');
+    ask.querySelectorAll('.bf-qrow').forEach(row=>{const qid=row.dataset.q;const send=(choice,text)=>saveAnswer(qid,choice,text);
+      row.querySelectorAll('.bf-opt').forEach(o=>o.onclick=()=>send(Number(o.dataset.k),row.querySelector('input').value));
+      row.querySelector('input').onchange=e=>{const on=row.querySelector('.bf-opt.on');send(on?Number(on.dataset.k):0,e.target.value);};});
+  }
+  document.querySelectorAll('#bf-grid [data-sec]').forEach(el=>el.onclick=()=>jumpTo(Number(el.dataset.sec)));
+}
+function jumpTo(sec){seekTo(sec);const box=$('#tr-box');box.open=true;const rows=[...document.querySelectorAll('#transcript [data-sec]')];let hit=rows[0];rows.forEach(r=>{if(Number(r.dataset.sec)<=sec+1)hit=r;});if(hit){hit.scrollIntoView({block:'center',behavior:'smooth'});const p=hit.closest('p');if(p){p.style.background='#fff8e1';setTimeout(()=>p.style.background='',2500);}}}
+async function saveAnswer(qid,choice,text){
+  const b=record.brief;b.answers=b.answers||{};b.answers[qid]={choice,text:(text||'').trim(),at:Date.now()};
+  render(record); // 先在页面上当场换掉，再存
+  try{const r=await fetch('/asr-relay/meeting-answer?token='+encodeURIComponent(settings.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,qid,choice,text:(text||'').trim()})});if(!r.ok)throw 0;}
+  catch(e){const row=document.querySelector('.bf-qrow[data-q="'+qid+'"] .bf-src');if(row)row.textContent='没存上，Mac 在线后再点一次';}
+}
+async function buildBrief(btn){
+  btn.disabled=true;btn.textContent='整理中，约 3–8 分钟…';
+  const tk=encodeURIComponent(settings.relayToken||'');
+  const back=msg=>{btn.disabled=false;btn.textContent='整理成新版';btn.title=msg||'';const n=document.createElement('span');n.className='bf-src';n.textContent=' '+(msg||'没整理出来');btn.after(n);setTimeout(()=>n.remove(),8000);};
+  try{const r=await fetch('/asr-relay/meeting-brief?token='+tk,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)return back(j.error||'Mac 没接上');}catch(e){return back('Mac 没接上');}
+  const began=Date.now();let idle=0;
+  const poll=async()=>{try{const r=await fetch('/asr-relay/meeting-brief?id='+encodeURIComponent(id)+'&token='+tk,{cache:'no-store'});const j=await r.json();
+      if(j.state==='done'){location.reload();return;} if(j.state==='failed')return back(j.error);
+      if(j.state==='none'&&++idle>=6)return back('没启动起来，再点一次');if(Date.now()-began>45*60000)return back('等太久了，稍后刷新看看');
+      if(j.phase)btn.textContent=j.phase+'…';}catch(e){}
+    setTimeout(poll,5000);};
+  setTimeout(poll,4000);
+}
+// 顶部会议信息：日历时间、组织者、参会人并在一行；置信度低时同一行标出来，可换一场
+async function mountHead(s){
+  if(source!=='mac')return;const meta=$('#meta');const tk=encodeURIComponent(settings.relayToken||'');
+  const paint=j=>{let el=document.getElementById('cal-line');if(!el){el=document.createElement('span');el.id='cal-line';el.style.cssText='display:flex;flex-wrap:wrap;gap:10px;align-items:center;flex-basis:100%';meta.appendChild(el);}
+    const ev=j&&j.event;if(!ev){el.innerHTML='<span>日历：'+esc(j&&j.chosen==='none'?'你标了不是日历上的会':(j&&j.reason||'没对上日程'))+'</span>'+(j&&j.chosen==='none'?'<button type="button" class="btn sm" data-cal="reset">重新匹配</button>':'');}
+    else{const low=ev.confidence==='low'&&!ev.chosenByUser;const who=ev.attendees||[];
+      el.innerHTML='<span>日程 <b>'+esc(ev.title)+'</b> '+esc((ev.start||'').slice(11,16)+(ev.end?'–'+ev.end.slice(11,16):''))+'</span>'+(ev.organizer?'<span>组织者 <b>'+esc(ev.organizer)+'</b></span>':'')+(who.length?'<span>参会 <b>'+who.length+'</b> 人：'+esc(who.join('、'))+'</span>':'')
+        +(low?'<span class="bf-tag bad">按时间猜的</span>':'')+((ev.candidates||[]).length>1?'<select data-cal="pick">'+ev.candidates.map(c=>'<option value="'+esc(c.eventId)+'"'+(c.eventId===ev.eventId?' selected':'')+'>'+esc(c.title)+' '+esc((c.start||'').slice(11,16))+'</option>').join('')+'</select>':'')
+        +(low?'<button type="button" class="btn sm" data-cal="'+esc(ev.eventId)+'">就是这场</button>':'')+'<button type="button" class="btn sm" data-cal="none">不是日历上的会</button>';}
+    el.querySelectorAll('[data-cal]').forEach(c=>{const send=async v=>{el.style.opacity=.6;const r=await fetch('/asr-relay/calendar-match?id='+encodeURIComponent(id)+(v==='reset'?'&refresh=1':'')+'&token='+tk,v==='reset'?{cache:'no-store'}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({eventId:v})});el.style.opacity=1;paint(await r.json());};
+      if(c.tagName==='SELECT')c.onchange=()=>send(c.value);else c.onclick=()=>send(c.dataset.cal);});};
+  try{const r=await fetch('/asr-relay/calendar-match?id='+encodeURIComponent(id)+'&token='+tk,{cache:'no-store',signal:AbortSignal.timeout(60000)});paint(await r.json());}catch(e){}
 }
 
 // 录音在 Mac 上。先 HEAD 一下，有才挂播放器，避免页面上出现一个点不动的控件。
