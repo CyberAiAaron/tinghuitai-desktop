@@ -111,7 +111,12 @@ function renderBrief(s){
     +sec('我核过的',r.checked.map(c=>'<div class="bf-item"><span class="bf-tag '+(c.result==='已核实'?'ok':c.result==='矛盾'?'bad':'')+'">'+esc(c.result)+'</span>'+nm(c.claim,map)+(c.note?'<div class="bf-src">'+nm(c.note,map)+'</div>':'')+'</div>')));
   const qs=b.questions||[];ask.hidden=!qs.length;
   if(qs.length){const ans=b.answers||{};
-    ask.innerHTML='<h2>需要你定一下</h2>'+qs.map((q,i)=>{const a=ans[q.id];const cur=a?a.choice:q.recommend;return '<div class="bf-qrow" data-q="'+esc(q.id)+'"><b>'+(i+1)+'　'+nm(q.ask,map)+'</b>'+q.options.map((o,k)=>'<button type="button" class="bf-opt'+(k===cur&&!(a&&a.text)?' on':'')+'" data-k="'+k+'" title="'+(k===q.recommend?esc(q.why||'推荐'):'')+'">'+esc(o)+(k===q.recommend?' · 推荐':'')+'</button>').join('')+'<input type="text" placeholder="补一句（可选）" value="'+esc(a&&a.text||'')+'">'+(a?'<span class="bf-src">已保存</span>':'')+spkProof(s,q)+'</div>';}).join('');
+    const left=qs.filter(q=>!ans[q.id]).length;
+    ask.innerHTML='<h2>'+(left?'需要你定一下 · 还剩 '+left+' 题':'需要你定的 '+qs.length+' 题都已确定')+'</h2>'+qs.map((q,i)=>{const a=ans[q.id];
+      // 答过的收成一行：✓ 题目 → 你的答案，要改再点开
+      if(a&&!askEditing.has(q.id)){const v=(a.text||'').trim();return '<div class="bf-qdone" data-q="'+esc(q.id)+'"><span class="bf-tag ok">✓ 已确定</span><span class="bf-qd-ask">'+esc(q.ask)+'</span><b>'+esc(q.options[a.choice]||'')+'</b>'+(v?'<span class="bf-src">补充：'+esc(v)+'</span>':'')+'<button type="button" class="bf-t" data-edit="'+esc(q.id)+'">改</button></div>';}
+      const cur=a?a.choice:q.recommend;return '<div class="bf-qrow" data-q="'+esc(q.id)+'"><b>'+(i+1)+'　'+esc(q.ask)+'</b>'+q.options.map((o,k)=>'<button type="button" class="bf-opt'+(k===cur?' on':'')+'" data-k="'+k+'" title="'+(k===q.recommend?esc(q.why||'推荐'):'')+'">'+esc(o)+(k===q.recommend?' · 推荐':'')+'</button>').join('')+'<input type="text" placeholder="补一句（可选）" value="'+esc(a&&a.text||'')+'">'+spkProof(s,q)+'</div>';}).join('');
+    ask.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{askEditing.add(el.dataset.edit);render(record);});
     ask.querySelectorAll('.bf-qrow').forEach(row=>{const qid=row.dataset.q;const send=(choice,text)=>saveAnswer(qid,choice,text);
       row.querySelectorAll('.bf-opt').forEach(o=>o.onclick=()=>send(Number(o.dataset.k),row.querySelector('input').value));
       row.querySelector('input').onchange=e=>{const on=row.querySelector('.bf-opt.on');send(on?Number(on.dataset.k):0,e.target.value);};});
@@ -126,11 +131,13 @@ function spkProof(s,q){const k=(q.affects||[]).map(f=>/^speaker:S?(\w{1,12})$/i.
   const sec=r=>{const at=Number(r.at||0);return at>1e11?Math.round((at-start)/1000):at;};
   return '<div class="bf-proof"><span class="bf-src">说话人 '+esc(k)+' 全场 '+all+' 句，说得最长的几句：</span>'+pick.map(r=>'<div class="bf-pq">「'+esc(r.text.length>90?r.text.slice(0,90)+'…':r.text)+'」<button type="button" class="bf-t" data-sec="'+sec(r)+'">'+mmss(sec(r))+'</button></div>').join('')+'</div>';}
 function jumpTo(sec){seekTo(sec);const box=$('#tr-box');box.open=true;const rows=[...document.querySelectorAll('#transcript [data-sec]')];let hit=rows[0];rows.forEach(r=>{if(Number(r.dataset.sec)<=sec+1)hit=r;});if(hit){hit.scrollIntoView({block:'center',behavior:'smooth'});const p=hit.closest('p');if(p){p.style.background='#fff8e1';setTimeout(()=>p.style.background='',2500);}}}
+const askEditing=new Set();
 async function saveAnswer(qid,choice,text){
+  askEditing.delete(qid);
   const b=record.brief;b.answers=b.answers||{};b.answers[qid]={choice,text:(text||'').trim(),at:Date.now()};
   render(record); // 先在页面上当场换掉，再存
   try{const r=await fetch('/asr-relay/meeting-answer?token='+encodeURIComponent(settings.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,qid,choice,text:(text||'').trim()})});if(!r.ok)throw 0;}
-  catch(e){const row=document.querySelector('.bf-qrow[data-q="'+qid+'"] .bf-src');if(row)row.textContent='没存上，Mac 在线后再点一次';}
+  catch(e){delete record.brief.answers[qid];render(record);const row=document.querySelector('.bf-qrow[data-q="'+qid+'"]');if(row){const n=document.createElement('span');n.className='bf-tag bad';n.textContent='没存上，Mac 在线后再点一次';row.appendChild(n);}}
 }
 async function buildBrief(btn){
   btn.disabled=true;btn.textContent='整理中，约 3–8 分钟…';
