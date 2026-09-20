@@ -236,3 +236,13 @@ test('outline falls back to a full pass when a settled point was edited or remov
  assert.equal(t.outlinePlan(prev,[{text:'A1'},{text:'A2',edited:true},{text:'B1'}]).tail.length,3);
  assert.equal(t.outlinePlan([],[{text:'A1'},{text:'A2'}]).tail.length,2);
 });
+test('outline keeps the last settled group when the model omits it, and counts duplicate texts',()=>{
+ const t=outlineTools();
+ const prev=[{title:'g1',summary:'s',keys:['A1','A2']},{title:'g2',summary:'s',keys:['B1','B2']}];
+ const plan=t.outlinePlan(prev,['A1','A2','B1','B2','A1','C1'].map(x=>({text:x})));
+ assert.deepEqual(plan.tail.map(x=>x.text),['B1','B2','A1','C1']);
+ const out=t.mergeOutline(plan,[{title:'n',summary:'s',keys:['C1']}]);
+ assert.deepEqual(out.map(g=>g.title),['g1','g2','n']);
+ const out2=t.mergeOutline(plan,[{title:'half',summary:'s',keys:['B1','C1']}]);
+ assert.deepEqual(out2.map(g=>g.title),['g1','g2']);
+});

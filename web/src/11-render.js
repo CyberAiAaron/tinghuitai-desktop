@@ -65,7 +65,7 @@
       const pinnedTop=pinned.scrollTop;
       const settled=[],pending=[];
       const liveNow=running&&!cur.end&&!cur.viewOnly;
-      const lastSettled=liveNow?grouped.filter(g=>!g.ungrouped).pop():null;
+      const lastSettled=liveNow?grouped.filter(g=>!g.ungrouped).reduce((m,g)=>!m||g.to>=m.to?g:m,null):null;
       const pinnedAtBottom=pinned.scrollHeight-pinned.scrollTop-pinned.clientHeight<30;
       for(const g of grouped){
         const a=g.from==null?'':hms(g.from).slice(0,5),b=g.to==null?'':hms(g.to).slice(0,5);
