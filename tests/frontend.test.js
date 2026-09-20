@@ -211,3 +211,28 @@ test('view cards keep the raw claim as their key so edit and feedback still find
  assert.ok(src.includes('data-fix="ck" data-key="${esc(x.claim)}"'));assert.ok(!src.includes('data-key="${esc(tt('),'no card key may go through the display mapper');
  assert.ok(src.includes('find(x=>x.claim===key)'));
 });
+
+// 2026-09-20 会中进度感：旧组冻结，只把「最后一组 + 新要点」送模型。
+function outlineTools(){const c={};vm.createContext(c);vm.runInContext(code('  function outlinePlan(', '  function validateOutline(')+';this.outlinePlan=outlinePlan;this.mergeOutline=mergeOutline;',c);return c;}
+test('outline freezes settled groups and only re-sends the tail',()=>{
+ const t=outlineTools();
+ const prev=[{title:'定了走方案二',summary:'s1',keys:['A1','A2']},{title:'隐私不是阻力',summary:'s2',keys:['B1']}];
+ const ready=['A1','A2','B1','B2','C1'].map(x=>({text:x}));
+ const plan=t.outlinePlan(prev,ready);
+ assert.deepEqual(plan.tail.map(x=>x.text),['B1','B2','C1']);
+ const out=t.mergeOutline(plan,[{title:'隐私有两条线',summary:'n',keys:['B1','B2']},{title:'新话题',summary:'n2',keys:['C1']}]);
+ assert.equal(out[0].title,'定了走方案二');assert.equal(out[0].summary,'s1');
+ assert.equal(out.length,3);
+ // 最后一组没进新要点：标题沿用
+ const out2=t.mergeOutline(plan,[{title:'被改写的标题',summary:'x',keys:['B1']},{title:'新话题',summary:'n2',keys:['B2','C1']}]);
+ assert.equal(out2[1].title,'隐私不是阻力');
+ // 模型什么都没归：旧大纲原样保留
+ assert.equal(t.mergeOutline(plan,[]).length,2);
+});
+test('outline falls back to a full pass when a settled point was edited or removed',()=>{
+ const t=outlineTools();
+ const prev=[{title:'a',summary:'s',keys:['A1','A2']},{title:'b',summary:'s',keys:['B1']}];
+ assert.equal(t.outlinePlan(prev,[{text:'A1'},{text:'B1'},{text:'B2'}]).frozen.length,0);
+ assert.equal(t.outlinePlan(prev,[{text:'A1'},{text:'A2',edited:true},{text:'B1'}]).tail.length,3);
+ assert.equal(t.outlinePlan([],[{text:'A1'},{text:'A2'}]).tail.length,2);
+});

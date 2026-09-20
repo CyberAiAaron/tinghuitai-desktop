@@ -64,16 +64,22 @@
       const openKeys=new Set(pinned.dataset.session===String(cur.id)?[...pinned.querySelectorAll('details[data-outline-key][open]')].map(d=>d.dataset.outlineKey):[]);
       const pinnedTop=pinned.scrollTop;
       const settled=[],pending=[];
+      const liveNow=running&&!cur.end&&!cur.viewOnly;
+      const lastSettled=liveNow?grouped.filter(g=>!g.ungrouped).pop():null;
+      const pinnedAtBottom=pinned.scrollHeight-pinned.scrollTop-pinned.clientHeight<30;
       for(const g of grouped){
         const a=g.from==null?'':hms(g.from).slice(0,5),b=g.to==null?'':hms(g.to).slice(0,5);
         const span=a+(b&&b!==a?'–'+b:'');
         if(g.ungrouped){pending.push(`<section class="outline-pending">${cardOf(g.list[0],g.live,g.no+'.')}<small class="outline-time">${esc(span)}</small></section>`);continue;}
         const key=String(cur.id)+':'+hlKey(g.list[0].text);
-        settled.push(`<details class="outline-section" data-outline-key="${esc(key)}" ${openKeys.has(key)?'open':''}><summary><h3>${g.no}. ${esc(tt(g.title))}</h3></summary>${g.summary?`<p class="outline-summary">${esc(tt(g.summary))}</p>`:''}<details data-outline-key="${esc(key+':raw')}" ${openKeys.has(key+':raw')?'open':''}><summary>${ui==='en'?'Original points':'原始要点'}${span?' · '+esc(span):''}</summary>${g.list.map(x=>cardOf(x,false,'')).join('')}</details></details>`);
+        settled.push(`<details class="outline-section" data-outline-key="${esc(key)}" ${openKeys.has(key)?'open':''}><summary>${g===lastSettled?`<span class="outline-now">● ${ui==='en'?'Now':'正在聊'}</span>`:''}<h3>${g.no}. ${esc(tt(g.title))}</h3>${span?`<span class="outline-span">${esc(span)}</span>`:''}</summary>${g.summary?`<p class="outline-summary">${esc(tt(g.summary))}</p>`:''}<details data-outline-key="${esc(key+':raw')}" ${openKeys.has(key+':raw')?'open':''}><summary>${ui==='en'?'Original points':'原始要点'}${span?' · '+esc(span):''}</summary>${g.list.map(x=>cardOf(x,false,'')).join('')}</details></details>`);
       }
       pinned.hidden=!settled.length;
       pinned.innerHTML=settled.length?`<div class="outline-label">${ui==='en'?'AI summary':'AI 总结'}</div>`+settled.join(''):'';
-      pinned.dataset.session=String(cur.id);pinned.scrollTop=pinnedTop;
+      const pinnedFirst=pinned.dataset.session!==String(cur.id);
+      pinned.dataset.session=String(cur.id);
+      // 会中大纲按时间正序，「正在聊」那组在最下面：首次打开或本来就在底部时跟到底，用户往上翻了就不抢。
+      pinned.scrollTop=liveNow&&(pinnedFirst||pinnedAtBottom)?pinned.scrollHeight:(pinnedFirst?0:pinnedTop);
       keepScroll(el.hl,()=>{el.hl.innerHTML=pending.join('')||`<div class="empty">${settled.length?(ui==='en'?'New points will appear here.':'新的要点会显示在这里。'):(T('e_hl')||'要点会显示在这里。')}</div>`;});
       if (hlPaintedFor !== (cur && cur.id)) {
         el.hl.scrollTop = running ? el.hl.scrollHeight : 0;
