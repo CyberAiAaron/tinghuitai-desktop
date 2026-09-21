@@ -410,3 +410,81 @@ test('两次都写不下才提示清理',()=>{
  assert.match(c.notes[0][0],/本机存储满了/);
  assert.equal(c.notes[0][1],true);
 });
+
+// X8：助手卡片上给人看、能改的是一段描述，点「确认」之后发到 Slack 的却是服务端另外生成的正文——
+// 等于在确认一段自己没见过的内容。改成两步：先把正文填回卡片，看过（或改过）再发。
+const shareCtx=fetchImpl=>{
+ const c={cfg:{relayToken:'t'},ui:'zh',relayBase:()=>'',fetch:fetchImpl,setTimeout:f=>f(),
+   encodeURIComponent,Date,cur:{id:'m1',title:'一场会',start:1,transcript:[{text:'有内容'}]}};
+ vm.createContext(c);
+ vm.runInContext(code('  async function runShareAction(kind, progress, approved){','  function draftAction(a){'),c);
+ return c;};
+const bundleFetch=()=>{const hits=[];return {hits,impl:async(url,opt)=>{hits.push({url,body:opt&&opt.body});
+  if(url.includes('/sharing/slack/send')) return {ok:true,json:async()=>({ok:true,permalink:'https://x'})};
+  if(url.includes('/sharing/bundle?key=')) return {ok:true,json:async()=>({status:'done',bundle:{slackText:'这是纪要正文'}})};
+  return {ok:true,json:async()=>({key:'K1'})};}};};
+
+test('第一次点确认只把 Slack 正文取回来，一个字都还没发出去',async()=>{
+ const f=bundleFetch(), c=shareCtx(f.impl);
+ const r=await c.runShareAction('slack_self',()=>{});
+ assert.equal(r.needsConfirm,true);
+ assert.equal(r.ok,false,'还没发，不能报成功');
+ assert.equal(r.text,'这是纪要正文');
+ assert.equal(r.key,'K1');
+ assert.ok(!f.hits.some(h=>h.url.includes('/sharing/slack/send')),'这一步绝不能真的发出去');
+});
+
+test('确认之后发出去的就是交上来的那段正文，而且不重新生成分享包',async()=>{
+ const f=bundleFetch(), c=shareCtx(f.impl);
+ const r=await c.runShareAction('slack_self',()=>{},{key:'K1',text:'我改过的正文'});
+ assert.equal(r.ok,true);
+ const sent=f.hits.filter(h=>h.url.includes('/sharing/slack/send'));
+ assert.equal(sent.length,1);
+ const body=JSON.parse(sent[0].body);
+ assert.equal(body.text,'我改过的正文');
+ assert.equal(body.bundleKey,'K1');
+ assert.equal(body.channel,'self');
+ assert.equal(f.hits.length,1,'第二步不该再去建一次分享包（又是两分钟）');
+});
+
+// 卡片这一头：第一次点确认填正文并改按钮，第二次点才发，发的是卡片上当时显示的那段
+const cardCtx=runShare=>{
+ const c={ui:'zh',esc:s=>String(s),watchHandoff(){},relayBase:()=>'',cfg:{},cur:{id:'m1'},
+   a:{kind:'slack_self',title:'发到我的 Slack',detail:'助手写的一句话描述'},
+   card:{children:[{textContent:'发到我的 Slack',isContentEditable:false},{textContent:'助手写的一句话描述'},{children:[]}],style:{}},
+   ok:{disabled:false,textContent:'确认'},no:{disabled:false},msg:{textContent:'',innerHTML:''},
+   // draftAction 里那个 let pendingShare 不在切片范围内，在 vm 里得先给上下文一个同名的格子
+   pendingShare:null,
+   runShareAction:runShare,fetch:async()=>({json:async()=>({})}),encodeURIComponent,JSON,AbortSignal};
+ vm.createContext(c);
+ vm.runInContext(code('    ok.onclick=async()=>{',"    $('#assistant-log').append(card);"),c);
+ return c;};
+
+test('卡片：第一次确认填回正文、按钮改成「确认发送」，第二次才真发',async()=>{
+ const calls=[];
+ const c=cardCtx(async(kind,progress,approved)=>{calls.push({kind,approved});
+   return approved?{ok:true,summary:'已发到你自己的 Slack 私信'}:{ok:false,needsConfirm:true,key:'K1',text:'这是纪要正文'};});
+ await c.ok.onclick();
+ assert.equal(calls.length,1);
+ assert.ok(!calls[0].approved,'第一次不带确认过的正文');
+ assert.equal(c.card.children[1].textContent,'这是纪要正文','卡片上要显示真正会发出去的那段');
+ assert.equal(c.ok.textContent,'确认发送');
+ assert.equal(c.ok.disabled,false,'还得让人能点第二下');
+ assert.match(c.msg.textContent,/就是要发出去的正文/);
+
+ c.card.children[1].textContent='我改过的正文';      // 人点了「改一下再发」改完
+ await c.ok.onclick();
+ assert.equal(calls.length,2);
+ assert.equal(calls[1].approved.key,'K1','复用第一步那个分享包');
+ assert.equal(calls[1].approved.text,'我改过的正文','发出去的必须是卡片上当时那一段');
+ assert.match(c.msg.innerHTML,/已发到你自己的 Slack/);
+});
+
+test('卡片：取消发生在发出去之前，所以真的什么都没发',()=>{
+ const calls=[];
+ const c=cardCtx(async(...a)=>{calls.push(a);return {ok:false,needsConfirm:true,key:'K1',text:'正文'};});
+ vm.runInContext(code('    no.onclick=()=>{','    ok.onclick=async()=>{'),c);
+ c.no.onclick();
+ assert.equal(c.ok.disabled,true);
+ assert.equal(calls.length,0);
+});
