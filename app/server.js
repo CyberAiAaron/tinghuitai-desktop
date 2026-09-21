@@ -10,6 +10,7 @@ const execFileP = util.promisify(execFile);
 const WebSocket = require('ws');
 const http = require('http');
 const journal = require('./session-journal');
+const sendGate = require('./send-gate');   // 真外发的确认 + 幂等门禁（X6），和 slack-share 同一套规矩
 const assistantCore = require('../web/assistant-core');
 const Busboy = require('busboy');
 
@@ -1069,6 +1070,20 @@ async function handleRequest(req, res) {
       return send(200, out);
     } catch (e) { return send(500, { error: String(e.message || e).slice(0, 200) }); }
   }
+  // X6（2026-09-22）：/sharing/bundle/lark 会真的在飞书里建一份文档，原来只认口令。
+  // 在这里先把「人点过确认」这一条闸关上，再把请求交给 share-bundles（那边的 larkStatus / running
+  // 已经自带「同一个 key 不重跑」，不再叠第二套幂等）。为了不吞掉请求体，读完之后原样回放给它。
+  if(p.replace(/^\/asr-relay/,'')==='/sharing/bundle/lark' && req.method==='POST'){
+    const send=(code,j)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
+    if(!authed){send(401,{error:'请连接 Mac'});return;}
+    let raw=''; try{ for await (const c of req){ raw+=c; if(Buffer.byteLength(raw)>1e6) throw Error('请求过长'); } }catch(e){ send(400,{error:e.message}); return; }
+    let body={}; try{ body=JSON.parse(raw||'{}'); }catch(e){ send(400,{error:'格式不对'}); return; }
+    try{ sendGate.requireConfirmed(body); }catch(e){ send(400,{error:e.message}); return; }
+    const replay=Object.create(req);   // method / headers / url 走原型链拿原来那份，只把「读body」换成回放
+    replay[Symbol.asyncIterator]=async function*(){ yield raw; };
+    if(await shareBundles.route(replay,res,u,authed))return;
+    return;
+  }
   if(p.replace(/^\/asr-relay/,'').startsWith('/sharing/bundle') && await shareBundles.route(req,res,u,authed))return;
   if(p.endsWith('/sharing/lark') && req.method==='POST'){
     const send=(status,j)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
@@ -1788,10 +1803,14 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
     const sid = String(j.id || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
     const cardId = String(j.cardId || ''); if (!/^c-[0-9a-f]{12}$/.test(cardId)) return reply(400, { ok:false, error:'卡片编号不对' });
+    // X6 / 21（2026-09-22）：do:'send' 是这条路上唯一会真外发的动作（建日历、派飞书任务）。
+    // 「人在界面上点了确认」必须由请求带进来，服务端不再自己假设；没带就 400，一个工具都不调。
+    // 幂等在 actions.apply 里：已经是 sent 的卡不再发第二遍（连点两下 / 断线重试都只发一次）。
+    if (String(j.do || '') === 'send' && j.confirmed !== true) return reply(400, { ok:false, error:'请在界面上确认后再发送（服务端没收到确认）' });
     try {
       const out = await withMeetingLock(sid, () => actions.apply({
         dir: ACTIONS_DIR, sessionId: sid, cardId, action: String(j.do || ''), draft: j.draft,
-        env: loadEnv(), log, hub: workHub && workHub.hub, dataDir: DATA,
+        env: loadEnv(), log, hub: workHub && workHub.hub, dataDir: DATA, confirmed: j.confirmed === true,
       }));
       log('meeting-action ' + sid + ' ' + cardId + ' ' + j.do);
       return reply(200, { ok:true, card: out.card, actions: out.actions });
@@ -1875,18 +1894,28 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const parts = []; let size = 0;
     for await (const c of req) { parts.push(c); size += c.length; if (size > 20000) return reply(413, { ok: false, error: '请求太长' }); }
     let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+    // 没有确认就 400，且在这之前不读会议、不拼正文、不碰任何外发命令
+    if (j.confirmed !== true) return reply(400, { ok: false, error: '请在界面上确认后再发送（服务端没收到确认）' });
     try {
       const sess = loadSession(String(j.id || ''));
       try { await calendarMatch(sess); } catch (e) {}
       const md = share.buildMarkdown(sess, noteOf(sess));
       const to = String(j.target || '');
-      let r = null;
-      if (to === 'lark') r = await share.sendLark(md, String(j.chatId || 'self'), loadEnv().THT_ARCHIVE_OWNER_ID || '');
-      else if (to === 'slack') r = await share.sendSlack(md, String(j.channel || 'self'));
-      else return reply(400, { ok: false, error: '不认识这个去处' });
-      log('分享成功 ' + to + ' ' + (j.chatId || j.channel || 'self') + (r && r.attached === false ? '（附件没发成：' + r.why + '）' : ''));
+      const where = String(j.chatId || j.channel || 'self');
+      if (!['lark', 'slack'].includes(to)) return reply(400, { ok: false, error: '不认识这个去处' });
+      // X6（2026-09-22）：这条是真外发（飞书私聊 / Slack 频道）。之前只认口令，服务端查不出人点没点确认，
+      // 而且同一份纪要连点两下会真发两遍。门禁和 /sharing/slack/send 同一套，见 app/send-gate.js。
+      const r = await sendGate.send({
+        dataDir: DATA, kind: 'share-send', body: j, meta: { target: to, where, id: sess.id },
+        key: [to, where, sess.id, sendGate.hash(md)],
+        run: () => to === 'lark'
+          ? share.sendLark(md, where, loadEnv().THT_ARCHIVE_OWNER_ID || '')
+          : share.sendSlack(md, where),
+      });
+      if (r.alreadySent) { log('分享跳过（这份内容已发过）' + to + ' ' + where); return reply(200, { ok: true, where: to, attached: r.attached !== false, why: r.why || '', alreadySent: true }); }
+      log('分享成功 ' + to + ' ' + where + (r && r.attached === false ? '（附件没发成：' + r.why + '）' : ''));
       return reply(200, { ok: true, where: to, attached: !(r && r.attached === false), why: (r && r.why) || '' });
-    } catch (e) { log('分享失败 ' + e.message); return reply(200, { ok: false, error: String(e.message).slice(0, 300) }); }
+    } catch (e) { log('分享失败 ' + e.message); return reply(200, { ok: false, error: String(e.message).slice(0, 300), uncertain: !!e.uncertain }); }
   }
   // 会后过一遍：保存你对收敛结果的逐条判断，并落两份产物
   if (p.endsWith('/review')) {

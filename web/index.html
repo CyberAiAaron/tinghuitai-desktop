@@ -3378,7 +3378,7 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
     if(j.status!=='done'||!j.bundle) return {ok:false,error:j.error||'分享包生成超时'};
     if(kind==='lark_doc'){
       progress(ui==='en'?'Creating the Feishu document…':'正在建飞书文档（正文 + 两份附件）…');
-      await fetch(relayBase()+'/sharing/bundle/lark?key='+key+'&token='+tok,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+      await fetch(relayBase()+'/sharing/bundle/lark?key='+key+'&token='+tok,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({confirmed:true})});
       for(let i=0;i<120;i++){ await new Promise(res=>setTimeout(res,3000)); j=await (await fetch(relayBase()+'/sharing/bundle?key='+key+'&token='+tok,{cache:'no-store'})).json(); if(j.larkStatus==='done'||j.larkStatus==='error') break; }
       if(j.larkStatus!=='done') return {ok:false,error:j.error||'飞书文档没建成'};
       return {ok:true,summary:ui==='en'?'Feishu document created (private to you; share it from the doc).':'飞书文档已建好（只有你能看，要给别人在文档里开权限）',link:j.url};
