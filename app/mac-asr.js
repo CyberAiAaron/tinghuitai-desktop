@@ -29,9 +29,7 @@ class MacAsr {
           const line=this.buf.slice(0,i); this.buf=this.buf.slice(i+1);
           if(!authed){ if(line.trim()!==this.token){ this.log('本机转写握手不对，断开'); sock.destroy(); return; } authed=true; this.sock=sock; continue; }
           let j; try{ j=JSON.parse(line); }catch(e){ continue; }
-          if(j.type==='final'&&this.dead&&this.onFinalWhileDraining){ const cb=this.onFinalWhileDraining; this.onFinalWhileDraining=null; this.onResult(j); setTimeout(cb,300); continue; }
-          if(j.type==='ready'){ this.ready=true; if(this.timeout){clearTimeout(this.timeout);this.timeout=null;} this.log('本机转写就绪 '+j.text+(j.onDevice?'（离线）':'（需联网）')+'，补上等待期间的 '+Math.round(this.pendingBytes/32000)+' 秒音频'); this.flush(); continue; }
-          this.onResult(j);
+          this.accept(j);
         }
       });
       sock.on('close',()=>{ this.sock=null; this.ready=false; if(!this.dead) this.onExit(); });
@@ -47,6 +45,17 @@ class MacAsr {
         if(!this.ready&&!this.dead) this.reap(), this.onResult({type:'fatal',text:'本机转写没连上。第一次用要先在弹出的窗口点「允许」；如果没看到弹窗，去「系统设置 → 隐私与安全性 → 语音识别」里打开「听会台转写」。'});
       },10000);
     });
+  }
+  // 一条已经解析好的结果怎么处理。单独成方法是为了能不起真进程就测它：
+  // start() 会用 open -a 拉起一个 .app，测试里不能真跑。
+  accept(j){
+    if(j.type==='final'&&this.dead&&this.onFinalWhileDraining){ const cb=this.onFinalWhileDraining; this.onFinalWhileDraining=null; this.onResult(j); setTimeout(cb,300); return; }
+    if(j.type==='ready'){ this.ready=true; if(this.timeout){clearTimeout(this.timeout);this.timeout=null;} this.log('本机转写就绪 '+j.text+(j.onDevice?'（离线）':'（需联网）')+'，补上等待期间的 '+Math.round(this.pendingBytes/32000)+' 秒音频'); this.flush(); return; }
+    // 真收到一句转写才算这条连接是好的，重连计数清零（判据抄 deepgram-asr.js 的 retries）。
+    // 原来只增不减：两小时的会里零星断开 5 次就永久停用本机转写，后半场一个字都不留。
+    // 不在 ready 时清零——那会让「连上就被踢」变成无限重连。
+    if(j.type==='final'&&String(j.text||'').trim()) this.restarts=0;
+    this.onResult(j);
   }
   onExit(){
     if(this.dead) return;
