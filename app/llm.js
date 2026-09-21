@@ -66,8 +66,11 @@ const ADAPTERS = {
   },
 };
 
-async function ask(env, { kind = 'post', system = '', user = '', maxTokens, dataDir, log = () => {}, fetchImpl } = {}) {
-  const chain = chainOf(env), attempts = [];
+// noFallback：这一次只许走链上第一家（本机已登录的命令行），不许降到云端接口。
+// 给那些要把团队名单、项目文件、事实源原文塞进 prompt 的调用用——这些内容不该离开这台机器。
+// 第一家不成就直接失败，调用方按「这次没生成出来」显示，绝不悄悄换一家发出去。
+async function ask(env, { kind = 'post', system = '', user = '', maxTokens, dataDir, log = () => {}, fetchImpl, noFallback = false } = {}) {
+  const chain = noFallback ? chainOf(env).slice(0, 1) : chainOf(env), attempts = [];
   if (!chain.length) return { text: null, errorCode: 'no_provider', degraded: false, attempts };
   for (const p of chain) {
     const model = pickModel(p, kind);
