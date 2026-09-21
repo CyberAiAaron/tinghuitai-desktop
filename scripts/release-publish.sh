@@ -1,11 +1,15 @@
 #!/bin/bash
 # 发行仓发布：走 PR 合入 main，不再管理员直推（Aaron 2026-09-16 定「留」PR 规则）。
 # 用法: scripts/release-publish.sh <版本> [--dry-run]
-# 前提: /tmp/tinghuitai-desktop-v<版本>.zip 已通过 check-package.sh；version.json/CHANGELOG.json 已更新。
+# 前提: /tmp/tinghuitai-desktop-v<版本>.zip 已通过 check-package.sh；CHANGELOG.json 已更新。
+# version.json 的 sha256 / size / zip / version 不用手填，下面按真 zip 盖一遍。
 set -euo pipefail
 V="${1:?用法: release-publish.sh <版本> [--dry-run]}"; DRY="${2:-}"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 ZIP="/tmp/tinghuitai-desktop-v${V}.zip"; [ -f "$ZIP" ] || { echo "❌ 缺 $ZIP"; exit 1; }
+# updater.js 现在要求 sha256 必填（审查 X4）。手填这一格漏过、或停在上一版，装机端就只会看到
+# 「更新包没有校验值」。按真 zip 算一遍写进去，正常发版不会被自己拦住。
+node "$SRC/scripts/stamp-release.js" "$V" "$ZIP" "$SRC/version.json"
 export GH_CONFIG_DIR="$HOME/.config/gh"
 WORK=/tmp/rel-$V; mkdir -p "$WORK"
 for R in CyberAiAaron GitAaronW; do
