@@ -256,7 +256,7 @@
           state.deletedIds = (state.deletedIds||[]).filter(x => String(x) !== String(id));
           persist();
           try {   // 服务端文件回来了，本机这份也要补回去，否则导出/助手/编辑都用不了
-            const er = await fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(8000)});
+            const er = await fetch(relayBase()+'/export-state?ids='+encodeURIComponent(id)+'&token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(8000)});
             if (er.ok) { const d = await er.json(); const back = (d.sessions||[]).find(x => String(x.id) === String(id));
               if (back && !state.sessions.some(s => String(s.id) === String(id))) { state.sessions.push(normalizeSession(back)); persist(); } }
           } catch(e){}

@@ -37,7 +37,7 @@
       pull.onclick = async () => { pull.disabled = true; try { await pullFromMac($('#resume-rec')); closeSheets(); await refreshBoard(); openSheet('#sh-hist'); } catch(e){} finally { pull.disabled = false; } };
       openSheet('#sh-resume');
     }
-    updateStatusIdle(); uploadPending(); viewerConnect(); autoPickMic(); pullPostCards(); if(ok&&!cur)fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||'')).then(r=>r.ok?r.json():null).then(j=>{if(!cur&&j?.sessions?.length){cur=j.sessions.map(normalizeSession).sort((a,b)=>b.start-a.start)[0];state.sessions.push(cur);persist();resetSigs();render();try{renderPostCards();}catch(e){}}}).catch(()=>{});
+    updateStatusIdle(); uploadPending(); viewerConnect(); autoPickMic(); pullPostCards(); if(ok&&!cur)fetch(relayBase()+'/export-state?latest=1&token='+encodeURIComponent(cfg.relayToken||'')).then(r=>r.ok?r.json():null).then(j=>{if(!cur&&j?.sessions?.length){cur=j.sessions.map(normalizeSession).sort((a,b)=>b.start-a.start)[0];state.sessions.push(cur);persist();resetSigs();render();try{renderPostCards();}catch(e){}}}).catch(()=>{});
   });
   setInterval(() => { if (!running) checkMac().then(()=>{ updateStatusIdle(); viewerConnect();uploadPending(); }); }, 60000);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});

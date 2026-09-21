@@ -852,7 +852,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   async function pullFromMac(msgEl){
     const m = msgEl || $('#hist-msg'); if (m) m.textContent = T('pull_wait')||'从 Mac 找回中……';
     try {
-      const r = await fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store'});
+      // 「从 Mac 找回」要把每一场的全文搬回本机，所以这一条显式要全量（D6 之后默认不带逐字稿）
+      const r = await fetch(relayBase()+'/export-state?full=1&token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store'});
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
       const have = new Set(state.sessions.map(x=>x.id));
@@ -1992,7 +1993,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
           state.deletedIds = (state.deletedIds||[]).filter(x => String(x) !== String(id));
           persist();
           try {   // 服务端文件回来了，本机这份也要补回去，否则导出/助手/编辑都用不了
-            const er = await fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(8000)});
+            const er = await fetch(relayBase()+'/export-state?ids='+encodeURIComponent(id)+'&token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(8000)});
             if (er.ok) { const d = await er.json(); const back = (d.sessions||[]).find(x => String(x.id) === String(id));
               if (back && !state.sessions.some(s => String(s.id) === String(id))) { state.sessions.push(normalizeSession(back)); persist(); } }
           } catch(e){}
@@ -3790,7 +3791,7 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
       pull.onclick = async () => { pull.disabled = true; try { await pullFromMac($('#resume-rec')); closeSheets(); await refreshBoard(); openSheet('#sh-hist'); } catch(e){} finally { pull.disabled = false; } };
       openSheet('#sh-resume');
     }
-    updateStatusIdle(); uploadPending(); viewerConnect(); autoPickMic(); pullPostCards(); if(ok&&!cur)fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||'')).then(r=>r.ok?r.json():null).then(j=>{if(!cur&&j?.sessions?.length){cur=j.sessions.map(normalizeSession).sort((a,b)=>b.start-a.start)[0];state.sessions.push(cur);persist();resetSigs();render();try{renderPostCards();}catch(e){}}}).catch(()=>{});
+    updateStatusIdle(); uploadPending(); viewerConnect(); autoPickMic(); pullPostCards(); if(ok&&!cur)fetch(relayBase()+'/export-state?latest=1&token='+encodeURIComponent(cfg.relayToken||'')).then(r=>r.ok?r.json():null).then(j=>{if(!cur&&j?.sessions?.length){cur=j.sessions.map(normalizeSession).sort((a,b)=>b.start-a.start)[0];state.sessions.push(cur);persist();resetSigs();render();try{renderPostCards();}catch(e){}}}).catch(()=>{});
   });
   setInterval(() => { if (!running) checkMac().then(()=>{ updateStatusIdle(); viewerConnect();uploadPending(); }); }, 60000);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
