@@ -208,6 +208,8 @@ test('S8 Python 的配置由 Node 给：THT_CFG_JSON 压过裸读 settings.json�
   assert.deepEqual(emitted.match(/(\w+)\s*:/g).map(x => x.replace(/\s*:$/, '')).sort(),
     ['ARCHIVE_TARGET', 'MEMORY_PROJECTION_DIR', 'THT_ARCHIVE_OWNER_ID'], '往 Python 递的字段变了，重新核一遍有没有密钥混进去');
   assert.match(emitted, /chainLength$/);
+  // 起 Python 的两处都要递：归档队列（pump）和回看页补跑（brief），漏一处那条路就又回去裸读文件了
+  assert.equal((src.match(/THT_CFG_JSON:cfgJson\(\)/g) || []).length, 3, 'meeting-pipeline.js 里起 Python 的地方没都带上配置');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

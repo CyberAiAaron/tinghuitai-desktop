@@ -121,7 +121,7 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
  const paths=id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;return{enhanced:path.join(dir,j.key+'.job.enhanced.json'),state:path.join(dir,j.key+'.brief.json')};};
  function brief(id){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))throw Error('这场会还没整理完');const jb=list().find(x=>x.sessionId===id);if(jb&&['queued','running'].includes(jb.status))throw Error('这场会还在整理，稍后再点');if(briefRuns.has(id))return{state:'running'};
   write(p.state,{state:'running',phase:'排队',started:Date.now()/1000});
-  const c=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),'--brief',p.enhanced],{env:{...process.env,THT_PIPELINE_DIR:dir,THT_NODE:process.execPath},stdio:'ignore'});briefRuns.set(id,c);
+  const c=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),'--brief',p.enhanced],{env:{...process.env,THT_PIPELINE_DIR:dir,THT_NODE:process.execPath,THT_CFG_JSON:cfgJson()},stdio:'ignore'});briefRuns.set(id,c);
   const fail=msg=>{try{const s=read(p.state);if(s.state==='running')write(p.state,{...s,state:'failed',error:msg});}catch{}};
   c.on('error',()=>{briefRuns.delete(id);fail('整理进程未启动');});c.on('close',code=>{briefRuns.delete(id);if(code)fail('整理进程中断');});return{state:'running'};}
  function briefState(id){const p=paths(id);if(!p||!fs.existsSync(p.state))return{state:'none'};const s=read(p.state);if(s.state==='running'&&!briefRuns.has(id)&&Date.now()/1000-(s.started||0)>2400)return{...s,state:'failed',error:'整理超时'};return s;}
