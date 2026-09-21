@@ -75,6 +75,19 @@ function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}
   });
 }
 
+// 一次调用的 modelUsage 里可能同时有主模型和它内部借用的小模型（如 Haiku）；
+// 记账要记花得最多的那个，取第一个键会把 Sonnet 的调用记成 Haiku。
+function mainModel(modelUsage) {
+  let best = '', bestCost = -1;
+  for (const [name, u] of Object.entries(modelUsage || {})) {
+    const cost = Number(u && u.costUSD) || 0;
+    const tokens = (Number(u && u.inputTokens) || 0) + (Number(u && u.outputTokens) || 0) + (Number(u && u.cacheReadInputTokens) || 0) + (Number(u && u.cacheCreationInputTokens) || 0);
+    const score = cost > 0 ? cost * 1e9 : tokens;
+    if (score > bestCost) { best = name; bestCost = score; }
+  }
+  return best;
+}
+
 function parseOut(kind, out, log) {
   if (kind === 'codex') { const t = clean(kind, out); return t ? { ok: true, text: t } : { ok: false, reason: 'empty' }; }
   let d;
@@ -91,7 +104,7 @@ function parseOut(kind, out, log) {
   const u = (d && d.usage) || {};
   return {
     ok: true, text,
-    model: Object.keys((d && d.modelUsage) || {})[0] || '',
+    model: mainModel(d && d.modelUsage),
     usage: {
       in: (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
       out: u.output_tokens || 0,
@@ -124,4 +137,4 @@ async function probe(kind, dataDir) {
   return { ok: /READY/i.test(t), reason: /READY/i.test(t) ? '' : 'unexpected_reply', bin, sample: t.slice(0, 80) };
 }
 
-module.exports = { detect, findBin, ask, askDetailed, probe };
+module.exports = { detect, findBin, ask, askDetailed, probe, mainModel };

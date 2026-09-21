@@ -1001,7 +1001,17 @@ process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获
 const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,isLocal:isLocalReq,ask:deepseek,active:()=>[...SESSIONS.values()].some(s=>!s.finalized)});
 const shareBundles=require('./share-bundles')({settings});
 const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
-const server = http.createServer(async (req, res) => {
+// 任何一条路由里抛出的异常都在这里兜住：以前异常变成未处理的 Promise，请求永远不回包、页面一直转圈。
+const server = http.createServer((req, res) => {
+  handleRequest(req, res).catch(e => {
+    log('请求处理出错 ' + req.method + ' ' + String(req.url || '').split('?')[0] + ': ' + (e && e.stack || e));
+    try {
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      if (!res.writableEnded) res.end(JSON.stringify({ error: '服务内部出错，已记录到日志：' + String(e && e.message || e).slice(0, 200) }));
+    } catch (x) {}
+  });
+});
+async function handleRequest(req, res) {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || tokenOk(env0, u.searchParams.get('token')); const p = u.pathname;
   if(p.replace(/^\/asr-relay/,'').startsWith('/sharing/bundle') && await shareBundles.route(req,res,u,authed))return;
   if(p.endsWith('/sharing/lark') && req.method==='POST'){
@@ -1832,7 +1842,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
   if (req.method === 'POST' && p.endsWith('/session')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } let parts = [], size = 0, big = false; req.on('data', c => { parts.push(c); size += c.length; if (size > 5e6) { big = true; req.destroy(); } }); req.on('end', () => { const body = Buffer.concat(parts).toString('utf8'); if (big) { res.writeHead(413); return res.end('too large'); } const ok = saveOfflineSession(body); log('offline session ' + (ok ? 'saved' : 'FAIL')); res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok })); }); return; }
   if (req.method === 'POST' && p.endsWith('/archive')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } let parts = [], size = 0, big = false; req.on('data', c => { parts.push(c); size += c.length; if (size > 8e6) { big = true; req.destroy(); } }); req.on('end', () => { const body = Buffer.concat(parts).toString('utf8'); if (big) { res.writeHead(413, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'too large' })); } try { const j = JSON.parse(body || '{}'); if (!j.md && !j.session) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'need md or session' })); } const r = queueArchive(j); log('archive ' + r.target + ' queued ' + r.sid); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, ...r })); } catch (e) { log('archive exc ' + e.message); res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: e.message })); } }); return; }
   res.writeHead(404); res.end('not found');
-});
+}
 
 const wss = new WebSocket.Server({ server });  // 不限路径：funnel 子路径代理会剥掉 /asr-relay
 wss.on('connection', (ws, req) => {
