@@ -3,6 +3,9 @@
 <head>
 <script src="bootstrap.js"></script>
 <meta charset="utf-8">
+<!-- X5：口令走 query（?token=…），点开页面里的飞书/外部链接时 Referer 会把整条地址连口令一起送给对方。
+     no-referrer 让浏览器一律不发 Referer。口令改走请求头是另一件事，没做之前这条是最省的止血。 -->
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#f4f4f5">
 <meta name="mobile-web-app-capable" content="yes">
