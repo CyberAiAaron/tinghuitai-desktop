@@ -134,6 +134,10 @@ test('页面上的「依据」这一块：会议能点回那一场，没有依�
   assert.match(html, /白板 OCR 的供应商名单要用 AI 检索一遍/, '写的是凭哪句话，不是光一个编号');
   assert.match(html, /href="https:\/\/x\.feishu\.cn\/docx\/COqzdi"/, '飞书文档点得开原文');
   assert.ok(!/href="file:/.test(html), '本机文件不做成链接，浏览器点不开');
+  assert.match(html, /会议/, '来源标签写人话');
+  assert.match(html, /飞书文档/);
+  assert.match(html, /本机文件/);
+  assert.doesNotMatch(html, /local:meeting|lark:docs/, '不把工具层的内部来源码摆到页面上');
 
   const bare = ctx.draftHtml({ kind: 'research', draft: { scope: 'x', expected: 'y', refs: [] } });
   assert.doesNotMatch(bare, /依据/, '没有依据就整块不出现，不写「无」');

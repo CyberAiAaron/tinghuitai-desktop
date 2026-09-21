@@ -369,7 +369,17 @@ function refsHtml(refs){
     return '<li>'+body+(where?' <em class="bf-note">'+where+'</em>':'')+'</li>';
   }).join('')+'</ul>';
 }
-const SRC_LABEL=s=>({local:T('本机','Local'),lark:T('飞书','Feishu'),slack:'Slack',notion:'Notion'}[String(s||'')]||String(s||''));
+// 依据后面那个小标签写「东西在哪」，不是把工具层的内部来源码直接摆出来。
+// 取不到就退回前缀，再取不到就不写——宁可少一个标签，也不给他一个 local:meeting 这种字眼。
+const SRC_LABEL=s=>{
+  const v=String(s||'');
+  const full={'local:meeting':T('会议','Meeting'),'local:memory':T('会议记忆','Memory'),'local:file':T('本机文件','Local file'),
+    'local:hub':T('工作台','Work hub'),'hub:upstream':T('工作台','Work hub'),
+    'lark:docs':T('飞书文档','Feishu doc'),'lark:calendar':T('飞书日历','Feishu calendar'),'lark:task':T('飞书任务','Feishu task'),
+    'slack:search':'Slack','notion:search':'Notion','notion:blocks':'Notion'}[v];
+  if(full)return full;
+  return {local:T('本机','Local'),hub:T('工作台','Work hub'),lark:T('飞书','Feishu'),slack:'Slack',notion:'Notion'}[v.split(':')[0]]||'';
+};
 function meetingForm(d){
   const slots=d.slots||[];
   return '<label class="bf-f"><span>'+T('标题','Title')+'</span><input type="text" data-f="title" value="'+esc(d.title||'')+'"></label>'
