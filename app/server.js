@@ -976,6 +976,7 @@ function afterArchive(sid){
 const memRetryTimer=setInterval(()=>{
   try{
     if([...SESSIONS.values()].some(s=>!s.finalized))return;
+    if(LLM_HEALTH.down)return;   // 模型整段不可用时不试，免得把重试次数白白烧完
     const ops=require('./memory-ops');const ids=ops.failedMeetings(DATA,3);if(!ids.length)return;
     for(const id of ids){
       const f=path.join(PENDING_DIR,'sess-'+id+'.json');let sess=null;

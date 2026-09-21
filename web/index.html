@@ -1688,7 +1688,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   function bdState(s){
     if (s.recording || (!s.end && s.id === (cur&&cur.id) && running)) return { k:'rec', t: ui==='en'?'Recording':'录音中' };
     const st = (s.archive && s.archive.status) || '';
-    if (st === 'error') return { k:'err', t: ui==='en'?'Failed':'整理失败' };
+    const why = String((s.archive && s.archive.error) || s.summaryNote || '').replace(/\s+/g,' ').slice(0, 40);
+    if (st === 'error') return { k:'err', t: (ui==='en'?'Failed':'整理失败') + (why ? ' · ' + why : '') };
     if (st === 'queued' || st === 'running') {
       const began = Date.parse(s.archive.startedAt || '') || 0;
       const mins = began ? Math.max(0, Math.round((Date.now()-began)/60000)) : 0;
@@ -1707,6 +1708,12 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         tail += ui==='en' ? ' · long meetings take 5–15m' : ' · 长会通常 5–15 分钟';
       }
       return { k:'run', t: base + tail };
+    }
+    // P-03：归档做完但总结没出来的，以前也显示「已归档」，出了问题看不见。几句话的短录音不算失败。
+    if ((st === 'done' || st === 'partial') && s.summaryStatus === 'failed') {
+      if ((s.transcriptCount || 0) < 8) return { k:'done', t: ui==='en'?'Archived · too short to summarize':'已归档 · 太短没出总结' };
+      const note = s.summaryNote && s.summaryNote !== '已归档，但总结没出来' ? ' · ' + String(s.summaryNote).slice(0, 40) : '';
+      return { k:'err', t: (ui==='en'?'No summary':'总结没出来') + note };
     }
     if (st === 'done' || st === 'partial') return { k:'done', t: ui==='en'?'Archived':'已归档' };
     if (!s.end) return { k:'', t: ui==='en'?'Not finished':'未结束' };

@@ -337,19 +337,25 @@ function project(dataDir, outFile, log = () => {}) {
 // 列出还能再试的（最多 MAX_INGEST_ATTEMPTS 次），由服务端定时挑一场补跑。
 // 冷却 10 分钟：刚失败多半是模型正不可用，立刻重试只会连着再失败一次。
 const MAX_INGEST_ATTEMPTS = 3, RETRY_COOLDOWN_MS = 600000;
+// 09-20 实况：模型整段不可用时 3 次机会 45 分钟内全烧完，4 场会从此永远 failed。
+// 所以快试 3 次之后改成一天一次、再给 3 天；中途断掉卡在 claiming 的（进程被杀）超过 1 小时也算失败，一并捞回来。
+const MAX_TOTAL_ATTEMPTS = 6, DAILY_MS = 86400000, STALE_CLAIM_MS = 3600000;
 function failedMeetings(dataDir, limit = 5) {
   try {
     const db = mem.open(dataDir); if (!db) return [];
-    return db.prepare("SELECT meeting_id,attempts,at FROM ingested WHERE status='failed' AND COALESCE(attempts,0)<? ORDER BY at ASC LIMIT ?")
-      .all(MAX_INGEST_ATTEMPTS, limit)
-      .filter(r => Date.now() - Date.parse(r.at || 0) > RETRY_COOLDOWN_MS)
+    const now = Date.now(), age = r => now - Date.parse(r.at || 0);
+    return db.prepare("SELECT meeting_id,status,COALESCE(attempts,0) AS attempts,at FROM ingested WHERE status IN ('failed','claiming') AND COALESCE(attempts,0)<? ORDER BY at ASC")
+      .all(MAX_TOTAL_ATTEMPTS)
+      .filter(r => r.status === 'claiming' ? age(r) > STALE_CLAIM_MS
+        : age(r) > (r.attempts < MAX_INGEST_ATTEMPTS ? RETRY_COOLDOWN_MS : DAILY_MS))
+      .slice(0, limit)
       .map(r => String(r.meeting_id));
   } catch (e) { return []; }
 }
 // 补跑时发现材料已经没了（pending 文件被删、没有转写），把 attempts 加满，别让它永远占着队首名额。
 function skipRetry(dataDir, mid, why = '') {
   try { const db = mem.open(dataDir); if (!db) return;
-    db.prepare("UPDATE ingested SET attempts=?,at=? WHERE meeting_id=?").run(MAX_INGEST_ATTEMPTS, mem.now(), String(mid));
+    db.prepare("UPDATE ingested SET status='failed',attempts=?,at=? WHERE meeting_id=?").run(MAX_TOTAL_ATTEMPTS, mem.now(), String(mid));
   } catch (e) {}
 }
 module.exports = { ingest, retrieve, toPromptBlock, project, terms, sessionText, failedMeetings, skipRetry, EXTRACT_PROMPT };
