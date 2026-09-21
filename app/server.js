@@ -175,7 +175,7 @@ function markDegraded(on, reason) {
 // tier：'live' = 会中实时（Sonnet，慢模型会拖住字幕）｜'post' = 会后慢思考（Opus）。不指定按会后算，宁可慢不可蠢。
 async function deepseek(env, system, user, maxTokens, tier, trace) {
   // 名字是老的，里面已经不认品牌：按 settings 的降级链挨个试（app/llm.js）。
-  const r = await llm.ask(env, { kind: tier || 'post', system, user, maxTokens, dataDir: DATA, log });
+  const r = await llm.ask(env, { kind: tier || 'post', system, user, maxTokens, dataDir: DATA, log, fetchImpl: fetch });
   // 一把钥匙都没配不是「模型坏了」，是还没配：不计入故障计数，交给就绪条去说。
   if (r.errorCode !== 'no_provider') markLlm(!!r.text, r.errorCode || '');
   if (!r.text) return null;
