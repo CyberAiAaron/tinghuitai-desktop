@@ -253,8 +253,12 @@ function loadPart(spec, { env, dataDir, memoryBlock }) {
       return { text: r.text || '', parts: [{ key: 'project-state', title: '项目状态（凝练版）', ...meta(r) }] };
     }
     case 'core-context': {
-      const r = readOne(path.join(dataDir, 'context.md'), cap);
-      return { text: r.text || '', parts: [{ key: 'core-context', title: '项目核心记忆', ...meta(r) }] };
+      // 先去掉首尾空白再截字数：会后总结那条路一直是这个顺序（原 meeting-pipeline.py 的
+      // read_context().strip()[:3000]），顺序反过来抬头后面会多出一个空行。
+      const r = readOne(path.join(dataDir, 'context.md'), 0);
+      if (r.missing) return { text: '', parts: [{ key: 'core-context', title: '项目核心记忆', ...meta(r) }] };
+      const whole = String(r.text || '').trim(), text = cap > 0 ? whole.slice(0, cap) : whole;
+      return { text, parts: [{ key: 'core-context', title: '项目核心记忆', ...meta({ ...r, text, truncated: text.length < whole.length }) }] };
     }
     case 'meeting-memory': {
       let text = String(memoryBlock || '');

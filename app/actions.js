@@ -15,12 +15,15 @@
 // 生成、分类、打叉、撤销、存草稿都不执行任何命令。这条是硬约束，tests/action-desk.test.js 盯着它。
 const fs = require('fs'), path = require('path'), crypto = require('crypto'), { execFile } = require('child_process');
 const llm = require('./llm');
+// 本机资料（团队名单 / 项目重点 / 事实源）只从这一个入口读：哪个用途看什么、给多少字，
+// 全写在 app/context-pack.js 的那张表里，这个文件不再自己 readFileSync 设置项里的路径。
+const contextPack = require('./context-pack');
 
 const KINDS = ['meeting', 'research', 'delegate', 'self'];
 const STATES = ['open', 'dismissed', 'sent', 'claimed'];
 const MAX_RESEARCH = 3;          // 每场最多跑 3 条预研究（Aaron 09-20 定）
 const MAX_RISKS = 3;             // 风险提示每场最多 3 条，每条一行
-const FILE_CHARS = 6000;         // 团队名单 / 项目文件 / 事实源，每份截这么多字进 prompt
+// 团队名单 / 项目文件 / 事实源每份截多少字，写在 app/context-pack.js 的表里，不在这里。
 
 const keyOf = sessionId => crypto.createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 16);
 const fileOf = (dir, sessionId) => path.join(dir, keyOf(sessionId) + '.actions.json');
@@ -39,14 +42,6 @@ function writeAtomic(file, obj) {
 function readJSON(file, fallback = null) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return fallback; }
 }
-// 设置项里的路径：支持 ~ 开头，读不到就当没配，绝不抛。
-function readTextFile(p, max = FILE_CHARS) {
-  if (!p || typeof p !== 'string') return '';
-  try { return fs.readFileSync(path.resolve(p.replace(/^~(?=\/)/, process.env.HOME || '~')), 'utf8').slice(0, max); }
-  catch (e) { return ''; }
-}
-const fileList = v => (Array.isArray(v) ? v : typeof v === 'string' && v.trim() ? [v] : []).filter(x => typeof x === 'string').slice(0, 10);
-
 // ===== 分类 =====
 // 模型没回应时走这套关键词规则兜底，结果里标 classifiedBy:'rules'，界面上说得出「这是规则判的」。
 const RE_MEETING = /组织|召集|拉(?:个|一)?会|[拉找约].{0,24}(?:一起|与|和).{0,12}(?:讨论|对齐|过一遍|碰一下|开会)|约.{0,10}会|安排.{0,8}会|开.{0,4}会|对齐会|评审会|对照会|schedule a meeting|set up a meeting/i;
@@ -198,7 +193,7 @@ async function generate({ dir, sessionId, enhanced, env = {}, dataDir, attendees
   // ② 日历草稿：团队名单原文进 prompt，所以只许走本机命令行（noFallback）。
   const meetingCards = out.cards.filter(c => c.kind === 'meeting');
   if (meetingCards.length) {
-    const roster = readTextFile(env.TEAM_MEMBERS_FILE);
+    const pack = contextPack.build(env, { purpose: 'actions.calendar', dataDir });
     const known = [...new Set([...(attendees || []), ...Object.values((enhanced && enhanced.names) || {})].map(x => String(x || '').trim()).filter(Boolean))];
     const topics = (((enhanced || {}).brief || {}).overview || {}).topics || [];
     const r = await askJSON(env, {
@@ -206,7 +201,7 @@ async function generate({ dir, sessionId, enhanced, env = {}, dataDir, attendees
         + '并且严格按文件里写的约会顺序和分组规则选人：文件说先约哪一组就只约那一组，不要把互斥的两组拉进同一场会。'
         + '名单里找不到合适的人就给空数组，不要编名字，也不要写 S0/S2 这类说话人编号。'
         + '议程从本场议题里取相关的，每条一行。输出 {"drafts":[{"i":0,"title":"12字内","agenda":["..."],"attendees":["..."],"note":"一句话说清这场会要定什么"}]}',
-      user: '团队名单文件原文：\n' + (roster || '（没有配置团队名单文件）')
+      user: pack.text
         + '\n\n本场议题：' + JSON.stringify(topics.map(t => t.title))
         + '\n本场已知参会人（日历 + 已认出的说话人）：' + JSON.stringify(known)
         + '\n要拟草稿的事项：' + JSON.stringify(meetingCards.map(c => ({ i: out.cards.indexOf(c), text: c.text }))),
@@ -267,12 +262,11 @@ async function generate({ dir, sessionId, enhanced, env = {}, dataDir, attendees
   }
 
   // ⑤ 一句话思考的第一句：这场会在整条线上的位置。可能带项目文件，走本机命令行。
-  const focusFiles = fileList(env.PROJECT_FOCUS_FILES);
-  const projectText = focusFiles.map(f => readTextFile(f)).filter(Boolean).join('\n---\n').slice(0, FILE_CHARS * 2);
+  const posPack = contextPack.build(env, { purpose: 'actions.position', dataDir });
   const pos = await askJSON(env, {
     system: '用一句话（不超过 60 字）说清这场会在整条项目线上处在什么位置：它推进了什么、卡在哪一步。'
       + '只说位置，不给建议。输出 {"position":"..."}',
-    user: (projectText ? '项目现状：\n' + projectText + '\n\n' : '')
+    user: posPack.text
       + '本场结论：' + JSON.stringify((((enhanced || {}).brief || {}).overview || {}).conclusions || [])
       + '\n本场议题：' + JSON.stringify(((((enhanced || {}).brief || {}).overview || {}).topics || []).map(t => t.title)),
     maxTokens: 400, dataDir, log, noFallback: true,
@@ -288,16 +282,15 @@ async function generate({ dir, sessionId, enhanced, env = {}, dataDir, attendees
 }
 
 async function buildRisks({ env, enhanced, dataDir, log, warnings }) {
-  const files = fileList(env.FACT_SOURCE_FILES);
-  if (!files.length) return [];
-  const text = files.map(f => readTextFile(f)).filter(Boolean).join('\n---\n');
-  if (!text) { warnings.push('配了事实源文件但一份也读不到，风险提示这次没跑'); return []; }
+  const pack = contextPack.build(env, { purpose: 'actions.risks', dataDir });
+  if (!pack.configured) return [];
+  if (!pack.chars) { warnings.push('配了事实源文件但一份也读不到，风险提示这次没跑'); return []; }
   const ov = ((enhanced || {}).brief || {}).overview || {};
   const r = await askJSON(env, {
     system: '你在核对一场会的说法和已确认的事实源有没有硬冲突。只报硬冲突：会上说的和事实源里写死的互相矛盾。'
       + '措辞不同、只是没提到、还在讨论中的，都不算冲突，宁可一条都不报。每条一行，不超过 40 字，'
       + 'evidence 必须是事实源里的原话。最多 3 条。输出 {"risks":[{"text":"...","evidence":"...","link":"..."}]}',
-    user: '事实源：\n' + text + '\n\n本场结论：' + JSON.stringify(ov.conclusions || []) + '\n本场待办：' + JSON.stringify((ov.todos || []).map(t => t.what)),
+    user: pack.text + '\n\n本场结论：' + JSON.stringify(ov.conclusions || []) + '\n本场待办：' + JSON.stringify((ov.todos || []).map(t => t.what)),
     maxTokens: 1200, dataDir, log, noFallback: true,
   });
   if (!r.ok) { warnings.push('风险提示这次没跑出来（' + (r.error || '未知') + '）'); return []; }
@@ -315,14 +308,14 @@ function todayLocal(at = new Date()) {
   return at.getFullYear() + '-' + p(at.getMonth() + 1) + '-' + p(at.getDate());
 }
 async function projectFocus({ dataDir, env = {}, log = () => {}, at = new Date() }) {
-  const files = fileList(env.PROJECT_FOCUS_FILES);
-  if (!files.length) return { configured: false, items: [] };
+  const pack = contextPack.build(env, { purpose: 'actions.focus', dataDir });
+  if (!pack.configured) return { configured: false, items: [] };
   const date = todayLocal(at), file = focusFile(dataDir, date), runKey = dataDir + '|' + date;
   const cached = readJSON(file);
   if (cached && Array.isArray(cached.items)) return { configured: true, ...cached };
   if (focusRuns.has(runKey)) return focusRuns.get(runKey);
   const run = (async () => {
-    const text = files.map(f => readTextFile(f)).filter(Boolean).join('\n---\n');
+    const text = pack.text;
     if (!text) return { configured: true, date, items: [], error: '配的项目文件一份也读不到' };
     const r = await askJSON(env, {
       system: '读这些项目文件，说清这个项目现在最重要的三件事。每件一行，不超过 30 字，写成一句结论，不要标题词。'

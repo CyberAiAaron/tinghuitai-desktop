@@ -47,11 +47,14 @@ test('名字校验：空串是清掉；超长、坏编号、非文字一律拒�
 test('团队名单：只认表格第一格和加粗的人名，说明文字不当人名',()=>{
   const f=path.join(fs.mkdtempSync(path.join(os.tmpdir(),'tht-team-')),'team.md');
   fs.writeFileSync(f,'# 名单\n\n| 人 | 角色 |\n|---|---|\n| **Shawn Liu** | AI 业务负责人 |\n| Cary Luo | 项目经理 |\n| 张三 | 硬件 |\n\n这一行里 The Team 不该被当成人名的话也无所谓，它只是候选。\n');
-  const names=speakers.teamNames(f);
+  // 名单只有一份读法：app/context-pack.js 的 roster()。认人的候选按钮和处理台拟日历用的是同一份。
+  const roster=require('../app/context-pack').roster;
+  const names=roster({TEAM_MEMBERS_FILE:f}).names;
   assert.ok(names.includes('Shawn Liu')&&names.includes('Cary Luo'));
   assert.ok(!names.includes('张三'),'中文名这版抽不出来，走自填框');
-  assert.deepEqual(speakers.teamNames(''),[]);
-  assert.deepEqual(speakers.teamNames('/nope/not-here.md'),[]);
+  assert.deepEqual(roster({}).names,[]);
+  assert.deepEqual(roster({TEAM_MEMBERS_FILE:'/nope/not-here.md'}).names,[]);
+  assert.equal(roster({TEAM_MEMBERS_FILE:f}).text.includes('AI 业务负责人'),true,'原文照样能给处理台用');
 });
 
 test('前端替换是纯函数：只认编号类的 key，S21 和 USB 不受影响',()=>{

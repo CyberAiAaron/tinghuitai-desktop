@@ -1,7 +1,6 @@
 'use strict';
 // 会后一屏认人：清单是数出来的，不问模型。
 // 谁还没名字、他说了哪几句、候选人是谁——都能从转写和日历里直接算，交给模型只会多一次等待和一次瞎猜。
-const fs = require('fs'), path = require('path');
 
 const SPK_KEY = /^[A-Za-z0-9_]{1,12}$/;          // 说话人编号：聚类号（0、1、8…）或双路模式的 me / them
 const MAX_NAME = 40;
@@ -22,21 +21,8 @@ function clipLen(sec, nextSec, text) {
   return Math.max(MIN_CLIP, Math.min(MAX_CLIP, d || MIN_CLIP));
 }
 
-// 团队名单文件（settings 的 TEAM_MEMBERS_FILE）：只认两种写法——Markdown 表格的第一格、加粗的 **名字**。
-// 抽不准也没关系，它只是候选按钮，旁边一直有自填框。
-function teamNames(file) {
-  if (!file) return [];
-  let text = ''; try { text = fs.readFileSync(path.resolve(file.replace(/^~(?=\/)/, process.env.HOME || '~')), 'utf8'); } catch (e) { return []; }
-  const out = [], ok = /^[A-Z][A-Za-z.'-]{1,20}(?: [A-Z][A-Za-z.'-]{1,20}){0,2}$/;
-  const take = raw => { const n = String(raw || '').replace(/\*\*/g, '').replace(/[（(].*?[)）]/g, '').trim();
-    if (ok.test(n) && !out.includes(n)) out.push(n); };
-  for (const line of text.split('\n').slice(0, 2000)) {
-    if (/^\s*\|/.test(line)) take(line.replace(/^\s*\|/, '').split('|')[0]);
-    for (const m of line.matchAll(/\*\*([^*]{1,40})\*\*/g)) take(m[1]);
-  }
-  return out.slice(0, 40);
-}
-
+// 团队名单从 app/context-pack.js 的 roster() 来：认人的候选名和处理台拟日历用的必须是同一份名单、
+// 同一套解析，否则「名单里有这个人」在两个页面会给出两种答案。这里不再自己读文件。
 // 候选人名：这场日历的参会人排前面（最可能），团队名单补后面；已经用掉的名字不再出现。
 function candidatesFor({ attendees = [], team = [], used = [] }, max = 6) {
   const seen = new Set(used.map(x => String(x || '').trim()).filter(Boolean)), out = [];
@@ -50,6 +36,7 @@ function candidatesFor({ attendees = [], team = [], used = [] }, max = 6) {
 }
 
 // 一场会的认人清单。未命名的排前面（那是要你动手的），同组按说得多少排。
+// opts.team：团队名单里的名字（contextPack.roster(env).names），调用方给；不给就只用日历参会人。
 function list(session, opts = {}) {
   const s = session || {}, names = s.names || {};
   // start 两种写法：pending 存 ISO 字符串，归档结果存毫秒数。按类型认，认错了整列时间戳会差 55 年。
@@ -62,7 +49,7 @@ function list(session, opts = {}) {
     if (!by.has(k)) by.set(k, []);
     by.get(k).push({ i, sec: secs[i], text: String(r.text || '') });
   });
-  const team = teamNames(opts.teamFile);
+  const team = Array.isArray(opts.team) ? opts.team : [];
   const rows = [...by.entries()].map(([spk, lines]) => {
     const isSelf = spk === 'me';                          // 双路模式下麦克风那一路就是本人，这是会中就定死的，不是猜的
     const named = typeof names[spk] === 'string' && names[spk].trim() ? names[spk].trim() : '';
@@ -95,4 +82,4 @@ function clean(raw) {
   return out;
 }
 
-module.exports = { list, clean, teamNames, candidatesFor, secOf, clipLen, SPK_KEY, MAX_NAME };
+module.exports = { list, clean, candidatesFor, secOf, clipLen, SPK_KEY, MAX_NAME };
