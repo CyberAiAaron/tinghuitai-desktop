@@ -6,7 +6,8 @@
 //   [{"type":"cli","kind":"claude","models":{"live":"sonnet","post":"opus"}},
 //    {"type":"openai","name":"通义","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","keyFrom":"QWEN_API_KEY","models":{"live":"qwen-turbo","post":"qwen-max"}}]
 // 没配 LLM_CHAIN 就从老的几项设置推出来，行为和以前一样。密钥只从 settings 读（keyFrom 指字段名），不进代码。
-// 返回 { text, provider, model, usage, errorCode, degraded, degradedReason, attempts }。
+// 返回 { text, provider, model, usage, errorCode, degraded, degradedReason, attempts, truncated, truncatedChars }。
+// truncated：这一次的 user 有没有因为超过接口上限被截掉（截了多少字在 truncatedChars）。
 // 链上前面的没成、后面某家成了 → degraded=true；调用方必须让人看见，不能当成首选成功。
 // 会后那条路是 Python 写的，它不自己调模型，而是起 app/llm-cli.js 进到这里——全仓只有这一层认厂商。
 const fs = require('fs');
@@ -60,22 +61,28 @@ function pickModel(p, kind) {
 
 const ADAPTERS = {
   async cli(p, { model, system, user, dataDir, log, timeoutMs }) {
+    // 本机命令行没有这道墙（它自己按上下文窗口处理），所以这条路永远 truncated:false
     const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, timeoutMs: timeoutMs || CLI_TIMEOUT_MS });
-    if (r.ok) return { ok: true, text: r.text, model: r.model || model, usage: r.usage || null };
-    return { ok: false, errorCode: p.kind + ':' + (r.reason || 'unknown') };
+    if (r.ok) return { ok: true, text: r.text, model: r.model || model, usage: r.usage || null, truncated: false, truncatedChars: 0 };
+    return { ok: false, errorCode: p.kind + ':' + (r.reason || 'unknown'), truncated: false, truncatedChars: 0 };
   },
   async openai(p, { model, system, user, maxTokens, temperature, timeoutMs, fetchImpl }) {
+    // 超长就截，但不能悄悄截：截了多少字要顺着返回值一路带到用量账里，
+    // 不然「模型没看到后半场」会被当成模型变笨，查不出是这里剪掉的（2026-09-22 架构审查查出）。
+    const whole = String(user), cap = p.maxInput || API_INPUT_CAP;
+    const sent = whole.slice(0, cap), cutChars = whole.length - sent.length;
     try {
       const r = await (fetchImpl || fetch)(p.baseUrl + '/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + p.key, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: String(user).slice(0, p.maxInput || API_INPUT_CAP) }],
+        body: JSON.stringify({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: sent }],
           max_tokens: maxTokens || 800, temperature: temperature == null ? 0.2 : temperature, stream: false }),
         signal: AbortSignal.timeout(timeoutMs || API_TIMEOUT_MS) });
       const d = await r.json();
       const text = (((d.choices || [])[0] || {}).message || {}).content || null;
-      if (!text) return { ok: false, errorCode: 'api:' + ((d && d.error && (d.error.code || d.error.type || d.error.message)) || 'empty') };
+      if (!text) return { ok: false, errorCode: 'api:' + ((d && d.error && (d.error.code || d.error.type || d.error.message)) || 'empty'), truncated: cutChars > 0, truncatedChars: cutChars };
       const u = d.usage;
-      return { ok: true, text, model: d.model || model, usage: u ? { in: u.prompt_tokens || 0, out: u.completion_tokens || 0 } : null };
-    } catch (e) { return { ok: false, errorCode: 'api:' + String(e.message || 'error').slice(0, 60) }; }
+      return { ok: true, text, model: d.model || model, usage: u ? { in: u.prompt_tokens || 0, out: u.completion_tokens || 0 } : null,
+        truncated: cutChars > 0, truncatedChars: cutChars };
+    } catch (e) { return { ok: false, errorCode: 'api:' + String(e.message || 'error').slice(0, 60), truncated: cutChars > 0, truncatedChars: cutChars }; }
   },
 };
 
@@ -88,19 +95,20 @@ const ADAPTERS = {
 async function ask(env, { kind = 'post', system = '', user = '', maxTokens, dataDir, log = () => {}, fetchImpl,
   noFallback = false, skip = 0, timeoutMs = 0, temperature } = {}) {
   const all = chainOf(env);
-  if (!all.length) return { text: null, errorCode: 'no_provider', degraded: false, attempts: [] };
+  if (!all.length) return { text: null, errorCode: 'no_provider', degraded: false, truncated: false, truncatedChars: 0, attempts: [] };
   const skipped = noFallback ? 0 : Math.max(0, Number(skip) || 0);
   const chain = noFallback ? all.slice(0, 1) : all.slice(skipped), attempts = [];
-  if (!chain.length) return { text: null, errorCode: 'chain_exhausted', degraded: false, attempts, skipped };
+  if (!chain.length) return { text: null, errorCode: 'chain_exhausted', degraded: false, truncated: false, truncatedChars: 0, attempts, skipped };
   for (const p of chain) {
     const model = pickModel(p, kind);
     const r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature });
     if (r.ok) return { text: r.text, provider: p.label, usageProvider: p.usageProvider, model: r.model || model, usage: r.usage,
+      truncated: !!r.truncated, truncatedChars: Number(r.truncatedChars) || 0,
       degraded: attempts.length > 0 || skipped > 0, degradedReason: attempts.length ? attempts[0].errorCode : (skipped > 0 ? 'skipped' : ''), attempts, skipped };
     attempts.push({ provider: p.label, errorCode: r.errorCode });
     log(p.label + ' 没回应（' + r.errorCode + '）' + (p === chain[chain.length - 1] ? '，降级链已试完' : '，试下一家'));
   }
-  return { text: null, errorCode: attempts[attempts.length - 1].errorCode, degraded: false, attempts, skipped };
+  return { text: null, errorCode: attempts[attempts.length - 1].errorCode, degraded: false, truncated: false, truncatedChars: 0, attempts, skipped };
 }
 
 // —— 用量账本 ——
@@ -115,13 +123,18 @@ function recordUsage(dataDir, entry) {
 }
 // API 有精确 usage；本机命令行有时拿不到，按字符数估（中文约 2 字符/token），标 est:true，不冒充精确。
 // HTTP 接口连 usage 都没回就不记——估一个假的会污染账本。
-function noteUsage(dataDir, r, { system = '', user = '', tier = 'post', sessionId = '', purpose = '' } = {}) {
+// pack：这次调用递进去的那份本机资料（app/context-pack.js 的 build 结果）。
+// 账上每行记下 contextHash 和 contextParts（只留 key 和版本号），以后才回答得了
+// 「那天那场的整理，用的是哪一版总纲」。没带资料的调用这两列是空的，不是漏记。
+function noteUsage(dataDir, r, { system = '', user = '', tier = 'post', sessionId = '', purpose = '', pack = null } = {}) {
   if (!dataDir || !r || !r.text) return;
   const u = r.usage;
   if (!u && r.usageProvider === 'api') return;
+  const ctx = pack ? require('./context-pack').stamp(pack) : { contextHash: '', contextParts: [] };
   recordUsage(dataDir, { sessionId, provider: r.usageProvider, model: r.model || '',
     in: u ? u.in : Math.ceil((String(system).length + String(user).length) / 2), out: u ? u.out : Math.ceil(r.text.length / 2),
-    est: !u, tier, purpose });
+    est: !u, tier, purpose, ...ctx,
+    ...(r.truncated ? { truncated: true, truncatedChars: Number(r.truncatedChars) || 0 } : { truncated: false }) });
 }
 
 module.exports = { ask, chainOf, pickModel, recordUsage, noteUsage };

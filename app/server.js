@@ -43,17 +43,10 @@ const ENV_PATH = settings.file;
 const LOG_PATH = path.join(DATA,'events.log');
 const STATIC_DIR = path.join(__dirname,'../web');
 const INDEX_HTML = path.join(STATIC_DIR,'index.html');
-const CONTEXT_MD = path.join(DATA,'context.md');
+const contextPack = require('./context-pack');
 // 记忆投影写到哪：默认 Aaron 的项目记忆区（Cowork 的 Chansey 空间），目录不存在就退回本机数据目录。
-const MEMORY_PROJECTION_DIR = (() => {
-  // 默认写在自己的数据目录里。想让它同时出现在别的地方（例如某个 AI 助手的项目记忆目录），
-  // 自己设 THT_MEMORY_PROJECTION_DIR 或在设置里填，不在代码里写死任何人的私人路径。
-  const envDir = (process.env.THT_MEMORY_PROJECTION_DIR || '').trim();
-  if (envDir) { try { const abs = path.resolve(envDir); if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return abs; } catch (e) {} }
-  try { const cfg = (settings.load().MEMORY_PROJECTION_DIR || '').trim();
-    if (cfg) { const abs = path.resolve(cfg); if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return abs; } } catch (e) {}
-  return path.join(DATA, 'memory');
-})();
+// 定义在 app/context-pack.js（会中读 project-state.md 也要找同一个目录，两边不能各算各的）。
+const MEMORY_PROJECTION_DIR = contextPack.memoryProjectionDir(DATA);
 const PENDING_DIR = path.join(DATA,'pending');
 const replayRuns = new Set();
 const replayStates = new Map();
@@ -99,9 +92,7 @@ function localReqReason(req) {
 function loadEnv() { return settings.load(); }
 
 function readTriagePrompt() { try { const s = fs.readFileSync(INDEX_HTML, 'utf8'); const m = s.match(/const\s+TRIAGE\s*=\s*([`"'])([\s\S]*?)\1/); return m ? m[2] : ''; } catch (e) { return ''; } }
-// 「看法」的聪明来源 = 凝练的项目状态（Aaron 2026-09-17 定）：优先读记忆区的 project-state.md，没有再退回 context.md。
-function projectStatePath() { try { const c = String(settings.load().PROJECT_STATE_FILE || '').trim(); if (c) return path.resolve(c); } catch (e) {} return path.join(MEMORY_PROJECTION_DIR, 'project-state.md'); }
-function readContext() { try { const p = projectStatePath(); if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8'); } catch (e) {} try { return fs.readFileSync(CONTEXT_MD, 'utf8'); } catch (e) { return ''; } }
+// 「看法」的聪明来源 = 凝练的项目状态（Aaron 2026-09-17 定）。哪个文件、给多少字，见 app/context-pack.js 的那张表。
 const VIEW_FEEDBACK_LOG = path.join(DATA, 'state', 'view-feedback.jsonl');
 const VIEW_KINDS = new Set(['fix', 'link', 'add', 'know', 'doubt', 'ok', 'other']);
 // 复述别人的话 + 「无法核实」= 无效信息（Aaron 2026-09-17 截图指出），服务端直接丢，不给前端。
@@ -180,7 +171,7 @@ async function askModel(env, system, user, maxTokens, tier, trace) {
   if (!r.text) return null;
   markDegraded(r.degraded, r.degradedReason);
   if (trace) trace.provider = r.provider;
-  llm.noteUsage(DATA, r, { system, user, tier: tier || 'post', sessionId: (trace && trace.sessionId) || '', purpose: (trace && trace.purpose) || '' });
+  llm.noteUsage(DATA, r, { system, user, tier: tier || 'post', sessionId: (trace && trace.sessionId) || '', purpose: (trace && trace.purpose) || '', pack: (trace && trace.pack) || null });
   return r.text;
 }
 function larkPush() { /* No automatic external messages in the standalone edition. */ }
@@ -228,7 +219,7 @@ class Session {
     this.lastTriageIndex = 0; this.charsSinceTriage = 0; this.lastPushTs = 0; this.triaging = false; this.finalized = false; this.graceTimer = null;
     this.dedupSeen = new Map();   // final 幂等去重：key(见 isDuplicateFinal) -> 首次出现时间，8s 内重复的 final 只广播/入库一次（2026-09-04 0800 信 补2）
     this.spkMarks = [];   // 线上会说话人标记（页面 spk 帧：who=me|them），随 transcript 落场次；0800 信 task2，等页面上线
-    this.triagePrompt = readTriagePrompt(); this.context = readContext(); this.viewFeedback = [];
+    this.triagePrompt = readTriagePrompt(); this.viewFeedback = [];
     this.memoryBlock = '';
     try { const ops = require('./memory-ops');
       const q = [startMsg.title||'', Object.values(startMsg.names||{}).join(' '), startMsg.brief||''].join(' ');
@@ -661,7 +652,7 @@ class Session {
     this.triaging = true; const t0 = Date.now();
     let recentForDeep = '', segIdsForDeep = [], epochForDeep = this.editEpoch || 0;
     try {
-      this.context = readContext(); const contextVersion=this.brief;const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
+      const contextVersion=this.brief;const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
       const epochAtStart = this.editEpoch || 0;
       const segIds = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).map(x=>x.id).filter(Boolean);
       segIdsForDeep = segIds; epochForDeep = epochAtStart;
@@ -683,7 +674,10 @@ class Session {
       const fbLines = (this.viewFeedback || []).slice(-12).map(x => `- [${x.rating}] ${x.kind || ''}：${x.claim}${x.comment ? '（他说：' + x.comment + '）' : ''}`).join('\n');
       const fbBlock = fbLines ? `\n\n【他对你之前看法的反馈（useless 的这类少给，useful/adopt 的这类多给，comment 是他的原话）】\n${fbLines}` : '';
       const userReminder = enUI ? '\n\n(Reminder: write all text/claim/note fields in English.)' : '';
-      const raw = await askModel(this.env, sys, `【项目状态（凝练版，看法以此为准）】\n${this.context.slice(0, 9000)}${this.memoryBlock||''}${fbBlock}\n\n【已有条目】${existed}\n\n【最新转写】\n${recent}${userReminder}`, 2000, 'live', { sessionId: this.id, purpose: 'triage' });
+      // 本机资料（项目状态 + 本场检索到的会议记忆 + 上次已发出的事）只从这一个入口出去，
+      // 带了哪几份、哪一版会跟着这次调用记进用量账（app/context-pack.js）。
+      const pack = contextPack.build(this.env, { purpose: 'live', dataDir: DATA, session: this, meetingId: this.id });
+      const raw = await askModel(this.env, sys, `${pack.text}${fbBlock}\n\n【已有条目】${existed}\n\n【最新转写】\n${recent}${userReminder}`, 2000, 'live', { sessionId: this.id, purpose: 'triage', pack });
       if (!raw || this.brief!==contextVersion) { this.triaging = false; return; }
       let j = null; const cleaned = raw.replace(/^```json?|```$/g, '').trim(); try { j = JSON.parse(cleaned); } catch (e) { j = salvageJson(cleaned); if (j) log('triage JSON 被截断，已抢救部分条目 ' + this.id); }
       if (j) {
@@ -1057,6 +1051,24 @@ const server = http.createServer((req, res) => {
 });
 async function handleRequest(req, res) {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || tokenOk(env0, u.searchParams.get('token')); const p = u.pathname;
+  // 「这次整理用了哪些资料」：只读，给以后界面上那一栏用（本轮不做界面）。
+  // 默认只回元数据（哪几块、哪一版、多少字、截没截），要全文得显式 &full=1——
+  // 资料原文里有项目内部内容，不该因为一次随手 GET 就整段吐出来。
+  if (p.replace(/^\/asr-relay/,'') === '/context-pack' && req.method === 'GET') {
+    const send = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (!authed) return send(401, { error: '请连接 Mac' });
+    const purpose = u.searchParams.get('purpose') || '';
+    if (!contextPack.PURPOSES.includes(purpose)) return send(400, { error: '没有这个用途', purposes: contextPack.PURPOSES });
+    try {
+      const id = u.searchParams.get('id') || '';
+      const sess = id ? SESSIONS.get(id) : null;
+      const pack = contextPack.build(env0, { purpose, dataDir: DATA, session: sess, meetingId: id });
+      const out = { purpose, title: pack.title, hash: pack.hash, chars: pack.chars, truncated: pack.truncated,
+        configured: pack.configured, parts: pack.parts };
+      if (u.searchParams.get('full') === '1') out.text = pack.text;
+      return send(200, out);
+    } catch (e) { return send(500, { error: String(e.message || e).slice(0, 200) }); }
+  }
   if(p.replace(/^\/asr-relay/,'').startsWith('/sharing/bundle') && await shareBundles.route(req,res,u,authed))return;
   if(p.endsWith('/sharing/lark') && req.method==='POST'){
     const send=(status,j)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
@@ -1701,7 +1713,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       const attendees = [...(ev.attendees || []), ...((readTitles()[String(sid)] || {}).participants || [])];
       return { session: { ...(enhanced || pend), names }, file, hasEnhanced: !!enhanced, attendees };
     };
-    const listOf = ctx => speakers.list(ctx.session, { attendees: ctx.attendees, teamFile: loadEnv().TEAM_MEMBERS_FILE });
+    const listOf = ctx => speakers.list(ctx.session, { attendees: ctx.attendees, team: contextPack.roster(loadEnv()).names });
     if (req.method === 'GET' && p.endsWith('/meeting-speakers')) {
       const sid = String(u.searchParams.get('id') || ''); if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok:false, error:'会议编号不对' });
       const ctx = ctxOf(sid); if (!ctx) return reply(404, { ok:false, error:'找不到这场会议' });
@@ -2051,6 +2063,15 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,applied:result.applied,skipped:result.skipped,saved}));
       }
       else if (msg.type === 'spk') { if (session) session.applySpk(msg); }
+      // 只在测试进程里存在（THT_TEST）：灌一条 final，按需立刻跑一次分诊。
+      // 会中分析的 prompt 要有 ASR 出的 final 才拼得出来，测试里没有真 ASR，
+      // 金样测试（tests/context-golden.test.js）靠这个口子抓「真正发出去的那份 system + user」。
+      else if (msg.type === '__test_final' && process.env.THT_TEST) {
+        if (session) {
+          session.onMacResult({ type: 'final', text: String(msg.text || '') });
+          if (msg.triage) Promise.resolve(session.runTriage()).then(() => { try { ws.send(JSON.stringify({ type: '__test_triaged' })); } catch (e) {} });
+        }
+      }
       else if (msg.type === 'end') { if (session) {if(typeof msg.notes==='string')session.notes=msg.notes.slice(0,20000);if(msg.outline&&role==='speaker'&&!isView)session.setOutline(msg.outline);session.applyTranscriptEdits(msg.transcriptEdits);session.browserGapSeconds=Math.max(0,Math.min(Number(msg.browserGapSeconds)||0,86400));session.finalize('end 帧');} }
     } else if (session && role === 'speaker') { session.sendAudio(resamplePCM16(data, rate, 16000)); }
   });
