@@ -45,3 +45,76 @@ test('the loss gate catches emptied fields, shortened desktop content and droppe
   assert.equal(losses.length, 3);
   assert.ok(losses.some(l => l.includes('url 变空'))); assert.ok(losses.some(l => l.includes('transcript 变短'))); assert.ok(losses.some(l => l.includes('丢记录')));
 });
+
+// —— D10：服务在跑的时候不许 --write ——
+// 服务内存里揣着合并前那份数据，几分钟后一次 save() 就把合并结果整份盖回去，而且不报错。
+// 另外 Hub.save() 的临时文件也叫 work-hub.json.tmp，和这个脚本原来用的名字撞了。
+const fs = require('fs'), os = require('os'), path = require('path');
+const { spawn, spawnSync } = require('child_process');
+const { livingServer, pidFilesFor, tmpFor } = require('../scripts/merge-work-hub.js');
+const SCRIPT = path.join(__dirname, '..', 'scripts', 'merge-work-hub.js');
+
+// 摆一份「数据目录/state/work-hub.json」，pid 文件按 launch.js 的位置放在数据目录下
+function stage() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tht-merge-'));
+  const state = path.join(dir, 'state'); fs.mkdirSync(state);
+  const target = path.join(state, 'work-hub.json'), source = path.join(dir, 'old.json');
+  fs.writeFileSync(target, JSON.stringify(hub({ sources: [{ id: 's1', title: '桌面版有的' }] })));
+  fs.writeFileSync(source, JSON.stringify(hub({ sources: [{ id: 's2', title: '旧库独有的' }] })));
+  return { dir, target, source, pidFile: path.join(dir, 'server.pid'),
+    clean: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {} } };
+}
+const run = (s, ...args) => spawnSync(process.execPath, [SCRIPT, s.source, s.target, ...args], { encoding: 'utf8' });
+
+test('pid 文件找的是数据目录和 state 两处，和 launch.js 写的位置对得上', () => {
+  const files = pidFilesFor('/x/y/state/work-hub.json');
+  assert.deepEqual(files, ['/x/y/state/server.pid', '/x/y/server.pid']);
+});
+
+test('临时文件带自己的 pid，不和 Hub.save() 的 work-hub.json.tmp 撞名', () => {
+  const t = tmpFor('/x/y/work-hub.json');
+  assert.ok(t.includes(String(process.pid)), t);
+  assert.notEqual(t, '/x/y/work-hub.json.tmp');
+});
+
+test('pid 文件是上一次留下的死号、或被别的程序占了，都不算服务还活着', () => {
+  const s = stage();
+  try {
+    fs.writeFileSync(s.pidFile, '4242');
+    assert.equal(livingServer(s.target, { isAlive: () => false, command: () => '' }), null, '进程早没了');
+    assert.equal(livingServer(s.target, { isAlive: () => true, command: () => '/usr/bin/vim 笔记.md' }), null, 'pid 被别人复用');
+    const live = livingServer(s.target, { isAlive: () => true, command: () => '/usr/bin/node /somewhere/app/server.js' });
+    assert.equal(live && live.pid, 4242);
+  } finally { s.clean(); }
+});
+
+test('服务还活着：--write 被拒、目标库一个字没改；停了之后同一条命令就能写', () => {
+  const s = stage();
+  // 一个真的在跑、命令行里带 server.js 的进程（只是个睡着的脚本，不是真服务）
+  const fake = path.join(s.dir, 'app'); fs.mkdirSync(fake);
+  fs.writeFileSync(path.join(fake, 'server.js'), 'setTimeout(()=>{},30000);\n');
+  const child = spawn(process.execPath, [path.join(fake, 'server.js')], { stdio: 'ignore' });
+  try {
+    fs.writeFileSync(s.pidFile, String(child.pid));
+    const before = fs.readFileSync(s.target, 'utf8');
+
+    const dry = run(s);                                  // 试跑不受影响
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout, /这是试跑/);
+    assert.equal(fs.readFileSync(s.target, 'utf8'), before);
+
+    const blocked = run(s, '--write');
+    assert.equal(blocked.status, 3, '服务在跑就该拒绝：' + blocked.stderr);
+    assert.match(blocked.stderr, /服务还在跑/);
+    assert.equal(fs.readFileSync(s.target, 'utf8'), before, '被拒时一个字节都不许改');
+
+    child.kill('SIGKILL');
+    const t0 = Date.now();
+    while (Date.now() - t0 < 5000) { try { process.kill(child.pid, 0); } catch (e) { break; } }
+    const ok = run(s, '--write');
+    assert.equal(ok.status, 0, ok.stderr);
+    const after = JSON.parse(fs.readFileSync(s.target, 'utf8'));
+    assert.deepEqual(after.sources.map(x => x.id).sort(), ['s1', 's2'], '停了之后正常合并');
+    assert.deepEqual(fs.readdirSync(path.dirname(s.target)).filter(n => n.endsWith('.tmp')), [], '临时文件要收干净');
+  } finally { try { child.kill('SIGKILL'); } catch (e) {} s.clean(); }
+});

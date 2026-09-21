@@ -11,7 +11,11 @@
 //      旧库同名字段多半是原始转写堆。
 //   4. 写之前逐条逐字段对回两份原库：有值变空、或桌面版内容变短，一条都不许有，否则拒写。
 // 旧库 = 3101 那份，目标库 = 桌面版那份（服务要留的那一侧）。两份原库都不删，写前另存备份。
-const fs = require('fs');
+//
+// D10：服务在跑的时候不许 --write。服务内存里揣着一份旧数据，5 分钟后的一次 save() 会把整库
+// 照它自己那份重写一遍，合并结果就这么没了，而且不报错。另外 Hub.save() 用的临时文件是
+// `work-hub.json.tmp`，和这里原来的名字一模一样，两边同时写还会互相踩。
+const fs = require('fs'), path = require('path'), { execFileSync } = require('child_process');
 
 const COLLECTIONS = ['tasks', 'workItems', 'projects', 'events', 'sources', 'knowledgeNodes'];
 const CONTENT = new Set(['transcript', 'body', 'summary', 'highlights', 'todos', 'factchecks', 'text', 'note']);
@@ -83,13 +87,48 @@ function findLosses(a, b, merged) {
   return losses;
 }
 
-module.exports = { mergeHubs, findLosses, mergeRecord, populated };
+// 谁在看着这份库：launch.js 把服务的真实 pid 写在数据目录的 server.pid 里。
+// 目标库是 <数据目录>/state/work-hub.json，所以 pid 文件要么和它同级、要么在上一层。
+function pidFilesFor(hubPath) {
+  const dir = path.dirname(path.resolve(hubPath));
+  return [path.join(dir, 'server.pid'), path.join(path.dirname(dir), 'server.pid')];
+}
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const commandOf = pid => { try { return execFileSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim(); } catch (e) { return ''; } };
+// 返回「还活着的那个服务」或 null。pid 文件常常是上一次留下的死号，所以三件事都要对上：
+// 文件里是个像样的 pid、进程还在、并且那个进程确实是听会台（pid 会被别的程序复用）。
+function livingServer(hubPath, { isAlive = alive, command = commandOf } = {}) {
+  for (const file of pidFilesFor(hubPath)) {
+    let pid;
+    try { pid = Number(String(fs.readFileSync(file, 'utf8')).trim()); } catch (e) { continue; }
+    if (!Number.isInteger(pid) || pid <= 1) continue;
+    if (!isAlive(pid)) continue;
+    const cmd = command(pid);
+    if (cmd && !/server\.js/.test(cmd)) continue;      // pid 被别人占了，不是听会台
+    return { pid, file, command: cmd };
+  }
+  return null;
+}
+// 合并落盘用的临时文件。带上自己的 pid，和 Hub.save() 的 work-hub.json.tmp 区分开。
+const tmpFor = hubPath => hubPath + '.merge-' + process.pid + '.tmp';
+
+module.exports = { mergeHubs, findLosses, mergeRecord, populated, livingServer, pidFilesFor, tmpFor };
 
 function main() {
   const args = process.argv.slice(2);
   const write = args.includes('--write');
   const [oldPath, newPath] = args.filter(x => !x.startsWith('--'));
   if (!oldPath || !newPath) { console.error('用法: node scripts/merge-work-hub.js <旧库.json> <目标库.json> [--write]'); process.exit(2); }
+  // 试跑不碰文件，随时可以跑；真要写就必须先确认没有服务揣着旧数据在等着把它盖回去。
+  if (write) {
+    const live = livingServer(newPath);
+    if (live) {
+      console.error('目标库对应的服务还在跑（pid ' + live.pid + '，见 ' + live.file + '），没有写入。\n' +
+        '它内存里是合并前那份数据，几分钟后一次 save() 就会把合并结果整份盖掉。\n' +
+        '先停掉那个服务再跑；只想看结果就去掉 --write。');
+      process.exit(3);
+    }
+  }
   const a = read(oldPath), b = read(newPath);
   const { merged, parts } = mergeHubs(a, b);
   for (const name of COLLECTIONS) {
@@ -109,7 +148,7 @@ function main() {
   if (!write) { console.log('\n这是试跑，没有写任何文件。确认无误后加 --write。'); return; }
   const backup = newPath + '.before-merge-' + Date.now() + '.json';
   fs.copyFileSync(newPath, backup);
-  const tmp = newPath + '.tmp';
+  const tmp = tmpFor(newPath);
   fs.writeFileSync(tmp, JSON.stringify(merged));
   fs.renameSync(tmp, newPath);
   console.log('\n已写入 ' + newPath + '\n合并前那份备份在 ' + backup + '\n旧库 ' + oldPath + ' 原样保留，没有改动。');
