@@ -39,6 +39,11 @@ class Hub{
  for(const source of this.data.sources)if(!source.projectId&&!source.projectManual){const group=groups.find(g=>g[2].test(source.title+' '+(source.category||'')));if(group){source.projectId='p-'+group[0];source.projectAuto=true;source.revision++;}}
  for(const task of this.data.tasks)if(!task.projectId&&!task.projectManual){const group=groups.find(g=>g[2].test(task.text));const src=this.data.sources.find(s=>task.sourceIds.includes(s.id)&&s.projectId);if(group||src){task.projectId=group?'p-'+group[0]:src.projectId;task.projectAuto=true;task.revision++;}}
  }
+ // 会后认人确认完，把这场的 S 编号→人名挂到这场对应的 source 上。
+ // 只存映射不改 tasks 原文：认错了改回来，显示层跟着变，存盘的原话一直是原话。
+ applySpeakerNames(sessionId,names){const s=this.data.sources.find(x=>x.key==='session:'+sessionId);if(!s)return null;
+  const clean={};for(const [k,v] of Object.entries(names||{})){if(!/^[A-Za-z0-9_]{1,12}$/.test(k))continue;const n=String(v||'').trim();if(n)clean[k]=n.slice(0,80);}
+  s.speakerNames=clean;s.revision++;s.updated=now();this.event('speaker-names',s.id,JSON.stringify(clean));this.save();return s;}
  acknowledgeRecovery(at,backup){const r=this.data.sync.recovery;if(!r||r.status!=='warning'||r.at!==at||r.backup!==backup){const e=Error('恢复记录已变化，请刷新后核对');e.status=409;throw e;}this.event('recovery-reviewed',r.backup,r.error);this.data.sync.recovery={...r,status:'acknowledged',acknowledgedAt:now()};this.save();return this.data.sync.recovery;}
  snapshot(){require('./knowledge').prepare(this);return {...this.data,sources:this.data.sources.map(({body,speakerSegments,transcript,...s})=>({...s,preview:(body||'').slice(0,160),hasBody:!!body})),events:this.data.events.slice(-100)};}
 }

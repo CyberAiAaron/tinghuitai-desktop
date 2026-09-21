@@ -83,5 +83,9 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   const value=String(text||'').trim().slice(0,40)||q.options[choice];
   for(const f of q.affects||[]){const m=/^speaker:S?(\w{1,12})$/i.exec(f);if(m&&value){e.names={...(e.names||{}),[m[1]]:value};}}
   write(p.enhanced,e);return{question:q,value,session:e};}
- const api={brief,briefState,answer,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>clearInterval(timer)};managers.set(dir,api);return api;
+ // 认人（会后一屏）把名字写进归档结果的 names。空串 = 清掉这个名字，认错了要能改回来。
+ function setNames(id,patch){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))return null;const e=read(p.enhanced);const names={...(e.names||{})};
+  for(const [k,v] of Object.entries(patch||{})){if(v)names[k]=v;else delete names[k];}
+  e.names=names;write(p.enhanced,e);return e;}
+ const api={brief,briefState,answer,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>clearInterval(timer)};managers.set(dir,api);return api;
 };
