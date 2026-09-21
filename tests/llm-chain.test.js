@@ -31,5 +31,36 @@ test('前一家失败、后一家成功 → degraded 且带第一家的原因码
 });
 test('业务代码里没有品牌分支：server.js 不再直接认 deepseek / claude 的地址和模型名',()=>{
  const src=require('fs').readFileSync(require('path').join(__dirname,'../app/server.js'),'utf8');
- assert.doesNotMatch(src,/chat\/completions/);assert.doesNotMatch(src,/\/deepseek\/i/);assert.doesNotMatch(src,/cliLlm\.askDetailed/);
+ assert.doesNotMatch(src,/chat\/completions/);assert.doesNotMatch(src,/deepseek/i);assert.doesNotMatch(src,/cliLlm\.askDetailed/);
+});
+test('跳过链上前几家（熔断）：一样出结果，但算降级；每一家的超时由调用方定',async()=>{
+ const seen=[],env={A:'a',B:'b',LLM_CHAIN:[{type:'openai',name:'甲',baseUrl:'https://a.example/v1',keyFrom:'A'},{type:'openai',name:'乙',baseUrl:'https://b.example/v1',keyFrom:'B'}]};
+ const r=await llm.ask(env,{kind:'post',system:'s',user:'u',skip:1,fetchImpl:okFetch(seen)});
+ assert.equal(r.provider,'乙');assert.equal(r.degraded,true);assert.equal(r.degradedReason,'skipped');assert.equal(r.skipped,1);
+ assert.equal(seen.length,1,'被跳过的那家一次都不该碰');assert.equal(seen[0].url,'https://b.example/v1/chat/completions');
+ assert.equal((await llm.ask(env,{system:'s',user:'u',skip:9,fetchImpl:okFetch(seen)})).errorCode,'chain_exhausted');
+ // noFallback 压过 skip：这一次只许走第一家
+ const only=await llm.ask(env,{system:'s',user:'u',skip:1,noFallback:true,fetchImpl:okFetch(seen)});
+ assert.equal(only.provider,'甲');assert.equal(only.degraded,false);
+});
+test('接口这条路：温度可以按调用方定，输入超上限先截，会后那套老规矩留住',async()=>{
+ const seen=[],env={A:'a',LLM_CHAIN:[{type:'openai',name:'甲',baseUrl:'https://a.example/v1',keyFrom:'A'}]};
+ await llm.ask(env,{system:'s',user:'x'.repeat(60000),temperature:0.1,maxTokens:3000,fetchImpl:okFetch(seen)});
+ assert.equal(seen[0].body.temperature,0.1);assert.equal(seen[0].body.max_tokens,3000);
+ assert.equal(seen[0].body.messages[1].content.length,48000,'接口这条路的输入上限搬进了适配层');
+ await llm.ask(env,{system:'s',user:'u',fetchImpl:okFetch(seen)});
+ assert.equal(seen[1].body.temperature,0.2,'不指定还是老默认');
+});
+test('用量账本只有一种行：适配层记一笔，服务端和会后管线共用',()=>{
+ const fs=require('fs'),os=require('os'),path=require('path');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tht-usage-'));
+ llm.noteUsage(dir,{text:'回答',usage:{in:12,out:3},usageProvider:'api',model:'m'},{tier:'post',sessionId:'s1',purpose:'brief'});
+ llm.noteUsage(dir,{text:'四个字',usageProvider:'claude',model:'opus'},{system:'ab',user:'cdef',tier:'post',sessionId:'s1',purpose:'summary'});
+ llm.noteUsage(dir,{text:'不记',usageProvider:'api',model:'m'},{tier:'post',sessionId:'s1',purpose:'x'});
+ const rows=fs.readFileSync(path.join(dir,'state','usage.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ assert.equal(rows.length,2,'HTTP 接口没回用量就不记，不估一个假的');
+ assert.deepEqual([rows[0].in,rows[0].out,rows[0].est],[12,3,false]);
+ assert.deepEqual([rows[1].in,rows[1].out,rows[1].est],[3,2,true]);
+ assert.equal(rows[1].provider,'claude');assert.equal(rows[1].purpose,'summary');
+ fs.rmSync(dir,{recursive:true,force:true});
 });

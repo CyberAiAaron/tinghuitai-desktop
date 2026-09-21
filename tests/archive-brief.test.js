@@ -13,12 +13,6 @@ test('点评失败不拖垮总结：review 为空并记下原因',()=>{
   const b=py(`mp.make_brief=lambda s,**k:{'overview':{'topics':[],'conclusions':[],'todos':[]},'topics':[]}\ndef boom(*a,**k):raise RuntimeError('claude 超时')\nmp.make_review=boom\nprint(json.dumps(mp.build_brief({})))`);
   assert.equal(b.review,null);assert.deepEqual(b.questions,[]);assert.match(b.reviewWarning,/超时/);});
 test('没配项目背景目录：context_dir 为空，点评降级',()=>{assert.equal(py(`print(json.dumps(str(mp.context_dir())))`),'None');});
-test('会后 Claude 用量按真实输入、缓存与输出记到同一场',()=>{
-  const row=py(`mp._record_cli_usage({'usage':{'input_tokens':100,'cache_creation_input_tokens':30,'cache_read_input_tokens':20,'output_tokens':10},'modelUsage':{'claude-opus-5':{}}},'meeting-a','review')
-print(json.dumps(json.loads((mp.ROOT/'state/usage.jsonl').read_text().strip())))`);
-  assert.equal(row.sessionId,'meeting-a');assert.equal(row.tier,'post');assert.equal(row.purpose,'review');
-  assert.equal(row.in,150);assert.equal(row.out,10);assert.equal(row.est,false);
-});
 test('保存回答：写进 brief.answers，问说话人的题同时写 names；选项越界拒绝',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'tht-ans-'));const mp=require('../app/meeting-pipeline')({dir,idle:()=>false});
   const key=require('crypto').createHash('sha256').update('m1').digest('hex').slice(0,16);
