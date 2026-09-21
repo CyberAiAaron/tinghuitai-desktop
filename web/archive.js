@@ -78,7 +78,7 @@ function render(s){
 const COLORS=['#202124','#c8102e','#1f5fbf','#1e7e34','#b26a00','#6a3fb5','#00838f','#8d6e63'];
 const mmss=sec=>{sec=Math.max(0,Math.round(sec||0));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0');};
 // 界面文案：[中文, English]。这一屏原来全是中文，界面切到 en 时只有一半跟着换。
-const L={sum:['智能总结','Summary'],rev:['Claude 点评与指导','Claude review'],
+const L={sum:['智能总结','Summary'],rev:['点评与指导','Review'],
   topics:['议题与时间分布','Topics and timeline'],keyc:['核心结论','Key conclusions'],todos:['待办','Action items'],
   detail:['议题展开','Topics in detail'],showFull:['展开完整','Show full'],showBrief:['只看结论','Conclusions only'],
   open:['未决：','Open: '],noConc:['未形成结论','No conclusion reached'],srcLine:['原句','Source'],
