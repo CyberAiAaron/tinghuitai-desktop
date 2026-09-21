@@ -343,3 +343,70 @@ test('红条是真的红：note 认 danger，样式表里也有这一档',()=>{
  assert.equal(c.el.notice.hidden,false);
  assert.match(html,/\.notice\.danger\{[^}]*var\(--conf\)/,'样式表里得有 danger 这一档，否则红条只是个类名');
 });
+
+// R12：每来一句 final 就把全部历史场次整份写进 localStorage，超配额后每次写都静默失败，
+// 界面照常显示，一刷新全没了。存盘只留「当前 + 最近 3 场 + 还没送到 Mac 的」。
+const persistCtx=over=>{
+ const store={};let fail=0;
+ const c={state:{sessions:[],names:{我:'A'},live:null},cur:null,applyCorrections(){},notes:[],
+   note:(...a)=>c.notes.push(a),
+   localStorage:{setItem(k,v){if(fail>0){fail--;const e=Error('QuotaExceededError');throw e;}store[k]=v;}},
+   failTimes(n){fail=n;},saved:()=>JSON.parse(store['tht-state']||'null'),...over};
+ vm.createContext(c);
+ // 末尾这一句在同一段脚本里，所以能看见上面 const 声明的 persist，把它挂到上下文上
+ vm.runInContext(code('  const KEEP_RECENT = 3;','  function normalizeSession(')+';this.runPersist=persist;',c);
+ return c;};
+const mkSess=(id,start,extra={})=>({id,start,transcript:[{text:'x'}],...extra});
+
+test('存盘只留当前和最近 3 场，内存里一场不少',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=20;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.cur=c.state.sessions[0];                       // 最老的那场正在看
+ c.runPersist();
+ const ids=c.saved().sessions.map(s=>s.id);
+ assert.deepEqual(ids.sort(),['s1','s18','s19','s20'].sort(),'最近 3 场加上当前这场');
+ assert.equal(c.state.sessions.length,20,'内存里的场次一场都不能少');
+ assert.equal(c.saved().names['我'],'A','别的字段要原样留着');
+ assert.deepEqual(c.notes,[]);
+});
+
+test('还没送到 Mac 的旧场次不许被挤掉',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=10;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.state.sessions[0].pendingUpload=true;          // 很老，但还没上传
+ c.state.sessions[1].archiveDirty=true;           // 改过、还没同步
+ c.state.sessions[2].archiveAwaitingSince=Date.now();
+ c.runPersist();
+ const ids=c.saved().sessions.map(s=>s.id);
+ for(const id of ['s1','s2','s3'])assert.ok(ids.includes(id),id+' 还没安全落到 Mac，不能丢');
+});
+
+test('正在进行的那场（state.live）也一定留着',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=10;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.state.live='s2';
+ c.runPersist();
+ assert.ok(c.saved().sessions.map(s=>s.id).includes('s2'));
+});
+
+test('单场太大写不下时，退到只保当前和没送走的，而不是整份写失败',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=10;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.state.sessions[0].pendingUpload=true;
+ c.cur=c.state.sessions[9];
+ c.failTimes(1);                                   // 第一次写超配额
+ c.runPersist();
+ assert.deepEqual(c.saved().sessions.map(s=>s.id).sort(),['s1','s10'].sort());
+ assert.deepEqual(c.notes,[],'还写得下就别吓人');
+});
+
+test('两次都写不下才提示清理',()=>{
+ const c=persistCtx();
+ c.state.sessions.push(mkSess('s1',1000));
+ c.cur=c.state.sessions[0];
+ c.failTimes(2);
+ c.runPersist();
+ assert.equal(c.notes.length,1);
+ assert.match(c.notes[0][0],/本机存储满了/);
+ assert.equal(c.notes[0][1],true);
+});

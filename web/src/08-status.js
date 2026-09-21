@@ -3,7 +3,26 @@
   let cur = null, rec = null, running = false, interim = '', lastAnalyzedLen = 0, timer = null, wake = null, analyzing = false, lastFinal = '';
   let startedMode = '', stallWarned = false, stallTries = 0, fellBack = false, lastStallRetry=0;
   let imeMode = false, asrMode = false, viewMode = false;
-  const persist = () => { if(cur)applyCorrections(cur);try { localStorage.setItem('tht-state', JSON.stringify(state)); } catch(e){ note('本机存储满了，请导出后清空旧场次。', true); } };
+  // R12：以前每来一句 final 就把全部历史场次整份写进 localStorage。开久了必然超配额，
+  // 而且是静默失败——界面照常显示，一刷新全没了。
+  // 现在存盘只留「现在这场 + 最近 3 场 + 还没安全送到 Mac 的」；内存里的 state 一场不删，
+  // 会议列表本来就是跟服务端的 /meeting-list 合出来的，旧场次在 Mac 上。
+  const KEEP_RECENT = 3;
+  const notSafeYet = s => !!(s && (s.pendingUpload || s.archiveDirty || s.archiveAwaitingSince));
+  const storedState = () => {
+    const all = Array.isArray(state.sessions) ? state.sessions : [];
+    const keep = new Set([...all].sort((a,b)=>(b.start||0)-(a.start||0)).slice(0, KEEP_RECENT));
+    for (const s of all) if (notSafeYet(s) || (cur && s.id === cur.id) || (state.live && s.id === state.live)) keep.add(s);
+    return {...state, sessions: all.filter(s => keep.has(s))};
+  };
+  const persist = () => { if(cur)applyCorrections(cur);
+    const small = storedState();
+    try { localStorage.setItem('tht-state', JSON.stringify(small)); }
+    catch(e){
+      // 还是写不下（单场特别长的时候会）：退到只留当前这场和还没送走的，那两类丢了才是真丢
+      try { localStorage.setItem('tht-state', JSON.stringify({...small, sessions: small.sessions.filter(s => notSafeYet(s) || (cur && s.id === cur.id))})); }
+      catch(e2){ note('本机存储满了，请导出后清空旧场次。', true); }
+    } };
   function normalizeSession(s){const start=typeof s.start==='number'?s.start:Date.parse(s.start)||Date.now();return {...s,start,end:s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)):null,transcript:(s.transcript||[]).map(x=>({...x,at:Number(x.at)>1e11?Number(x.at):start+Number(x.at||0)*1000,spk:x.spk||x.speaker||x.who||''})),todos:s.todos||[],highlights:s.highlights||[],factchecks:s.factchecks||[]};}
   const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, transcript: [], highlights: [], todos: [], factchecks: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
 
