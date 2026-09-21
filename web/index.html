@@ -3,6 +3,9 @@
 <head>
 <script src="bootstrap.js"></script>
 <meta charset="utf-8">
+<!-- X5：口令走 query（?token=…），点开页面里的飞书/外部链接时 Referer 会把整条地址连口令一起送给对方。
+     no-referrer 让浏览器一律不发 Referer。口令改走请求头是另一件事，没做之前这条是最省的止血。 -->
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#f4f4f5">
 <meta name="mobile-web-app-capable" content="yes">
@@ -121,6 +124,8 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .scroll{flex:1;min-height:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .notice{margin:0 12px 8px;padding:8px 12px;border-radius:10px;background:var(--panel-2);color:var(--muted);font-size:13px;border:1px solid var(--line);grid-column:1/-1}
 .notice.warn{border-color:var(--warn);color:var(--text)}
+/* 红条：留给「已经丢了内容」这类看漏了就来不及的提示，比黄条再重一级 */
+.notice.danger{border-color:var(--conf);background:color-mix(in srgb,var(--conf) 12%,var(--panel-2));color:var(--text);font-weight:600}
 .notice[hidden]{display:none}
 
 /* 转写 */
@@ -623,7 +628,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const fmt = sec => String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
   const hms = ts => new Date(ts).toTimeString().slice(0,8);
-  const note = (msg, warn) => { el.notice.hidden = !msg; el.notice.textContent = msg||''; el.notice.className = 'notice'+(warn?' warn':''); };
+  // warn 传 true 是黄条；传 'danger' 多一条红边，留给「已经丢了东西」这种必须看见的事，别滥用。
+  const note = (msg, warn) => { el.notice.hidden = !msg; el.notice.textContent = msg||''; el.notice.className = 'notice'+(warn?' warn':'')+(warn==='danger'?' danger':''); };
   const noteAction = (msg, label, fn) => {
     el.notice.hidden = false; el.notice.className = 'notice warn'; el.notice.textContent = '';
     const t = document.createElement('span'); t.textContent = msg + '  ';
@@ -1054,7 +1060,26 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   let cur = null, rec = null, running = false, interim = '', lastAnalyzedLen = 0, timer = null, wake = null, analyzing = false, lastFinal = '';
   let startedMode = '', stallWarned = false, stallTries = 0, fellBack = false, lastStallRetry=0;
   let imeMode = false, asrMode = false, viewMode = false;
-  const persist = () => { if(cur)applyCorrections(cur);try { localStorage.setItem('tht-state', JSON.stringify(state)); } catch(e){ note('本机存储满了，请导出后清空旧场次。', true); } };
+  // R12：以前每来一句 final 就把全部历史场次整份写进 localStorage。开久了必然超配额，
+  // 而且是静默失败——界面照常显示，一刷新全没了。
+  // 现在存盘只留「现在这场 + 最近 3 场 + 还没安全送到 Mac 的」；内存里的 state 一场不删，
+  // 会议列表本来就是跟服务端的 /meeting-list 合出来的，旧场次在 Mac 上。
+  const KEEP_RECENT = 3;
+  const notSafeYet = s => !!(s && (s.pendingUpload || s.archiveDirty || s.archiveAwaitingSince));
+  const storedState = () => {
+    const all = Array.isArray(state.sessions) ? state.sessions : [];
+    const keep = new Set([...all].sort((a,b)=>(b.start||0)-(a.start||0)).slice(0, KEEP_RECENT));
+    for (const s of all) if (notSafeYet(s) || (cur && s.id === cur.id) || (state.live && s.id === state.live)) keep.add(s);
+    return {...state, sessions: all.filter(s => keep.has(s))};
+  };
+  const persist = () => { if(cur)applyCorrections(cur);
+    const small = storedState();
+    try { localStorage.setItem('tht-state', JSON.stringify(small)); }
+    catch(e){
+      // 还是写不下（单场特别长的时候会）：退到只留当前这场和还没送走的，那两类丢了才是真丢
+      try { localStorage.setItem('tht-state', JSON.stringify({...small, sessions: small.sessions.filter(s => notSafeYet(s) || (cur && s.id === cur.id))})); }
+      catch(e2){ note('本机存储满了，请导出后清空旧场次。', true); }
+    } };
   function normalizeSession(s){const start=typeof s.start==='number'?s.start:Date.parse(s.start)||Date.now();return {...s,start,end:s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)):null,transcript:(s.transcript||[]).map(x=>({...x,at:Number(x.at)>1e11?Number(x.at):start+Number(x.at||0)*1000,spk:x.spk||x.speaker||x.who||''})),todos:s.todos||[],highlights:s.highlights||[],factchecks:s.factchecks||[]};}
   const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, transcript: [], highlights: [], todos: [], factchecks: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
 
@@ -2386,7 +2411,13 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }
-      else if (m.type === 'ended') { cur.relayHandled=true;persist();refreshArchive(); }
+      // R1：中转 12 分钟收不到音频就自己把这场收尾，然后发这条。页面原来只记一笔就接着录——
+      // 手机锁屏再解锁那种场合，后半场其实一个字都没进库，人却毫无察觉。服务端那边已经结束了，
+      // 本机再录也没有去处：直接停下，并且用红条把「后面的没录上」说明白。
+      else if (m.type === 'ended') { cur.relayHandled=true;persist();refreshArchive();
+        if(running){ stopAll(false);
+          note(ui==='en'?'The Mac ended this meeting; anything spoken after that was not recorded. Please start a new meeting.'
+                        :'服务端已经结束了这场会，后面的内容没有被记录。请重新开始一场。','danger'); } }
       else if (m.type === 'stall') note(m.message || (T('stall_relay')||'中转报告采音异常。'), true);
       else if (m.type === 'llm_down') setLlmDown(true, m.message||'');
       else if (m.type === 'llm_degraded') setLlmDegraded(!!m.on, m.message||'');
@@ -3324,8 +3355,18 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
   }
   // 方案里要创建/发送的东西，出一张卡等你点确认，不自动执行
   // 会中助手的「建飞书文档 / 发 Slack」：复用会后分享那条流水线（先生成分享包，再发）。正在录音也能发——发的是到此刻为止的内容。
-  async function runShareAction(kind, progress){
+  // X8：发到自己 Slack 的那段正文，以前是服务端生成完直接发走的，卡片上给人看的、能改的是另一段文字，
+  // 点「确认」等于在确认一段自己没见过的内容。现在分两步：第一次调用只把正文取回来填进卡片，
+  // 人看过（想改也能改）再点一次，发出去的就是卡片上那一段。approved 就是这第二步。
+  async function runShareAction(kind, progress, approved){
     const tok=encodeURIComponent(cfg.relayToken||'');
+    if(approved&&approved.key){
+      progress(ui==='en'?'Sending to your Slack…':'正在发到你自己的 Slack…');
+      const rr=await fetch(relayBase()+'/sharing/slack/send?token='+tok,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({channel:'self',text:String(approved.text||''),bundleKey:approved.key,confirmed:true})});
+      const o=await rr.json().catch(()=>({}));
+      if(!rr.ok||o.error) return {ok:false,error:o.error||('HTTP '+rr.status)};
+      return {ok:true,summary:ui==='en'?'Sent to your Slack DM with two attachments.':'已发到你自己的 Slack 私信，带两份附件',link:o.permalink||o.link||''};
+    }
     if(!cur||!(cur.transcript||[]).some(r=>String(r.text||'').trim())) return {ok:false,error:ui==='en'?'This meeting has no transcript yet.':'这场还没有转写内容'};
     const sess={}; for(const k of ['id','title','topicTitle','start','end','transcript','names','uiLang','todos']) if(cur[k]!==undefined) sess[k]=cur[k];
     if(!sess.title) sess.title=sess.topicTitle||('会议 '+new Date(sess.start||Date.now()).toLocaleString('zh-CN'));
@@ -3342,11 +3383,8 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
       if(j.larkStatus!=='done') return {ok:false,error:j.error||'飞书文档没建成'};
       return {ok:true,summary:ui==='en'?'Feishu document created (private to you; share it from the doc).':'飞书文档已建好（只有你能看，要给别人在文档里开权限）',link:j.url};
     }
-    progress(ui==='en'?'Sending to your Slack…':'正在发到你自己的 Slack…');
-    r=await fetch(relayBase()+'/sharing/slack/send?token='+tok,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({channel:'self',text:(j.bundle.slackText||sess.title),bundleKey:key,confirmed:true})});
-    const out=await r.json().catch(()=>({}));
-    if(!r.ok||out.error) return {ok:false,error:out.error||('HTTP '+r.status)};
-    return {ok:true,summary:ui==='en'?'Sent to your Slack DM with two attachments.':'已发到你自己的 Slack 私信，带两份附件',link:out.permalink||out.link||''};
+    // 正文取回来了，但这一步不发：交给卡片显示，人确认了再走上面那条 approved 的路
+    return {ok:false,needsConfirm:true,key,text:String(j.bundle.slackText||sess.title||'')};
   }
   function draftAction(a){
     if(!a||typeof a.title!=='string') return;
@@ -3363,6 +3401,8 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
       if(t.isContentEditable){ t.contentEditable=d.contentEditable='false'; a.title=t.textContent.trim().slice(0,200); a.detail=d.textContent.trim().slice(0,1500); edit.textContent=ui==='en'?'Edit, then run':'改一下再发'; t.style.outline=d.style.outline=''; return; }
       t.contentEditable=d.contentEditable='true'; t.style.outline=d.style.outline='1px dashed var(--muted)'; edit.textContent=ui==='en'?'Done editing':'改好了'; t.focus();
     };
+    // 发 Slack 分两步：第一次点确认只取回正文填进卡片，这里记住那一包的 key，第二次点才真发
+    let pendingShare=null;
     const [ok,no]=[card.children[2].children[0],card.children[2].children[2]], msg=card.querySelector('span');
     no.onclick=()=>{ msg.textContent=ui==='en'?'Cancelled':'已取消'; ok.disabled=no.disabled=true; card.style.opacity=.7; };
     ok.onclick=async()=>{
@@ -3371,10 +3411,18 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
       try{
         // 这三种本机就能做，不走工作台那条线：建飞书纪要文档 / 发到自己的 Slack / 交给主 Claude
         let j;
-        if(a.kind==='lark_doc'||a.kind==='slack_self') j=await runShareAction(a.kind, m=>{ msg.textContent=m; });
+        if(a.kind==='lark_doc'||a.kind==='slack_self') j=await runShareAction(a.kind, m=>{ msg.textContent=m; }, pendingShare&&{key:pendingShare.key,text:card.children[1].textContent.trim()});
         else if(a.kind==='handoff') j=await (await fetch(relayBase()+'/handoff?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:a.title,detail:String(a.detail||''),sessionId:cur&&cur.id,meetingTitle:(cur&&(cur.topicTitle||cur.title))||''})})).json().catch(()=>null);
         else { const r=await fetch(relayBase()+'/hub/action?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:{kind:a.kind||'other',title:a.title,detail:String(a.detail||'')},sessionId:'draft:'+(cur&&cur.id),meetingTitle:(cur&&(cur.topicTitle||cur.title))||''}),signal:AbortSignal.timeout(120000)}); j=await r.json().catch(()=>null); }
         if(!j){ msg.textContent=ui==='en'?'No receipt — check before retrying.':'没拿到回执，先去确认再重试。'; return; }
+        // X8：正文取回来了但还没发。填进卡片让人看一眼——从这一刻起，卡片上写着什么就会发出去什么。
+        if(j.needsConfirm){
+          pendingShare={key:j.key};
+          card.children[1].textContent=j.text; a.detail=j.text;
+          msg.textContent=ui==='en'?'This is exactly what will be sent. Confirm to send, or edit it first.':'上面就是要发出去的正文。点「确认发送」发出；想改先点「改一下再发」。';
+          ok.textContent=ui==='en'?'Send to Slack':'确认发送';
+          ok.disabled=no.disabled=false; return;
+        }
         msg.innerHTML=(j.ok?'✓ ':'✗ ')+esc(j.summary||j.error||'')+(j.link?' <a href="'+esc(j.link)+'" target="_blank" rel="noopener">打开 ↗</a>':'');
         if(!j.ok) ok.disabled=no.disabled=false;
         if(j.ok&&j.name) watchHandoff(j.name,card);

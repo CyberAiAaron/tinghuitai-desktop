@@ -299,3 +299,192 @@ test('outline keeps the last settled group when the model omits it, and counts d
  const out2=t.mergeOutline(plan,[{title:'half',summary:'s',keys:['B1','C1']}]);
  assert.deepEqual(out2.map(g=>g.title),['g1','g2']);
 });
+// R1：中转 12 分钟没收到音频就自己收尾并发 ended。页面原来收到它只记一笔、继续录，
+// 结果手机锁屏解锁之后的后半场一个字都没进库，界面上还显示着正在听会。
+// 起点要写得够长：15-tongue.js 里也有一条同样缩进的 ended 分支，只写前半句会切错地方
+const endedBranch=()=>{const b=code("else if (m.type === 'ended') { cur.relayHandled=true","      else if (m.type === 'stall')");
+ return 'handleRelay=(m)=>{if(false){}'+b+'};';};
+const relayCtx=over=>{const c={cur:{},persist(){},refreshArchive(){},stops:[],notes:[],ui:'zh',T:()=>'',
+  stopAll(...a){c.stops.push(a);c.running=false;},note(...a){c.notes.push(a);},running:true,...over};
+ vm.createContext(c);vm.runInContext(endedBranch(),c);return c;};
+
+test('服务端结束了这场会而本机还在录：立刻停录，并且用红条说明后面没录上',()=>{
+ const c=relayCtx();
+ c.handleRelay({type:'ended'});
+ assert.equal(c.cur.relayHandled,true);
+ assert.deepEqual(c.stops,[[false]],'要停录，且不是用户主动结束那条路');
+ assert.equal(c.notes.length,1);
+ assert.equal(c.notes[0][1],'danger','这条必须是红条，黄条会被当成又一次网络抖动');
+ assert.match(c.notes[0][0],/没有被记录/);
+ assert.match(c.notes[0][0],/重新开始/,'要告诉人下一步做什么');
+});
+
+test('英文界面下这条提示也是英文',()=>{
+ const c=relayCtx({ui:'en'});
+ c.handleRelay({type:'ended'});
+ assert.match(c.notes[0][0],/not recorded/);
+});
+
+test('本机已经不在录了（正常结束后收到 ended）：不弹红条、不重复停录',()=>{
+ const c=relayCtx({running:false});
+ c.handleRelay({type:'ended'});
+ assert.equal(c.cur.relayHandled,true);
+ assert.deepEqual(c.stops,[]);
+ assert.deepEqual(c.notes,[]);
+});
+
+test('红条是真的红：note 认 danger，样式表里也有这一档',()=>{
+ const c={el:{notice:{}}};vm.createContext(c);
+ // const 声明不会挂到 vm 的上下文对象上，换成 var 才拿得到；跑的仍是页面里那一行真代码
+ vm.runInContext(code('  const note = (msg, warn)','  const noteAction').replace('const note','var note'),c);
+ c.note('普通');assert.equal(c.el.notice.className,'notice');
+ c.note('黄条',true);assert.equal(c.el.notice.className,'notice warn');
+ c.note('红条','danger');assert.equal(c.el.notice.className,'notice warn danger');
+ assert.equal(c.el.notice.hidden,false);
+ assert.match(html,/\.notice\.danger\{[^}]*var\(--conf\)/,'样式表里得有 danger 这一档，否则红条只是个类名');
+});
+
+// R12：每来一句 final 就把全部历史场次整份写进 localStorage，超配额后每次写都静默失败，
+// 界面照常显示，一刷新全没了。存盘只留「当前 + 最近 3 场 + 还没送到 Mac 的」。
+const persistCtx=over=>{
+ const store={};let fail=0;
+ const c={state:{sessions:[],names:{我:'A'},live:null},cur:null,applyCorrections(){},notes:[],
+   note:(...a)=>c.notes.push(a),
+   localStorage:{setItem(k,v){if(fail>0){fail--;const e=Error('QuotaExceededError');throw e;}store[k]=v;}},
+   failTimes(n){fail=n;},saved:()=>JSON.parse(store['tht-state']||'null'),...over};
+ vm.createContext(c);
+ // 末尾这一句在同一段脚本里，所以能看见上面 const 声明的 persist，把它挂到上下文上
+ vm.runInContext(code('  const KEEP_RECENT = 3;','  function normalizeSession(')+';this.runPersist=persist;',c);
+ return c;};
+const mkSess=(id,start,extra={})=>({id,start,transcript:[{text:'x'}],...extra});
+
+test('存盘只留当前和最近 3 场，内存里一场不少',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=20;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.cur=c.state.sessions[0];                       // 最老的那场正在看
+ c.runPersist();
+ const ids=c.saved().sessions.map(s=>s.id);
+ assert.deepEqual(ids.sort(),['s1','s18','s19','s20'].sort(),'最近 3 场加上当前这场');
+ assert.equal(c.state.sessions.length,20,'内存里的场次一场都不能少');
+ assert.equal(c.saved().names['我'],'A','别的字段要原样留着');
+ assert.deepEqual(c.notes,[]);
+});
+
+test('还没送到 Mac 的旧场次不许被挤掉',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=10;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.state.sessions[0].pendingUpload=true;          // 很老，但还没上传
+ c.state.sessions[1].archiveDirty=true;           // 改过、还没同步
+ c.state.sessions[2].archiveAwaitingSince=Date.now();
+ c.runPersist();
+ const ids=c.saved().sessions.map(s=>s.id);
+ for(const id of ['s1','s2','s3'])assert.ok(ids.includes(id),id+' 还没安全落到 Mac，不能丢');
+});
+
+test('正在进行的那场（state.live）也一定留着',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=10;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.state.live='s2';
+ c.runPersist();
+ assert.ok(c.saved().sessions.map(s=>s.id).includes('s2'));
+});
+
+test('单场太大写不下时，退到只保当前和没送走的，而不是整份写失败',()=>{
+ const c=persistCtx();
+ for(let i=1;i<=10;i++)c.state.sessions.push(mkSess('s'+i,i*1000));
+ c.state.sessions[0].pendingUpload=true;
+ c.cur=c.state.sessions[9];
+ c.failTimes(1);                                   // 第一次写超配额
+ c.runPersist();
+ assert.deepEqual(c.saved().sessions.map(s=>s.id).sort(),['s1','s10'].sort());
+ assert.deepEqual(c.notes,[],'还写得下就别吓人');
+});
+
+test('两次都写不下才提示清理',()=>{
+ const c=persistCtx();
+ c.state.sessions.push(mkSess('s1',1000));
+ c.cur=c.state.sessions[0];
+ c.failTimes(2);
+ c.runPersist();
+ assert.equal(c.notes.length,1);
+ assert.match(c.notes[0][0],/本机存储满了/);
+ assert.equal(c.notes[0][1],true);
+});
+
+// X8：助手卡片上给人看、能改的是一段描述，点「确认」之后发到 Slack 的却是服务端另外生成的正文——
+// 等于在确认一段自己没见过的内容。改成两步：先把正文填回卡片，看过（或改过）再发。
+const shareCtx=fetchImpl=>{
+ const c={cfg:{relayToken:'t'},ui:'zh',relayBase:()=>'',fetch:fetchImpl,setTimeout:f=>f(),
+   encodeURIComponent,Date,cur:{id:'m1',title:'一场会',start:1,transcript:[{text:'有内容'}]}};
+ vm.createContext(c);
+ vm.runInContext(code('  async function runShareAction(kind, progress, approved){','  function draftAction(a){'),c);
+ return c;};
+const bundleFetch=()=>{const hits=[];return {hits,impl:async(url,opt)=>{hits.push({url,body:opt&&opt.body});
+  if(url.includes('/sharing/slack/send')) return {ok:true,json:async()=>({ok:true,permalink:'https://x'})};
+  if(url.includes('/sharing/bundle?key=')) return {ok:true,json:async()=>({status:'done',bundle:{slackText:'这是纪要正文'}})};
+  return {ok:true,json:async()=>({key:'K1'})};}};};
+
+test('第一次点确认只把 Slack 正文取回来，一个字都还没发出去',async()=>{
+ const f=bundleFetch(), c=shareCtx(f.impl);
+ const r=await c.runShareAction('slack_self',()=>{});
+ assert.equal(r.needsConfirm,true);
+ assert.equal(r.ok,false,'还没发，不能报成功');
+ assert.equal(r.text,'这是纪要正文');
+ assert.equal(r.key,'K1');
+ assert.ok(!f.hits.some(h=>h.url.includes('/sharing/slack/send')),'这一步绝不能真的发出去');
+});
+
+test('确认之后发出去的就是交上来的那段正文，而且不重新生成分享包',async()=>{
+ const f=bundleFetch(), c=shareCtx(f.impl);
+ const r=await c.runShareAction('slack_self',()=>{},{key:'K1',text:'我改过的正文'});
+ assert.equal(r.ok,true);
+ const sent=f.hits.filter(h=>h.url.includes('/sharing/slack/send'));
+ assert.equal(sent.length,1);
+ const body=JSON.parse(sent[0].body);
+ assert.equal(body.text,'我改过的正文');
+ assert.equal(body.bundleKey,'K1');
+ assert.equal(body.channel,'self');
+ assert.equal(f.hits.length,1,'第二步不该再去建一次分享包（又是两分钟）');
+});
+
+// 卡片这一头：第一次点确认填正文并改按钮，第二次点才发，发的是卡片上当时显示的那段
+const cardCtx=runShare=>{
+ const c={ui:'zh',esc:s=>String(s),watchHandoff(){},relayBase:()=>'',cfg:{},cur:{id:'m1'},
+   a:{kind:'slack_self',title:'发到我的 Slack',detail:'助手写的一句话描述'},
+   card:{children:[{textContent:'发到我的 Slack',isContentEditable:false},{textContent:'助手写的一句话描述'},{children:[]}],style:{}},
+   ok:{disabled:false,textContent:'确认'},no:{disabled:false},msg:{textContent:'',innerHTML:''},
+   // draftAction 里那个 let pendingShare 不在切片范围内，在 vm 里得先给上下文一个同名的格子
+   pendingShare:null,
+   runShareAction:runShare,fetch:async()=>({json:async()=>({})}),encodeURIComponent,JSON,AbortSignal};
+ vm.createContext(c);
+ vm.runInContext(code('    ok.onclick=async()=>{',"    $('#assistant-log').append(card);"),c);
+ return c;};
+
+test('卡片：第一次确认填回正文、按钮改成「确认发送」，第二次才真发',async()=>{
+ const calls=[];
+ const c=cardCtx(async(kind,progress,approved)=>{calls.push({kind,approved});
+   return approved?{ok:true,summary:'已发到你自己的 Slack 私信'}:{ok:false,needsConfirm:true,key:'K1',text:'这是纪要正文'};});
+ await c.ok.onclick();
+ assert.equal(calls.length,1);
+ assert.ok(!calls[0].approved,'第一次不带确认过的正文');
+ assert.equal(c.card.children[1].textContent,'这是纪要正文','卡片上要显示真正会发出去的那段');
+ assert.equal(c.ok.textContent,'确认发送');
+ assert.equal(c.ok.disabled,false,'还得让人能点第二下');
+ assert.match(c.msg.textContent,/就是要发出去的正文/);
+
+ c.card.children[1].textContent='我改过的正文';      // 人点了「改一下再发」改完
+ await c.ok.onclick();
+ assert.equal(calls.length,2);
+ assert.equal(calls[1].approved.key,'K1','复用第一步那个分享包');
+ assert.equal(calls[1].approved.text,'我改过的正文','发出去的必须是卡片上当时那一段');
+ assert.match(c.msg.innerHTML,/已发到你自己的 Slack/);
+});
+
+test('卡片：取消发生在发出去之前，所以真的什么都没发',()=>{
+ const calls=[];
+ const c=cardCtx(async(...a)=>{calls.push(a);return {ok:false,needsConfirm:true,key:'K1',text:'正文'};});
+ vm.runInContext(code('    no.onclick=()=>{','    ok.onclick=async()=>{'),c);
+ c.no.onclick();
+ assert.equal(c.ok.disabled,true);
+ assert.equal(calls.length,0);
+});

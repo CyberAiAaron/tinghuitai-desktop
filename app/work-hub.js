@@ -39,17 +39,45 @@ function unreadTitle(url){let host='未知来源',id='';try{const u=new URL(cano
  const parts=u.pathname.split('/').filter(Boolean).filter(p=>!URL_NOISE.has(p.toLowerCase()));
  id=(parts[parts.length-1]||'').slice(0,8);}catch{}return '未读取 · '+host+(id?'/'+id:'');}
 const isUnread=t=>/^未读取 · /.test(String(t||''));
+// 只对公网 https 放行：资料链接是用户贴的，别让一条 http://127.0.0.1 或内网地址的链接变成本机替它发请求。
+const HOPS=3, BODY_CAP=300000;
+function publicHttps(url){
+ try{const u=new URL(url);
+  if(u.protocol!=='https:')return null;
+  if(/^(localhost$|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[)|\.(local|internal|lan)$/i.test(u.hostname))return null;
+  return u;}catch{return null;}}
+// 边读边数，到上限就主动断开：对方甩一个不结束的流过来时，别把它整个拉进内存再截断。
+// 老的假 fetch（测试里那种只有 text() 的）没有 body，退回一次性读。
+async function readCapped(r,cap){
+ const body=r&&r.body;
+ if(!body||typeof body.getReader!=='function')return String(await r.text()).slice(0,cap);
+ const reader=body.getReader(),dec=new TextDecoder('utf-8',{fatal:false});let text='';
+ try{for(;;){const {done,value}=await reader.read();if(done)break;
+   text+=dec.decode(value,{stream:true});
+   if(text.length>=cap){text=text.slice(0,cap);try{await reader.cancel();}catch{}break;}}}
+ finally{try{reader.releaseLock&&reader.releaseLock();}catch{}}
+ return text;}
 // 不带凭据的一次 GET，只取 <title>；超时 5 秒，任何失败都返回空串由调用方兜底。
+// X7：原来只挡第一跳——一个公网域名 302 到 http://127.0.0.1 或内网地址，fetch 自己就跟过去了，
+// 等于贴一条链接就能让本机替他探内网。现在自己跟跳转，每一跳重新过一遍白名单，最多 3 跳。
 async function fetchPageTitle(url,fetchImpl){
  if(typeof fetchImpl!=='function')return '';
- // 只对公网 https 发请求：资料链接是用户贴的，别让一条 http://127.0.0.1 或内网地址的链接变成本机替它发请求。
- try{const u=new URL(url);if(u.protocol!=='https:'||/^(localhost$|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[)|\.(local|internal|lan)$/i.test(u.hostname))return '';}catch{return '';}
+ let u=publicHttps(url);if(!u)return '';
  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),5000);
- try{const r=await fetchImpl(url,{redirect:'follow',signal:ctl.signal,headers:{accept:'text/html,application/xhtml+xml','user-agent':'Mozilla/5.0 (Macintosh) Tinghuitai/1.0'}});
-  if(!r||!r.ok)return '';
-  const type=String(r.headers?.get?.('content-type')||'');if(type&&!/html|xml|text\/plain/i.test(type))return '';
-  const body=String(await r.text()).slice(0,300000),m=body.match(/<title[^>]*>([\s\S]{0,400}?)<\/title>/i);
-  return m?tidyTitle(m[1]).slice(0,200):'';
+ try{
+  for(let hop=0;;hop++){
+   const r=await fetchImpl(u.href,{redirect:'manual',signal:ctl.signal,headers:{accept:'text/html,application/xhtml+xml','user-agent':'Mozilla/5.0 (Macintosh) Tinghuitai/1.0'}});
+   if(!r)return '';
+   const status=Number(r.status||0),location=r.headers?.get?.('location');
+   if(status>=300&&status<400&&location){
+    if(hop>=HOPS)return '';                                  // 跳太多次，多半是跳转环，不跟了
+    const next=publicHttps(new URL(location,u.href).href);    // Location 指内网就停在这里
+    if(!next)return '';
+    u=next;continue;}
+   if(!r.ok)return '';
+   const type=String(r.headers?.get?.('content-type')||'');if(type&&!/html|xml|text\/plain/i.test(type))return '';
+   const body=await readCapped(r,BODY_CAP),m=body.match(/<title[^>]*>([\s\S]{0,400}?)<\/title>/i);
+   return m?tidyTitle(m[1]).slice(0,200):'';}
  }catch{return '';}finally{clearTimeout(timer);}}
 // 飞书走已有的读取路径（和「读取／更新原文」同一条命令），只取第一行标题；超时 5 秒。
 const isLark=url=>{try{const h=new URL(url).hostname;return /(^|\.)(larksuite\.com|feishu\.cn|doubao\.com)$/.test(h);}catch{return false;}};
@@ -82,9 +110,22 @@ function loadHub(file,fallback){
 class Hub{
  // opts.fetch 是给标题解析用的出口：测试注入桩，THT_TEST 下默认不发真实请求。
  constructor(root,dir,opts={}){this.root=root;this.dir=dir;this.fetchImpl=opts.fetch||(process.env.THT_TEST?null:globalThis.fetch);fs.mkdirSync(dir,{recursive:true,mode:0o700});this.file=path.join(dir,'work-hub.json');this.data=loadHub(this.file,{version:1,revision:0,projects:[],sources:[],tasks:[],events:[],sync:{}});try{this.translationCache=readJSON(path.join(dir,'translations.json'),{});}catch{this.translationCache={};}this.syncing=null;this.aiBusy=false;}
- save(){require('./knowledge').prepare(this);const p=this.file+'.tmp';this.data.revision++;this.data.updated=now();const fd=fs.openSync(p,'w',0o600);try{fs.writeFileSync(fd,JSON.stringify(this.data));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}if(fs.existsSync(this.file)){const prior=this.file.replace('.json','.previous.json');fs.copyFileSync(this.file,prior+'.tmp');fs.renameSync(prior+'.tmp',prior);}fs.renameSync(p,this.file);const b=path.join(this.dir,'backup-'+now().slice(0,10)+'.json');if(!fs.existsSync(b))fs.copyFileSync(this.file,b);}
+ save(){require('./knowledge').prepare(this);const p=this.file+'.tmp';this.data.revision++;this.data.updated=now();const fd=fs.openSync(p,'w',0o600);try{fs.writeFileSync(fd,JSON.stringify(this.data));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}if(fs.existsSync(this.file)){const prior=this.file.replace('.json','.previous.json');fs.copyFileSync(this.file,prior+'.tmp');fs.renameSync(prior+'.tmp',prior);}fs.renameSync(p,this.file);const b=path.join(this.dir,'backup-'+now().slice(0,10)+'.json');if(!fs.existsSync(b)){fs.copyFileSync(this.file,b);this.pruneBackups();}}
+ // D8：日备份只增不删，生产上已经堆了 12 份、目录 77MB，再放下去只会更大。
+ // 每天第一次存盘（也就是刚新建一份备份）时顺手清一次：只删自己这套 backup-日期.json 命名的，
+ // .before-merge-* / .before-repair-* / work-hub.previous.json 是出事时救命用的，一律不碰。
+ pruneBackups(keepDays=14){
+  const cutoff=Date.now()-keepDays*86400000,removed=[];
+  let names=[];try{names=fs.readdirSync(this.dir);}catch{return removed;}
+  for(const name of names){
+   const m=/^backup-(\d{4}-\d{2}-\d{2})\.json$/.exec(name);if(!m)continue;
+   const day=Date.parse(m[1]+'T00:00:00Z');if(!Number.isFinite(day)||day>=cutoff)continue;
+   try{fs.rmSync(path.join(this.dir,name));removed.push(name);}catch{}}
+  return removed;}
  event(type,id,note){this.data.events.push({id:crypto.randomUUID(),at:now(),type,target:id,note});if(this.data.events.length>1000){const archived=this.data.events.slice(0,-500),text=JSON.stringify(archived),file=path.join(this.dir,'events-'+hash(text)+'.json');if(!fs.existsSync(file)){const tmp=file+'.tmp',fd=fs.openSync(tmp,'w',0o600);try{fs.writeFileSync(fd,text);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,file);}this.data.events=this.data.events.slice(-500);}}
- source(input){const key=input.key||(canonical(input.url)||'manual:'+crypto.randomUUID());let s=this.data.sources.find(x=>x.key===key);
+ // D1：syncDisk 靠这个数判断「这一轮到底有没有东西真的变了」。source / task 是库里所有写入的必经之路，
+ // 走到这里就一定会改到记录（新建，或者 revision++ / updated），所以在这里记一笔最靠得住。
+ source(input){this.dirty=(this.dirty||0)+1;const key=input.key||(canonical(input.url)||'manual:'+crypto.randomUUID());let s=this.data.sources.find(x=>x.key===key);
   // 新归一让 Google / Notion 链接算出新 key，老库里存的是旧 key：按新 key 没找到就再按旧 key 找一次，
   // 找到就把 key 换成新的（id 是建记录时定的，不跟着变，所以待办和工作项的指向不受影响）。
   // 两条都对不上时再扫一遍老记录，把它们的 url 按新规则算一次：链接多带一个 ?pvs=4 之类的参数，
@@ -94,7 +135,7 @@ class Hub{
    if(!s&&!key.startsWith('manual:'))s=this.data.sources.find(x=>(x.url||x.key)&&canonical(x.url||x.key)===key);
    if(s)s.key=key;}
   const incoming={...input};delete incoming.key;if(!s){s={id:'s-'+hash(key),key,reviewed:false,projectId:'',notes:'',revision:1,...incoming,created:now()};this.data.sources.push(s);}else{if(s.fingerprint&&input.fingerprint&&s.fingerprint!==input.fingerprint)s.changed=true;for(const [k,v]of Object.entries(incoming))if(!(k==='body'&&!v)&&!['notes','projectId','reviewed','id'].includes(k)&&!(k==='title'&&s.titleEdited))s[k]=v;s.revision++;}s.updated=now();return s;}
- task(input,sourceId){const key=input.key||'task:'+hash((sourceId||'')+'|'+norm(input.text));let t=this.data.tasks.find(x=>x.key===key)||(!input.key?this.data.tasks.find(x=>norm(x.text)===norm(input.text)&&norm(x.owner)===norm(input.owner)):null);
+ task(input,sourceId){this.dirty=(this.dirty||0)+1;const key=input.key||'task:'+hash((sourceId||'')+'|'+norm(input.text));let t=this.data.tasks.find(x=>x.key===key)||(!input.key?this.data.tasks.find(x=>norm(x.text)===norm(input.text)&&norm(x.owner)===norm(input.owner)):null);
   // 会中分诊给的段号和时间戳一路带到待办上：09-21 之前这里把它们丢了，于是待办回不到原句。
   const refs={};
   if(Array.isArray(input.sourceRefs)&&input.sourceRefs.length)refs.sourceRefs=input.sourceRefs.slice(0,20);
@@ -133,8 +174,13 @@ class Hub{
    if(s.title!==before){s.revision++;s.updated=now();changed++;}}   // 没变就不动 revision，免得别的端以为有更新
   if(changed)this.save();
   return {checked:list.length,fixed};}
- syncDisk(){let count=0;const pending=path.join(this.root,'pending');if(fs.existsSync(pending)){const map=new Map();for(const f of fs.readdirSync(pending)){if(!/^(sess|offline)-.*\.json(\.done)?$/.test(f))continue;try{const p=path.join(pending,f),s=JSON.parse(fs.readFileSync(p));const rank=(s.transcript?.length||0)+(s.summary?.length||0);if(!map.has(s.id)||map.get(s.id).rank<rank)map.set(s.id,{s,rank});}catch{count++;}}for(const {s}of map.values())this.ingestSession(s);}
- const dirs=['录音归档'];for(const name of dirs){const dir=path.join(this.root,name);if(!fs.existsSync(dir))continue;for(const f of fs.readdirSync(dir)){if(!f.endsWith('.md')||/^(_test|\.)/.test(f))continue;try{this.ingestMarkdown(path.join(dir,f));}catch{count++;}}} this.data.sync.disk={at:now(),status:count?'partial':'ok',errors:count};this.organize();this.save();}
+ syncDisk(){let count=0;this.dirty=0;const pending=path.join(this.root,'pending');if(fs.existsSync(pending)){const map=new Map();for(const f of fs.readdirSync(pending)){if(!/^(sess|offline)-.*\.json(\.done)?$/.test(f))continue;try{const p=path.join(pending,f),s=JSON.parse(fs.readFileSync(p));const rank=(s.transcript?.length||0)+(s.summary?.length||0);if(!map.has(s.id)||map.get(s.id).rank<rank)map.set(s.id,{s,rank});}catch{count++;}}for(const {s}of map.values())this.ingestSession(s);}
+ const dirs=['录音归档'];for(const name of dirs){const dir=path.join(this.root,name);if(!fs.existsSync(dir))continue;for(const f of fs.readdirSync(dir)){if(!f.endsWith('.md')||/^(_test|\.)/.test(f))continue;try{this.ingestMarkdown(path.join(dir,f));}catch{count++;}}} this.data.sync.disk={at:now(),status:count?'partial':'ok',errors:count};this.organize();
+ // D1：这个方法每 5 分钟被定时器叫一次，读完 98 份会议后无条件重写 12MB（正本 + previous 两遍，
+ // 全是同步 IO，会中就是在卡事件循环）。绝大多数轮次每一份的 fingerprint 都没变、ingest 全部提前返回，
+ // 这时只更新内存里的 sync.disk 时间戳，不落盘；下一次真有变化的 save 会把它一起写下去。
+ if(this.dirty)this.save();
+ return {changed:!!this.dirty,errors:count};}
  async fetchSource(id){const s=this.data.sources.find(x=>x.id===id);if(!s?.url)throw Error('没有可读取的原文链接');const u=new URL(s.url);if(!/(^|\.)(larksuite\.com|feishu\.cn|doubao\.com)$/.test(u.hostname)||!/^\/(docx|wiki)\/[a-zA-Z0-9]+$/.test(u.pathname))throw Error('此来源暂不支持直接读取，请打开原文或粘贴内容');const content=await new Promise((resolve,reject)=>execFile('lark-cli',['docs','+fetch','--doc',s.url,'--as','user','--doc-format','markdown'],{timeout:60000,maxBuffer:8e6},(err,out)=>{if(err)return reject(Error('原文读取失败，请检查飞书权限或稍后重试'));try{const j=parseJSON(out);if(!j.ok||typeof j.data?.document?.content!=='string')throw Error('原文读取失败');resolve(j.data.document.content);}catch(e){reject(e);}}));if(s.body&&hash(s.body)!==hash(content))s.changed=true;s.body=content;s.bodyFingerprint=hash(content);s.fetchedAt=now();s.snapshotDate=s.fetchedAt.slice(0,10);s.revision++;s.updated=now();this.event('fetch',s.id,'读取在线原文');this.save();return s;}
  async syncKnowledge(){}
  async syncIndex(){this.data.sync.index={at:now(),status:'local'};this.save();}

@@ -134,3 +134,63 @@ test('THT_TEST 下不发真实网络请求', async()=>{
   assert.equal(hub.data.sources[0].title,'未读取 · docs.google.com/NET1');
  }finally{if(before===undefined)delete process.env.THT_TEST;else process.env.THT_TEST=before;}
 });
+
+// —— X7：抓标题这条路以前只挡第一跳，且整包读完才截断 ——
+const seen=[];
+const redirectTo=where=>({ok:false,status:302,headers:{get:k=>String(k).toLowerCase()==='location'?where:null}});
+const html=title=>({ok:true,status:200,headers:{get:k=>String(k).toLowerCase()==='content-type'?'text/html':null},
+                    text:async()=>'<html><head><title>'+title+'</title></head></html>'});
+// 按「第几次请求」给回应，同时记下每次请求的地址和参数
+const script=steps=>{let i=0;return async(url,opts)=>{seen.push({url,redirect:opts&&opts.redirect});const step=steps[Math.min(i++,steps.length-1)];return typeof step==='function'?step(url):step;};};
+const unread=(hub,url)=>{hub.source({url,title:'Google Slides',titleState:'unread',channel:'手动收集'});return hub.resolveTitles();};
+
+test('跳转到内网地址就停手，不替人探内网', async()=>{
+ for(const bad of ['http://127.0.0.1:47823/admin','https://127.0.0.1/x','https://10.1.2.3/x','https://192.168.1.1/x',
+                   'https://nas.local/x','https://172.16.0.9/x','http://docs.google.com/x']){
+  seen.length=0;
+  const hub=fresh(script([redirectTo(bad),html('内网页面')]));
+  await unread(hub,'https://docs.google.com/presentation/d/RD'+seen.length+'/edit');
+  assert.equal(seen.length,1,bad+'：第二跳不该发出去');
+  assert.equal(hub.data.sources[0].titleState,'unread');
+  assert.ok(!/内网页面/.test(hub.data.sources[0].title));
+ }
+});
+
+test('跳转到公网 https 照样跟，标题取到最后那一跳的', async()=>{
+ seen.length=0;
+ const hub=fresh(script([redirectTo('https://www.notion.so/real'),html('Chansey 需求总纲')]));
+ await unread(hub,'https://docs.google.com/presentation/d/RDOK/edit');
+ assert.equal(seen.length,2);
+ assert.equal(seen[1].url,'https://www.notion.so/real');
+ assert.equal(seen[0].redirect,'manual','要自己跟跳转，不能交给 fetch 跟');
+ assert.equal(hub.data.sources[0].title,'Chansey 需求总纲');
+});
+
+test('相对 Location 按当前这一跳解析', async()=>{
+ seen.length=0;
+ const hub=fresh(script([redirectTo('/d/REAL/view'),html('相对跳转的结果')]));
+ await unread(hub,'https://docs.google.com/presentation/d/REL/edit');
+ assert.equal(seen[1].url,'https://docs.google.com/d/REAL/view');
+ assert.equal(hub.data.sources[0].title,'相对跳转的结果');
+});
+
+test('跳转环最多跟 3 跳就收手', async()=>{
+ seen.length=0;
+ const hub=fresh(script([redirectTo('https://docs.google.com/loop')]));
+ await unread(hub,'https://docs.google.com/presentation/d/LOOPAAAA/edit');
+ assert.equal(seen.length,4,'首请求 + 最多 3 跳');
+ assert.equal(hub.data.sources[0].titleState,'unread');
+});
+
+test('响应体读到 300KB 就断开，不把整个流拉进内存', async()=>{
+ const st={read:0,cancelled:false};
+ const chunks=['<html><head><title>大页面</title></head><body>','x'.repeat(200000),'y'.repeat(200000),'z'.repeat(200000)];
+ const reader={async read(){return st.read<chunks.length?{done:false,value:Buffer.from(chunks[st.read++])}:{done:true};},
+               async cancel(){st.cancelled=true;},releaseLock(){}};
+ const hub=fresh(async()=>({ok:true,status:200,headers:{get:k=>String(k).toLowerCase()==='content-type'?'text/html':null},
+                            body:{getReader:()=>reader},text:async()=>{throw Error('不该一次性读完');}}));
+ await unread(hub,'https://docs.google.com/presentation/d/BIGPAGE1/edit');
+ assert.equal(hub.data.sources[0].title,'大页面');
+ assert.equal(st.read,3,'读到超过上限的那一块就停，第 4 块不该再读');
+ assert.equal(st.cancelled,true,'要主动把流关掉');
+});

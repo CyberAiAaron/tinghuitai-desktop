@@ -12,9 +12,8 @@ const root = path.join(__dirname, '..'), APP = path.join(root, 'app');
 
 // 允许出现厂商名的地方：适配层自己、设置页与安装引导。其余业务代码一个牌子都不许认。
 const BRAND_OK = new Set(['llm.js', 'llm-cli.js', 'cli-llm.js', 'config.js', 'setup-routes.js']);
-// app/share.js 是唯一一处例外，且它不是「选哪家模型」：它起一个无头命令行去用 Aaron 账号里的
-// Slack 连接器发消息（要 ToolSearch 和连接器，适配层给不了）。名单写死在这里，再多一个就让测试红。
-const BRAND_EXEMPT = new Set(['share.js']);
+// 09-22 之前 app/share.js 是唯一一处例外：分享到 Slack 要起一个无头命令行去用账号里的连接器。
+// 审查 X3 把它改成走本机 Slack token 之后，例外没有了——下面那条断言现在是真·全仓。
 
 const appFiles = () => fs.readdirSync(APP).filter(f => /\.(js|py)$/.test(f));
 // 注释和界面文案里留厂商名是允许的，只看会执行的那几行
@@ -39,10 +38,10 @@ test('Python 管线里没有厂商分支：不再有 claude / codex 的字面量
   }
 });
 
-test('命令行牌子只剩一处例外（分享到 Slack 那条，不是模型选型），多一处就得先说明', () => {
+test('适配层之外一个命令行牌子都不剩（多一处就得先说明）', () => {
   // 只认「当成牌子用」的写法：引号里正好是 claude / codex，或带版本号的模型名。CLAUDE.md 这种文件名不算。
   const hits = appFiles().filter(f => !BRAND_OK.has(f) && /['"](claude|codex)['"]|claude-[a-z0-9]+-[\d-]+/.test(code(f)));
-  assert.deepEqual(hits.sort(), [...BRAND_EXEMPT].sort());
+  assert.deepEqual(hits.sort(), []);
 });
 
 test('Python 只有一个模型入口：ask_model 起 llm-cli.js，自己不 spawn 任何命令行、不打 HTTP', () => {
