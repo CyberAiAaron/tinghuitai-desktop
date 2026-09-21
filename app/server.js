@@ -225,7 +225,7 @@ class Session {
     this.startTs = Date.now(); this.lastFinalTs = Date.now(); this.lastAudioTs = Date.now();
     this.journalPath=path.join(DATA,'state','live-sessions',this.id+'.json');
     const recovered=journal.read(this.journalPath);if(recovered?.complete)throw Error('本场已结束，请开始新会议');
-    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','uiLang','transcriptionGapSeconds','browserGapSeconds'])if(recovered[k]!==undefined)this[k]=recovered[k];this.startTs=recovered.startTs||this.startTs;}
+    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds'])if(recovered[k]!==undefined)this[k]=recovered[k];this.startTs=recovered.startTs||this.startTs;}
 
     try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
@@ -283,7 +283,25 @@ class Session {
       this.broadcast({ type: 'memory', count: cards ? cards.length : 0 });
     } catch (e) { log('memory 会中刷新失败 ' + e.message); }
   }
-  checkpoint(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,uiLang:this.uiLang,notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
+  checkpoint(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
+  // 会中把要点分好的那棵议题树（web/src/12-grouping.js 的 hlGroups）。分组在浏览器里算，
+  // 会后回看页要看到同一套议题划分，所以每排完一轮就送过来存一份，归档时跟着会话一起落盘。
+  setOutline(groups) {
+    if (!Array.isArray(groups)) return;
+    const clean = [];
+    for (const g of groups.slice(0, 12)) {
+      if (!g || typeof g.title !== 'string' || !g.title.trim()) continue;
+      clean.push({ title: g.title.slice(0, 120), summary: String(g.summary || '').slice(0, 600),
+        status: g.status === 'unresolved' ? 'unresolved' : 'settled',
+        from: Number(g.from) || 0, to: Number(g.to) || 0,
+        points: (Array.isArray(g.points) ? g.points : []).slice(0, 12)
+          .filter(p => p && typeof p.text === 'string' && p.text.trim())
+          .map(p => ({ text: p.text.slice(0, 200), at: Number(p.at) || 0, seg: String(p.seg || '').slice(0, 40) })) });
+    }
+    if (!clean.length) return;
+    this.hlGroups = { groups: clean, at: Date.now() };
+    this.checkpoint();
+  }
   applyTranscriptEdits(edits) {
     if(!Array.isArray(edits))return;
     if(this.finalized){ this.broadcast({type:'error',message:'这场已经结束，改动没有保存。请到会议档案里改。'}); return; }
@@ -722,7 +740,7 @@ class Session {
     this.checkpoint(); clearInterval(this.journalTimer); await this.closeAudio();
     let saved=false;
     try {
-      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||''};
+      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||''};
       // 这一场里，你纠正过的词有没有再错。这是「回流到底有没有用」的唯一证据。
       try {
         const mem = require('./memory');
@@ -1663,6 +1681,8 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const sid = String(j.id || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
     try {
       if (p.endsWith('/meeting-brief')) return reply(200, { ok:true, ...meetingPipeline.brief(sid) });
+      // 同一个口做两件事：改议题的决定状态，和答「需要你定一下」。两件都是「改一处就写回存档」，不另开路由。
+      if (j.decision !== undefined) { const d = meetingPipeline.setDecision(sid, j.topic, String(j.decision || '')); return reply(200, { ok:true, n: d.n, decision: d.decision }); }
       const r = meetingPipeline.answer(sid, String(j.qid || ''), Number(j.choice), j.text);
       let written = 0; try { written = await briefToMemory(r.session); } catch (e) { log('回看页：写会议记忆失败 ' + e.message); }
       return reply(200, { ok:true, value: r.value, memory: written });
@@ -2025,6 +2045,7 @@ wss.on('connection', (ws, req) => {
         ws.__session = session;
         ws.send(JSON.stringify(session.snapshot()));
       } else if (msg.type === 'notes') { if(session)session.notes=String(msg.notes||'').slice(0,20000); } else if (msg.type === 'uiLanguage') { if (session) session.uiLang=msg.language==='en'?'en':'zh'; } else if (msg.type === 'names') { if (session) session.setNames(msg.names); }
+      else if (msg.type === 'outline') { if (session && !session.finalized && role === 'speaker' && !isView) session.setOutline(msg.groups); }
       else if(msg.type==='assistantPatch'){
         if(!session||session.finalized||role!=='speaker'||isView){ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,error:'当前连接不能修改此会议'}));return;}
         if(typeof msg.requestId!=='string'||msg.requestId.length>80||!Array.isArray(msg.patches)||msg.patches.length>80||typeof msg.brief!=='string'||msg.brief.length>30000){ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,error:'修改内容格式无效'}));return;}
@@ -2034,7 +2055,7 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,applied:result.applied,skipped:result.skipped,saved}));
       }
       else if (msg.type === 'spk') { if (session) session.applySpk(msg); }
-      else if (msg.type === 'end') { if (session) {if(typeof msg.notes==='string')session.notes=msg.notes.slice(0,20000);session.applyTranscriptEdits(msg.transcriptEdits);session.browserGapSeconds=Math.max(0,Math.min(Number(msg.browserGapSeconds)||0,86400));session.finalize('end 帧');} }
+      else if (msg.type === 'end') { if (session) {if(typeof msg.notes==='string')session.notes=msg.notes.slice(0,20000);if(msg.outline&&role==='speaker'&&!isView)session.setOutline(msg.outline);session.applyTranscriptEdits(msg.transcriptEdits);session.browserGapSeconds=Math.max(0,Math.min(Number(msg.browserGapSeconds)||0,86400));session.finalize('end 帧');} }
     } else if (session && role === 'speaker') { session.sendAudio(resamplePCM16(data, rate, 16000)); }
   });
   ws.on('close', () => {

@@ -83,9 +83,18 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   const value=String(text||'').trim().slice(0,40)||q.options[choice];
   for(const f of q.affects||[]){const m=/^speaker:S?(\w{1,12})$/i.exec(f);if(m&&value){e.names={...(e.names||{}),[m[1]]:value};}}
   write(p.enhanced,e);return{question:q,value,session:e};}
+ // 议题的决定状态（已一致 / 待讨论 / 有分歧 / 搁置）：模型先给一版，他点一下改掉的存进 brief.decisions。
+ // 和「需要你定一下」的回答共用 /meeting-answer 这一个写入口，不另开第二个。重跑整理时 brief_job 会把它留住。
+ const DECISIONS=['已一致','待讨论','有分歧','搁置'];
+ function setDecision(id,n,decision){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))throw Error('找不到这场会');const e=read(p.enhanced);
+  const topics=((e.brief||{}).topics)||[];if(!topics.length)throw Error('这场会还没有议题');
+  const num=Number(n);if(!topics.some(t=>Number(t.n)===num))throw Error('没有这个议题');
+  if(!DECISIONS.includes(decision))throw Error('状态不对');
+  e.brief.decisions={...(e.brief.decisions||{}),[String(num)]:decision};
+  write(p.enhanced,e);return{n:num,decision,session:e};}
  // 认人（会后一屏）把名字写进归档结果的 names。空串 = 清掉这个名字，认错了要能改回来。
  function setNames(id,patch){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))return null;const e=read(p.enhanced);const names={...(e.names||{})};
   for(const [k,v] of Object.entries(patch||{})){if(v)names[k]=v;else delete names[k];}
   e.names=names;write(p.enhanced,e);return e;}
- const api={brief,briefState,answer,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>clearInterval(timer)};managers.set(dir,api);return api;
+ const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>clearInterval(timer)};managers.set(dir,api);return api;
 };

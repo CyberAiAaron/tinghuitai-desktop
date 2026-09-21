@@ -100,7 +100,18 @@ time.play{cursor:pointer}
 .bf-table td:nth-child(n+2),.bf-table th:nth-child(n+2){white-space:nowrap}
 .bf-sug{color:var(--faint)}
 .bf-card{border:1px solid var(--line);border-radius:10px;padding:12px;margin:0 0 10px}
-.bf-card h3{display:flex;gap:8px;align-items:center;font-size:14px;margin:0 0 8px}
+.bf-card h3{display:flex;gap:8px;align-items:center;font-size:14px;margin:0 0 8px;flex-wrap:wrap}
+.bf-card h3 .bf-ttl{flex:1;min-width:0}
+/* 议题的决定状态：徽标本身就是改它的按钮，点一下就地变成四个选项 */
+.bf-dec{flex:none;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);border-radius:999px;padding:1px 10px;font:11px var(--mono);cursor:pointer}
+.bf-dec:hover{border-color:var(--live)}
+.bf-dec.ok{background:#e6f4ea;color:#1e7e34;border-color:#cbe6d4}
+.bf-dec.bad{background:#fdecea;color:#b3261e;border-color:#f3d3cf}
+.bf-dec.mute{background:var(--panel-2);color:var(--faint)}
+.bf-dec-pick{display:flex;flex-wrap:wrap;gap:6px}
+.bf-dec-pick .bf-opt{font-size:12px;padding:2px 10px}
+.bf-quote{color:var(--muted);font-size:12.5px;line-height:1.55;margin:3px 0 0}
+
 .bf-card ul{margin:6px 0 0;padding-left:18px}.bf-card li{margin:3px 0}
 .bf-open{color:var(--muted);font-size:13px;margin-top:8px}
 .bf-t{border:0;background:var(--panel-2);color:var(--muted);font:11px var(--mono);border-radius:6px;padding:1px 6px;margin-left:6px;cursor:pointer}
@@ -155,11 +166,11 @@ time.play{cursor:pointer}
 .spk-who{font:12px var(--mono);background:var(--panel-2);border-radius:6px;padding:2px 8px}
 .spk-lines{color:var(--faint);font-size:12px}
 .spk-name{font-weight:500}
-.spk-samples{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin:2px 0 2px 2px}
+.spk-samples{flex-basis:100%;min-width:0;display:flex;flex-direction:column;gap:4px;margin:2px 0 2px 2px}
 .spk-clip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:4px 12px;font:inherit;font-size:12.5px;cursor:pointer;text-align:left;max-width:100%}
 .spk-clip:hover{border-color:var(--live)}
 .spk-clip .t{font:11px var(--mono);color:var(--muted);flex:none}
-.spk-clip .q{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spk-clip .q{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .spk-acts{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .spk-acts button{border:1px solid var(--line);background:#fff;color:var(--text);border-radius:16px;padding:3px 12px;font:inherit;font-size:13px;cursor:pointer}
 .spk-acts button:hover{border-color:var(--live)}
@@ -182,8 +193,8 @@ time.play{cursor:pointer}
 <section id="spk-box" class="spk-box" hidden></section>
 <div id="ask-box" class="bf-ask" hidden></div>
 <div class="bf-grid" id="bf-grid" hidden>
-  <section class="pane bf-sum"><h2>智能总结</h2><div class="bf-body" id="bf-sum"></div></section>
-  <aside class="pane bf-rev"><h2>Claude 点评与指导</h2><div class="bf-body" id="bf-rev"></div></aside>
+  <section class="pane bf-sum"><h2><span id="bf-sum-h">智能总结</span><span style="flex:1"></span><button type="button" class="btn sm" id="bf-view">展开完整</button></h2><div class="bf-body" id="bf-sum"></div></section>
+  <aside class="pane bf-rev"><h2><span id="bf-rev-h">Claude 点评与指导</span></h2><div class="bf-body" id="bf-rev"></div></aside>
 </div>
 <div class="pane" id="legacy-box" hidden style="margin-bottom:14px"><h2>智能总结（旧版）<span style="flex:1"></span><button type="button" class="btn sm" id="bf-build">整理成新版</button></h2><div class="bf-body md" id="summary"></div></div>
 <details class="pane bf-tr" id="tr-box"><summary><h2>逐字稿 <span class="count" id="c-tr"></span></h2></summary><div class="scroll tr" id="transcript"></div></details>
@@ -207,4 +218,4 @@ time.play{cursor:pointer}
     <div class="rv-done" id="rv-done" hidden></div>
   </div>
 </div>
-<script src="archive.js?v=7"></script></body></html>
+<script src="archive.js?v=10"></script></body></html>
