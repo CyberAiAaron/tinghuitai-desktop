@@ -79,10 +79,8 @@ const mmss=sec=>{sec=Math.max(0,Math.round(sec||0));const h=Math.floor(sec/3600)
 const L={sum:['智能总结','Summary'],rev:['Claude 点评与指导','Claude review'],
   topics:['议题与时间分布','Topics and timeline'],keyc:['核心结论','Key conclusions'],todos:['待办','Action items'],
   detail:['议题展开','Topics in detail'],showFull:['展开完整','Show full'],showBrief:['只看结论','Conclusions only'],
-  colWhat:['事项','Item'],colWho:['负责人','Owner'],colDue:['期限','Due'],tbd:['未定','TBD'],suggested:['建议','suggested'],
   open:['未决：','Open: '],noConc:['未形成结论','No conclusion reached'],srcLine:['原句','Source'],
-  errs:['可能讲错的','Possibly wrong'],facts:['补充背景','Background'],align:['和项目目标的关系','Against project goals'],
-  advice:['建议怎么做','What to do'],checked:['我核过的','What I verified'],
+  facts:['补充背景','Background'],align:['和项目目标的关系','Against project goals'],
   noCtx:['未接项目背景，以下只依据会内内容。','No project context attached; this is based on the meeting alone.'],
   revFail:['点评这次没生成出来：','Review did not come through: '],revNone:['点评尚未生成。','Review not generated yet.'],
   inferred:['会内推断','inferred from the meeting'],by:['依据：','Source: '],
@@ -134,7 +132,6 @@ function renderBrief(s){
   $('#bf-sum-h').textContent=t('sum');$('#bf-rev-h').textContent=t('rev');
   const map=spkMap(s), ov=b.overview, dur=Math.max(b.duration||0,...ov.topics.map(x=>x.to||0),1);
   let bar='',pos=0;ov.topics.forEach((x,i)=>{const f=Math.max(pos,x.from||0),to=Math.max(f,x.to||0);if(f>pos)bar+='<i class="gap" style="width:'+((f-pos)/dur*100)+'%"></i>';bar+='<i data-sec="'+f+'" title="'+esc(x.title)+' '+mmss(f)+'–'+mmss(to)+'" style="width:'+((to-f)/dur*100)+'%;background:'+COLORS[i%COLORS.length]+'">'+x.n+'</i>';pos=to;});
-  const todoRows=ov.todos.map(x=>'<tr><td>'+nm(x.what,map)+'</td><td>'+(x.owner?(x.ownerSource==='suggested'?'<span class="bf-sug">'+nm(x.owner,map)+' · '+t('suggested')+'</span>':nm(x.owner,map)):'<span class="bf-sug">'+t('tbd')+'</span>')+'</td><td>'+(x.due?esc(x.due):'<span class="bf-sug">'+t('tbd')+'</span>')+'</td></tr>').join('');
   // 一个议题一张卡片：速览只留结论和状态，完整才展开要点和原话。开关只有 #bf-view 那一个。
   const quote=seg=>seg?(segText.get(String(seg))||''):'';
   const card=(c,i)=>{const head=ov.topics[i]||{},v=decOf(b,c),editing=decEditing.has(String(c.n));
@@ -150,19 +147,21 @@ function renderBrief(s){
     (b.meta&&b.meta.scope?'<p class="bf-scope">'+nm(b.meta.scope,map)+'</p>':'')
     +'<div class="bf-h">'+esc(t('topics'))+'</div><ul class="bf-topics">'+ov.topics.map((x,i)=>'<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><span>'+nm(x.title,map)+'</span><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>').join('')+'</ul><div class="bf-bar">'+bar+'</div>'
     +(ov.conclusions.length?'<div class="bf-h">'+esc(t('keyc'))+'</div>'+ov.conclusions.map(c=>'<div class="bf-key">'+nm(c,map)+'</div>').join(''):'')
-    +(ov.todos.length?'<div class="bf-h">'+esc(t('todos'))+'</div><table class="bf-table"><tr><th>'+esc(t('colWhat'))+'</th><th>'+esc(t('colWho'))+'</th><th>'+esc(t('colDue'))+'</th></tr>'+todoRows+'</table>':'')
+    // REQ-009：待办不再是一张点不动的表。这里只留三个空壳，内容由 paintActions() 填——
+    // 它读的是 /meeting-actions（会后自动备好的卡、草稿、预研究），和总结不是同一份数据。
+    +'<div id="bf-cards"></div><div id="bf-think"></div><div id="bf-risks"></div>'
     +'<div class="bf-h">'+esc(t('detail'))+'</div>'+(b.topics||[]).map(card).join('');
   const view=$('#bf-view');view.textContent=viewFull?t('showBrief'):t('showFull');view.onclick=()=>{setViewFull(!viewFull);render(record);};
   $('#bf-sum').querySelectorAll('[data-dec]').forEach(el=>el.onclick=()=>{decEditing.add(el.dataset.dec);render(record);});
   $('#bf-sum').querySelectorAll('[data-dec-set]').forEach(el=>el.onclick=()=>{const [n,v]=el.dataset.decSet.split('|');saveDecision(Number(n),v);});
+  paintActions();
+  // REQ-009：点评里删掉了三块——逐句挑错、夸「哪些说对了」都不是重点（Aaron 09-20「很鸡肋」），
+  // 「建议」那一区搬去了待办卡。和事实源硬冲突的那几条，现在以风险提示的形式出现在待办卡下面。
   const r=b.review, sec=(h,items)=>items&&items.length?'<div class="bf-h">'+esc(h)+'</div>'+items.join(''):'';
   $('#bf-rev').innerHTML=!r?'<p class="bf-note">'+(b.reviewWarning?esc(t('revFail'))+esc(b.reviewWarning):esc(t('revNone')))+'</p>':
     ((r.contextLoaded?'':'<p class="bf-note">'+esc(t('noCtx'))+'</p>')
-    +sec(t('errs'),r.errors.map(e=>'<div class="bf-item"><div class="bf-q">「'+nm(e.quote,map)+'」'+tbtn(e.at,e.seg)+'</div><div>→ '+nm(e.why,map)+'</div><div class="bf-src">'+esc(t('by'))+esc(e.source||t('inferred'))+' · '+esc(e.confidence)+'</div></div>'))
     +sec(t('facts'),r.facts.map(f=>'<div class="bf-item">'+nm(f.text,map)+(f.source?'<div class="bf-src">'+esc(f.source)+'</div>':'')+'</div>'))
-    +sec(t('align'),r.alignment.map(a=>'<div class="bf-item"><span class="bf-tag '+(a.status==='推进'?'ok':a.status==='偏离'?'bad':'')+'">'+esc(a.status)+'</span><b>'+esc(a.goal)+'</b><div>'+nm(a.note,map)+'</div></div>'))
-    +sec(t('advice'),r.advice.map((a,i)=>'<div class="bf-item"><span class="bf-tag">'+(i+1)+'</span>'+nm(a,map)+'</div>'))
-    +sec(t('checked'),r.checked.map(c=>'<div class="bf-item"><span class="bf-tag '+(c.result==='已核实'?'ok':c.result==='矛盾'?'bad':'')+'">'+esc(c.result)+'</span>'+nm(c.claim,map)+(c.note?'<div class="bf-src">'+nm(c.note,map)+'</div>':'')+'</div>')));
+    +sec(t('align'),r.alignment.map(a=>'<div class="bf-item"><span class="bf-tag '+(a.status==='推进'?'ok':a.status==='偏离'?'bad':'')+'">'+esc(a.status)+'</span><b>'+esc(a.goal)+'</b><div>'+nm(a.note,map)+'</div></div>')));
   // 问「S2 是谁」的题不在这里出现了：认人只有上面那一个入口（#spk-box），两处都问会互相顶。
   const qs=(b.questions||[]).filter(q=>!(q.affects||[]).some(f=>/^speaker:/i.test(f)));ask.hidden=!qs.length;
   if(qs.length){const ans=b.answers||{};
@@ -181,7 +180,7 @@ function renderBrief(s){
 // ===== 会后一屏认人 =====
 // 谁还没名字、他说过哪几句、候选人是谁，都由 /meeting-speakers 算好。这里只负责：听一段、点一下、当场全页换名。
 // 认人只有这一个入口——「需要你定一下」里问说话人的题已经隐藏（见 renderBrief）。
-let spkRows=null,spkOpen=false,spkNote='',spkNoteBad=false,spkNoteFor='',spkAudio=null,spkPlaying='';
+let spkRows=null,spkOpen=false,spkAll=false,spkNote='',spkNoteBad=false,spkNoteFor='',spkAudio=null,spkPlaying='';
 const spkLabel=k=>k==='me'?'我':k==='them'?'对方':'S'+k;
 async function loadSpeakers(){
   if(source!=='mac')return;
@@ -200,8 +199,10 @@ function paintSpeakers(){
     $('#spk-edit').onclick=()=>{spkOpen=true;spkNote='';spkNoteFor='';paintSpeakers();};
     return;
   }
+  // 声音一多（一场会常有 8–10 个编号）整块会把总结挤到两屏以下。先只摆说话最多的 3 个——逐字稿大头就是他们，其余一键展开。
+  const many=spkRows.length>3&&!spkAll,shown=many?spkRows.slice(0,3):spkRows,restLines=many?spkRows.slice(3).reduce((n,r)=>n+(r.lines||0),0):0;
   box.innerHTML='<h2>这场会里的人</h2><p class="spk-hint">'+(left?'还有 '+left+' 个人没名字。听一句，点个名字，逐字稿、总结、待办里的编号当场全换过来。':'都认完了，点名字可以改。')+'</p>'
-    +spkRows.map(r=>'<div class="spk-row" data-spk="'+esc(r.spk)+'"><span class="spk-who">'+esc(spkLabel(r.spk))+'</span><span class="spk-lines">'+r.lines+' 句</span>'
+    +shown.map(r=>'<div class="spk-row" data-spk="'+esc(r.spk)+'"><span class="spk-who">'+esc(spkLabel(r.spk))+'</span><span class="spk-lines">'+r.lines+' 句</span>'
       +(r.name?'<span class="spk-name">'+esc(r.name)+'</span>':'')
       +'<div class="spk-samples">'+(r.samples.length
         ? r.samples.map(x=>'<button type="button" class="spk-clip" data-clip="'+esc(r.spk)+'|'+x.start+'|'+x.dur+'"><span class="t">'+(hasAudio?'▶ ':'')+mmss(x.start)+'</span><span class="q">'+esc(x.text)+'</span></button>').join('')
@@ -209,7 +210,9 @@ function paintSpeakers(){
       +'<div class="spk-acts">'+r.candidates.map(c=>'<button type="button" data-pick="'+esc(c)+'">'+esc(c)+'</button>').join('')
       +'<input type="text" placeholder="或者自己填，回车保存" value="'+esc(r.name||'')+'">'
       +'<button type="button" class="self" data-pick="本人">是本人</button>'
-      +'<span class="spk-state'+(spkNoteFor===r.spk&&spkNoteBad?' bad':'')+'">'+(spkNoteFor===r.spk?esc(spkNote):'')+'</span></div></div>').join('');
+      +'<span class="spk-state'+(spkNoteFor===r.spk&&spkNoteBad?' bad':'')+'">'+(spkNoteFor===r.spk?esc(spkNote):'')+'</span></div></div>').join('')
+    +(many?'<div class="spk-done"><span>'+T('还有 '+(spkRows.length-3)+' 个声音，共 '+restLines+' 句','+'+(spkRows.length-3)+' more voices, '+restLines+' lines')+'</span><button type="button" id="spk-all">'+T('展开','Show all')+'</button></div>':'');
+  if(many)$('#spk-all').onclick=()=>{spkAll=true;paintSpeakers();};
   box.querySelectorAll('.spk-row').forEach(row=>{const spk=row.dataset.spk;
     row.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>saveSpeaker(spk,b.dataset.pick,row));
     const input=row.querySelector('input');
@@ -243,6 +246,186 @@ async function saveSpeaker(spk,name,row){
     render(record);                                        // 全页的 S 编号当场换成人名
   }catch(e){spkNote='没存上：'+(e.message||e);spkNoteBad=true;paintSpeakers();}
 }
+// ===== 会后处理台（REQ-009）=====
+// 这一屏的目标：看完这场会产生的事就已经清掉了，每件事只点一次。
+// 卡片、草稿、预研究都是会后自动备好的（/meeting-actions），这里只负责显示和「点那一下」。
+// 外发只有一条路：把草稿改完，点「发出 / 派发」。没有任何别的按钮会往外发东西。
+const T=(zh,en)=>uiLang==='en'?en:zh;
+const KIND_LABEL=k=>({meeting:T('我要组织的会','Meeting to set up'),research:T('让我做的研究','Research for me'),
+  delegate:T('派给别人','Delegate'),self:T('我自己做',"I'll do it")}[k]||k);
+let actData=null,actStatus='',actTimer=null,actOpen=new Set(),actNote=new Map(),actFocus=null;
+const actTok=()=>encodeURIComponent(settings.relayToken||'');
+
+async function loadActions(){
+  if(source!=='mac')return;
+  try{
+    const r=await fetch('/asr-relay/meeting-actions?id='+encodeURIComponent(id)+'&token='+actTok(),{cache:'no-store',signal:AbortSignal.timeout(15000)});
+    const j=await r.json();
+    actStatus=j.status||'';
+    if(j.status==='done'){actData=j.actions;stopActPoll();}
+    else if(j.status==='running'&&!actTimer)actTimer=setInterval(loadActions,4000);   // 跑完自己更新，不用他刷新
+    else if(j.status!=='running')stopActPoll();
+  }catch(e){actStatus='error';actNote.set('*',T('读不到处理台数据：','Could not load: ')+(e.message||e));stopActPoll();}
+  paintActions();
+}
+function stopActPoll(){if(actTimer){clearInterval(actTimer);actTimer=null;}}
+// 「项目现在最重要的三件事」每天全项目共用一份，不每场重算——每场重算它会漂，漂了就没人信。
+async function loadFocus(){
+  if(source!=='mac')return;
+  try{const r=await fetch('/asr-relay/project-focus?token='+actTok(),{cache:'no-store',signal:AbortSignal.timeout(20000)});
+      actFocus=await r.json();}catch(e){actFocus=null;}
+  paintActions();
+}
+function paintActions(){
+  const box=document.getElementById('bf-cards');if(!box)return;
+  const think=document.getElementById('bf-think'),risks=document.getElementById('bf-risks');
+  if(!actData){
+    box.innerHTML=actStatus==='running'
+      ? '<div class="bf-h">'+esc(t('todos'))+'</div><p class="bf-note">'+T('正在把这场会产生的事整理成卡片（通常 1–3 分钟），好了这里会自己出现。','Turning this meeting into action cards (usually 1–3 min). It will appear here on its own.')+'</p>'
+      : (actStatus==='unavailable'||actStatus==='error'
+        ? '<div class="bf-h">'+esc(t('todos'))+'</div><p class="bf-note">'+esc(actNote.get('*')||T('这场会还没整理出待办和建议。','No to-dos or advice from this meeting yet.'))+'</p>'
+        : '');
+    if(think)think.innerHTML='';if(risks)risks.innerHTML='';
+    return;
+  }
+  const cards=actData.cards||[],live=cards.filter(c=>c.state!=='dismissed'),hidden=cards.filter(c=>c.state==='dismissed');
+  box.innerHTML='<div class="bf-h">'+esc(t('todos'))+' <span class="bf-sug">'+live.length+'</span></div>'
+    +(actData.classifiedBy==='rules'?'<p class="bf-note">'+T('这批分类是按关键词判的（模型这次没回应），类型可能要你自己调。','Typed by keyword rules this time (the model did not answer).')+'</p>':'')
+    +(live.length?live.map(actCard).join(''):'<p class="bf-note">'+T('这场没有要处理的事。','Nothing to process from this meeting.')+'</p>')
+    +hidden.map(c=>'<div class="bf-undo" data-undo="'+esc(c.id)+'"><span>'+T('已收起','Dismissed')+'「'+esc(c.text.slice(0,40))+'」</span><button type="button">'+T('撤销','Undo')+'</button></div>').join('');
+  if(think)think.innerHTML=thinkHtml();
+  if(risks)risks.innerHTML=risksHtml();
+  wireActions(box);
+}
+function thinkHtml(){
+  const lines=[];
+  if(actData&&actData.thinking&&actData.thinking.position)lines.push(esc(actData.thinking.position));
+  if(actFocus&&actFocus.configured&&(actFocus.items||[]).length)
+    lines.push(T('项目现在最重要的三件事：','Top three for the project right now: ')+esc(actFocus.items.join('；')));
+  if(!lines.length)return '';
+  return '<div class="bf-h">'+T('一句话思考','In one line')+'</div>'+lines.map(x=>'<div class="bf-think">'+x+'</div>').join('');
+}
+// 没有硬冲突时整块不渲染——这里不出现任何「本场没有风险」的空状态，那只是噪音。
+function risksHtml(){
+  const rs=(actData&&actData.risks)||[];if(!rs.length)return '';
+  return '<div class="bf-h">'+T('风险提示','Conflicts')+'</div>'+rs.map(r=>'<div class="bf-risk">'+esc(r.text)
+    +(r.evidence?'<div class="bf-src">'+T('依据：','Source: ')+esc(r.evidence.slice(0,160))+'</div>':'')
+    +(r.link?'<div class="bf-src"><a href="'+esc(r.link)+'" target="_blank" rel="noopener">'+T('看依据','Open source')+' ↗</a></div>':'')+'</div>').join('');
+}
+function actCard(c){
+  const note=actNote.get(c.id)||'';
+  const open=actOpen.has(c.id);
+  return '<div class="bf-act'+(c.state==='sent'?' done':'')+'" data-card="'+esc(c.id)+'">'
+    +'<div class="bf-act-head"><span class="bf-tag k-'+esc(c.kind)+'">'+esc(KIND_LABEL(c.kind))+'</span>'
+    +'<span class="bf-act-text">'+esc(c.text)+'</span>'
+    +'<button type="button" class="bf-x" data-x="'+esc(c.id)+'" title="'+T('我不认这条','Not mine')+'" aria-label="'+T('我不认这条','Not mine')+'">✕</button></div>'
+    +(c.reason?'<div class="bf-act-why">'+esc(c.reason)+'</div>':'')
+    +(c.advice&&c.advice!==c.text?'<div class="bf-act-why">'+T('建议做法：','Suggested: ')+esc(c.advice)+'</div>':'')
+    +(c.researchSkipped?'<div class="bf-act-why">'+esc(c.researchSkipped)+'</div>':'')
+    +(c.sentNote?'<div class="bf-act-why">'+esc(c.sentNote)+'</div>':'')
+    +(c.claimFailed&&c.claimNote?'<div class="bf-act-why">'+esc(c.claimNote)+'</div>':'')
+    +'<div class="bf-act-acts">'+mainAction(c,open)+'<span class="bf-act-state'+(/没|失败|不/.test(note)?' bad':'')+'">'+esc(note)+'</span></div>'
+    +(open?'<div class="bf-draft">'+draftHtml(c)+'</div>':'')
+    +'</div>';
+}
+function mainAction(c,open){
+  if(c.state==='sent'){
+    const cal=c.sentRef&&c.sentRef.type==='calendar';
+    const label=cal?T('已发出 · 看日历','Sent · open calendar'):T('已派发 · 看任务','Assigned · open task');
+    return c.sentRef&&c.sentRef.url
+      ? '<a class="bf-go" href="'+esc(c.sentRef.url)+'" target="_blank" rel="noopener">'+label+' ↗</a>'
+      : '<span class="bf-go done">'+label+'</span>';
+  }
+  if(c.state==='claimed')return '<span class="bf-go done">'+T('已进「我的待办」',"In my to-dos")+'</span>';
+  if(c.kind==='self')return '<button type="button" class="bf-go" data-do="claim">'+T('我来做',"I'll do it")+'</button>';
+  const label=c.kind==='meeting'?T('打开日历草稿','Open calendar draft')
+    :c.kind==='delegate'?T('打开任务草稿','Open task draft'):T('看预研究','See pre-research');
+  return '<button type="button" class="bf-go" data-open="1">'+(open?T('收起','Collapse'):label)+'</button>';
+}
+function draftHtml(c){
+  const d=c.draft||{};
+  if(c.kind==='meeting'){
+    if(!d.title&&!(d.slots||[]).length)return '<p class="bf-note">'+T('日历草稿这次没生成出来，下面自己填也能发。','No draft this time — fill it in and send.')+'</p>'+meetingForm({});
+    return meetingForm(d);
+  }
+  if(c.kind==='delegate')return delegateForm(d);
+  if(!d.scope&&!d.expected)return '<p class="bf-note">'+T('预研究这次没跑出来。','The pre-research did not run this time.')+'</p>';
+  return '<div class="bf-pre"><b>'+T('会覆盖什么','Scope')+'</b><p>'+esc(d.scope||'')+'</p>'
+    +((d.sources||[]).length?'<b>'+T('用哪些源','Sources')+'</b><ul>'+d.sources.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ul>':'')
+    +'<b>'+T('预计给出什么结论','Expected conclusion')+'</b><p>'+esc(d.expected||'')+'</p></div>';
+}
+function meetingForm(d){
+  const slots=d.slots||[];
+  return '<label class="bf-f"><span>'+T('标题','Title')+'</span><input type="text" data-f="title" value="'+esc(d.title||'')+'"></label>'
+    +'<label class="bf-f"><span>'+T('议程','Agenda')+'</span><textarea data-f="agenda" rows="3" placeholder="'+T('一行一条','One per line')+'">'+esc((d.agenda||[]).join('\n'))+'</textarea></label>'
+    +'<label class="bf-f"><span>'+T('参会人','Attendees')+'</span><input type="text" data-f="attendees" value="'+esc((d.attendees||[]).join('、'))+'" placeholder="'+T('顿号分隔；留空就先不邀请人','Separated by 、; leave empty to invite nobody')+'"></label>'
+    +(slots.length?'<div class="bf-f"><span>'+T('时间','When')+'</span><div class="bf-slots">'+slots.map((s,i)=>'<label><input type="radio" name="slot-'+Math.random().toString(36).slice(2,7)+'" data-f="pick" value="'+i+'"'+(i?'':' checked')+'> '+esc(whenText(s))+'</label>').join('')+'</div></div>':'')
+    +'<label class="bf-f"><span>'+T('说明','Note')+'</span><textarea data-f="note" rows="2">'+esc(d.note||'')+'</textarea></label>'
+    +'<div class="bf-send"><button type="button" data-do="send">'+T('发出会议邀请','Send invite')+'</button>'
+    +'<span class="bf-note">'+T('点这一下才真发，改完再点。','Nothing goes out until you click this.')+'</span></div>';
+}
+function delegateForm(d){
+  return '<label class="bf-f"><span>'+T('负责人','Assignee')+'</span><input type="text" data-f="assignee" value="'+esc(d.assignee||'')+'"></label>'
+    +'<label class="bf-f"><span>'+T('截止','Due')+'</span><input type="date" data-f="due" value="'+esc(d.due||'')+'">'
+    +(d.dueDefault?'<em class="bf-note">'+T('默认截止，可改','Default due date — change it')+'</em>':'')+'</label>'
+    +'<label class="bf-f"><span>'+T('说明','Description')+'</span><textarea data-f="description" rows="4">'+esc(d.description||'')+'</textarea></label>'
+    +'<label class="bf-f"><span>'+T('相关链接','Links')+'</span><textarea data-f="links" rows="2" placeholder="'+T('一行一个','One per line')+'">'+esc((d.links||[]).join('\n'))+'</textarea></label>'
+    +'<div class="bf-send"><button type="button" data-do="send">'+T('派发','Assign')+'</button>'
+    +'<span class="bf-note">'+T('点这一下才真建飞书任务。','No Feishu task is created until you click this.')+'</span></div>';
+}
+function whenText(s){
+  try{const a=new Date(s.start),b=new Date(s.end);
+    const p=n=>String(n).padStart(2,'0');
+    return (a.getMonth()+1)+'/'+a.getDate()+' '+p(a.getHours())+':'+p(a.getMinutes())+'–'+p(b.getHours())+':'+p(b.getMinutes());
+  }catch(e){return String(s.start||'');}
+}
+function wireActions(box){
+  box.querySelectorAll('[data-undo]').forEach(el=>el.querySelector('button').onclick=()=>actDo(el.dataset.undo,'restore'));
+  box.querySelectorAll('.bf-act').forEach(card=>{
+    const cid=card.dataset.card;
+    const x=card.querySelector('[data-x]');if(x)x.onclick=()=>actDo(cid,'dismiss');
+    const open=card.querySelector('[data-open]');
+    if(open)open.onclick=()=>{if(actOpen.has(cid))actOpen.delete(cid);else actOpen.add(cid);paintActions();};
+    card.querySelectorAll('[data-do]').forEach(b=>b.onclick=()=>actDo(cid,b.dataset.do,readDraft(card)));
+  });
+}
+// 草稿只从这张卡自己的输入框读，不从内存里拼——他看到什么就发什么。
+function readDraft(card){
+  const d={},f=n=>card.querySelector('[data-f="'+n+'"]');
+  const val=n=>{const el=f(n);return el?el.value:undefined;};
+  if(val('title')!==undefined)d.title=val('title').trim();
+  if(val('agenda')!==undefined)d.agenda=val('agenda').split('\n').map(x=>x.trim()).filter(Boolean);
+  if(val('attendees')!==undefined)d.attendees=val('attendees').split(/[、,，;；]/).map(x=>x.trim()).filter(Boolean);
+  if(val('note')!==undefined)d.note=val('note');
+  const picked=card.querySelector('[data-f="pick"]:checked');
+  if(picked)d.pick=Number(picked.value)||0;
+  if(val('assignee')!==undefined)d.assignee=val('assignee').trim();
+  if(val('due')!==undefined)d.due=val('due');
+  if(val('description')!==undefined)d.description=val('description');
+  if(val('links')!==undefined)d.links=val('links').split('\n').map(x=>x.trim()).filter(Boolean);
+  if(!Object.keys(d).length)return undefined;
+  const cur=(actData.cards||[]).find(c=>c.id===card.dataset.card);
+  if(cur&&cur.kind==='meeting'&&cur.draft&&cur.draft.slots)d.slots=cur.draft.slots;   // 时间备选不让他手打，只让他选
+  return d;
+}
+async function actDo(cardId,action,draft){
+  actNote.set(cardId,action==='send'?T('正在发…','Sending…'):T('处理中…','Working…'));
+  paintActions();
+  try{
+    const r=await fetch('/asr-relay/meeting-action?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({id,cardId,do:action,draft}),signal:AbortSignal.timeout(120000)});
+    const j=await r.json();
+    if(!j.ok)throw Error(j.error||T('没成','failed'));
+    actData=j.actions;
+    if(action==='send'){actOpen.delete(cardId);actNote.set(cardId,'');}
+    else if(action==='claim')actNote.set(cardId,j.card.claimNote||'');
+    else if(action==='save-draft')actNote.set(cardId,T('草稿已存','Draft saved'));
+    else actNote.set(cardId,'');
+  }catch(e){actNote.set(cardId,(action==='send'?T('没发出去：','Not sent: '):T('没成：','Failed: '))+(e.message||e));}
+  paintActions();
+}
+
+
 // 点一个要点 → 落到逐字稿里那一句。带段落 id 的落到「就是这一句」；只有时间的按时间找最近的一句。
 function jumpTo(sec,seg){
   seekTo(sec);const box=$('#tr-box');box.open=true;
@@ -371,7 +554,7 @@ function jumpFromHash(){const m=/(?:^|[#&])t=(\d+(?:\.\d+)?)/.exec(location.hash
 window.addEventListener('hashchange',jumpFromHash);
 (async()=>{
   if(!id){$('#title').textContent='缺少会议编号';return;}
-  try{const s=await fromMac();source='mac';await probeAudio();render(s);loadSpeakers();jumpFromHash();}
+  try{const s=await fromMac();source='mac';await probeAudio();render(s);loadSpeakers();loadActions();loadFocus();jumpFromHash();}
   catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);jumpFromHash();}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
 })();
 

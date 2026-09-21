@@ -240,6 +240,10 @@ class Session {
       this.memoryCards = ops.retrieve(DATA, q, { log });
       this.memoryBlock = ops.toPromptBlock(this.memoryCards);
     } catch (e) { log('memory retrieve 失败 ' + e.message); }
+    // REQ-009 回流：上几场会后已经发出去的会议邀请和派发的任务，开场就带上，
+    // 否则这场又要 Aaron 自己口头转述一遍「那件事我已经发了」。
+    try { this.memoryBlock += require('./actions').sentDigest(path.join(DATA, 'state/meeting-pipeline')); }
+    catch (e) { log('已发出的事没带上 ' + e.message); }
     this.triageTimer = setInterval(() => this.runTriage(), 25000);
     // 开场检索用的是会议标题和参会人，会开到一半议题往往已经变了。
     // 每 4 分钟按最近说过的话重新检索一次，让调出来的旧决定跟得上当前话题。
@@ -996,6 +1000,24 @@ function afterArchive(sid){
       .then(()=>ops.project(DATA,path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'),log))
       .catch(e=>log('补齐会议记忆失败 '+sid+' '+e.message));
   }catch(e){log('补齐会议记忆没起来 '+sid+' '+e.message);}},2000).unref?.();
+  // REQ-009：会后处理台的待办卡、草稿、预研究，归档跑完就在后台备好，不等他点开页面。
+  setTimeout(()=>{try{ensureActionsFor(sid);}catch(e){log('会后处理台没起来 '+sid+' '+e.message);}},5000).unref?.();
+}
+// 会后处理台：这一场的参会人（对上的那场日历 + 已记下的参会人）和生成参数在这里拼一次，
+// 后台自动跑和页面来问走同一条路，免得两处各拼一份、结果还不一样。
+const ACTIONS_DIR=path.join(DATA,'state/meeting-pipeline');
+function actionsOpts(sid){
+  const enhanced=meetingPipeline.result(sid);
+  const file=pendingFileFor(sid),pend=file?journal.read(file):null;
+  const ev=((pend&&pend.calendar)||{}).event||{};
+  const attendees=[...(ev.attendees||[]),...((readTitles()[String(sid)]||{}).participants||[])];
+  return {dir:ACTIONS_DIR,sessionId:String(sid),enhanced,attendees,env:loadEnv(),dataDir:DATA,log};
+}
+// brief 还没出来就先不跑：没有待办也没有建议，生成的是一份空卡片列表，反倒要他再点一次。
+function ensureActionsFor(sid){
+  const opts=actionsOpts(sid);
+  if(!opts.enhanced||!((opts.enhanced.brief||{}).overview))return false;
+  return require('./actions').ensureBackground(opts);
 }
 // P-11：抽卡失败过的会，后台自己补跑，不用他去点。
 // 一次只补一场（抽卡要调模型），正在开会时不跑（会议优先），最多试 3 次（见 memory-ops.failedMeetings）。
@@ -1648,7 +1670,10 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (req.method === 'GET') {
       const sid = String(u.searchParams.get('id') || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
       const st = meetingPipeline.briefState(sid);
-      if (st.state === 'done' && !briefMemorized.has(sid + ':' + (st.started || ''))) { briefMemorized.add(sid + ':' + (st.started || '')); try { await briefToMemory(meetingPipeline.result(sid)); } catch (e) { log('回看页：写会议记忆失败 ' + e.message); } }
+      if (st.state === 'done' && !briefMemorized.has(sid + ':' + (st.started || ''))) { briefMemorized.add(sid + ':' + (st.started || '')); try { await briefToMemory(meetingPipeline.result(sid)); } catch (e) { log('回看页：写会议记忆失败 ' + e.message); }
+        // 重新整理过一次，待办和建议都换了：处理台跟着重跑一遍（你已经打叉 / 已发出的那几张按文本对回来，不丢）。
+        // briefMemorized 只活在内存里，服务一重启每场会第一次打开都会走到这儿——所以只在整理结果真的换了一版时才重跑，不白烧模型。
+        try { const o = actionsOpts(sid), A = require('./actions'), have = A.read(ACTIONS_DIR, sid); if (o.enhanced && (o.enhanced.brief || {}).overview && (!have || String(have.briefAt || '') !== String(o.enhanced.brief.at || ''))) A.ensure({ ...o, force: !!have }); } catch (e) { log('会后处理台重跑没起来 ' + e.message); } }
       return reply(200, st);
     }
     if (req.method !== 'POST') return reply(405, { ok:false });
@@ -1709,6 +1734,44 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       let hub = false; try { hub = !!(workHub.hub.applySpeakerNames && workHub.hub.applySpeakerNames(sid, out.names)); } catch (e) { log('认人：工作台更新失败 ' + e.message); }
       log('speaker-confirm ' + sid + ' ' + Object.keys(patch).join(',') + (hub ? ' hub' : ''));
       return reply(200, { ok:true, names: out.names, speakers: out.speakers, memory, hub });
+    } catch (e) { return reply(e.code === 404 ? 404 : 400, { ok:false, error: e.message }); }
+  }
+  // ===== 会后处理台（REQ-009）：待办卡 / 一句话思考 / 风险提示 =====
+  // 三个口：读整份、对一张卡做一个动作、读今天的「最重要的三件事」。
+  // 外发只有 do:'send' 这一条路——读和生成都不会碰 lark-cli。
+  if (p.endsWith('/meeting-actions') || p.endsWith('/meeting-action') || p.endsWith('/project-focus')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const actions = require('./actions');
+    const okId = v => /^[A-Za-z0-9_-]{1,80}$/.test(v);
+    if (p.endsWith('/project-focus')) {
+      if (req.method !== 'GET') { res.writeHead(405); return res.end('method not allowed'); }
+      try { return reply(200, { ok: true, ...(await actions.projectFocus({ dataDir: DATA, env: loadEnv(), log })) }); }
+      catch (e) { return reply(200, { ok: true, configured: false, items: [], error: String(e.message || e).slice(0, 200) }); }
+    }
+    if (p.endsWith('/meeting-actions')) {
+      if (req.method !== 'GET') { res.writeHead(405); return res.end('method not allowed'); }
+      const sid = String(u.searchParams.get('id') || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
+      const opts = actionsOpts(sid);
+      const have = actions.read(ACTIONS_DIR, sid);
+      if (have) return reply(200, { ok:true, status:'done', actions: have });
+      if (!opts.enhanced || !((opts.enhanced.brief || {}).overview))
+        return reply(200, { ok:true, status:'unavailable', error:'这场会还没整理出待办和建议' });
+      actions.ensure(opts);
+      return reply(200, { ok:true, status:'running' });
+    }
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method not allowed'); }
+    const parts = []; let size = 0; for await (const c of req) { size += c.length; if (size > 20000) return reply(413, { ok:false, error:'太长' }); parts.push(c); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
+    const sid = String(j.id || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
+    const cardId = String(j.cardId || ''); if (!/^c-[0-9a-f]{12}$/.test(cardId)) return reply(400, { ok:false, error:'卡片编号不对' });
+    try {
+      const out = await withMeetingLock(sid, () => actions.apply({
+        dir: ACTIONS_DIR, sessionId: sid, cardId, action: String(j.do || ''), draft: j.draft,
+        env: loadEnv(), log, hub: workHub && workHub.hub,
+      }));
+      log('meeting-action ' + sid + ' ' + cardId + ' ' + j.do);
+      return reply(200, { ok:true, card: out.card, actions: out.actions });
     } catch (e) { return reply(e.code === 404 ? 404 : 400, { ok:false, error: e.message }); }
   }
   if (p.endsWith('/calendar-match')) {
