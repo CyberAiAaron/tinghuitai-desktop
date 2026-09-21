@@ -127,7 +127,7 @@ const FULL_CLIENT_REQUEST = 1, AUDIO_ONLY_REQUEST = 2, ERROR_RESPONSE = 15, POS_
 function buildFrame(mt, fl, payload, seq, isJson) { const h = Buffer.alloc(4); h[0] = 0x11; h[1] = (mt << 4) | fl; h[2] = ((isJson ? 1 : 0) << 4) | 1; h[3] = 0; const body = zlib.gzipSync(isJson ? Buffer.from(JSON.stringify(payload), 'utf8') : payload); const parts = [h]; if (fl === POS_SEQ || fl === NEG_WITH_SEQ) { const s = Buffer.alloc(4); s.writeInt32BE(seq, 0); parts.push(s); } const sz = Buffer.alloc(4); sz.writeUInt32BE(body.length, 0); parts.push(sz, body); return Buffer.concat(parts); }
 function parseFrame(buf) { const hb = (buf[0] & 0x0f) * 4, mt = (buf[1] >> 4) & 0x0f, fl = buf[1] & 0x0f, cp = buf[2] & 0x0f; let o = hb, ec = null; if (fl !== 0) o += 4; if (mt === ERROR_RESPONSE) { ec = buf.readUInt32BE(o); o += 4; } const sz = buf.readUInt32BE(o); o += 4; let b = buf.slice(o, o + sz); if (cp === GZIP && b.length) { try { b = zlib.gunzipSync(b); } catch (e) {} } let j = null; try { j = JSON.parse(b.toString('utf8')); } catch (e) {} return { msgType: mt, errorCode: ec, json: j, rawText: b.toString('utf8').slice(0, 200) }; }
 
-const cliLlm = require('./cli-llm');
+const llm = require('./llm');
 // 模型调用：优先用本机已登录的 AI 命令行（不用申请 Key），失败再退回 API。
 // tier='quick' 用会中那颗快模型（没配就用同一颗）。会中分诊每 40 秒一次，慢模型会拖住字幕。
 // 用量账本：所有花 token 的地方在花费那一刻记一笔，成本只从这本账汇总（不然子任务和收敛会被重复算）。
@@ -173,41 +173,20 @@ function markDegraded(on, reason) {
     message: on ? '首选模型没回应（' + LLM_HEALTH.degradedReason + '），已临时改用备用模型；要点和总结照常出。' : '' });
 }
 // tier：'live' = 会中实时（Sonnet，慢模型会拖住字幕）｜'post' = 会后慢思考（Opus）。不指定按会后算，宁可慢不可蠢。
-function tierModel(env, tier) {
-  if (tier === 'live' || tier === 'quick') return env.LLM_MODEL_LIVE || 'sonnet';
-  return env.LLM_MODEL_POST || 'opus';
-}
 async function deepseek(env, system, user, maxTokens, tier, trace) {
-  const box = { reason: '' };
-  const r = await llmCall(env, system, user, maxTokens, tier, trace, box);
+  // 名字是老的，里面已经不认品牌：按 settings 的降级链挨个试（app/llm.js）。
+  const r = await llm.ask(env, { kind: tier || 'post', system, user, maxTokens, dataDir: DATA, log });
   // 一把钥匙都没配不是「模型坏了」，是还没配：不计入故障计数，交给就绪条去说。
-  if (box.reason !== 'no_provider') markLlm(!!r, box.reason);
-  if (r) markDegraded(!!box.cliReason, box.cliReason);
-  return r;
-}
-async function llmCall(env, system, user, maxTokens, tier, trace, box) {
-  box = box || {};
-  const kind = env.LLM_PROVIDER;
-  const sid = trace && trace.sessionId || '';
-  if (kind === 'codex' || kind === 'claude') {
-    const model = kind === 'claude' ? tierModel(env, tier) : '';
-    const r = await cliLlm.askDetailed(kind, user, { dataDir: DATA, log, model, system });
-    if (r.ok) {
-      if (trace) trace.provider = kind === 'claude' ? 'Claude' : 'Codex';
-      // CLI 的 JSON 输出带真实 usage，能拿到就按真实的记；拿不到（codex、或降级成纯文本）才按字符估
-      const u = r.usage;
-      recordUsage({ sessionId: sid, provider: kind, model: r.model || model || '',
-        in: u ? u.in : Math.ceil((system.length + user.length) / 2),
-        out: u ? u.out : Math.ceil(r.text.length / 2),
-        est: !u, tier: tier || 'post', purpose: trace && trace.purpose || '' });
-      return r.text;
-    }
-    box.reason = kind + ':' + (r.reason || 'unknown'); box.cliReason = box.reason;
-    log('CLI 模型没回应（' + box.reason + '），退回 API');
-  }
-  const key = env.DEEPSEEK_API_KEY; if (!key) { if (!box.reason) box.reason = 'no_provider'; return null; }
-  if(trace)trace.provider=/deepseek/i.test(env.LLM_BASE_URL||'')?'DeepSeek':(env.LLM_MODEL||'AI');
-  try { const r = await fetch(env.LLM_BASE_URL.replace(/\/$/,'')+'/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: ((tier === 'quick' || tier === 'live') && env.LLM_MODEL_QUICK) ? env.LLM_MODEL_QUICK : env.LLM_MODEL, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], max_tokens: maxTokens || 800, temperature: 0.2, stream: false }), signal:AbortSignal.timeout(90000) }); const d = await r.json(); try { const uu = d && d.usage; if (uu) recordUsage({ sessionId: sid, provider: 'api', model: d.model || env.LLM_MODEL || '', in: uu.prompt_tokens || 0, out: uu.completion_tokens || 0, est: false, tier: tier || 'post', purpose: trace && trace.purpose || '' }); } catch (x) {} const c = (((d.choices || [])[0] || {}).message || {}).content || null; if (!c) box.reason = 'api:' + ((d && d.error && (d.error.code || d.error.message)) || 'empty'); return c; } catch (e) { log('deepseek err ' + e.message); box.reason = 'api:' + String(e.message || 'error').slice(0, 60); return null; }
+  if (r.errorCode !== 'no_provider') markLlm(!!r.text, r.errorCode || '');
+  if (!r.text) return null;
+  markDegraded(r.degraded, r.degradedReason);
+  if (trace) trace.provider = r.provider;
+  const u = r.usage;
+  // 拿得到真实用量就按真实的记；命令行拿不到时按字符估，HTTP 接口拿不到就不记
+  if (u || r.usageProvider !== 'api') recordUsage({ sessionId: trace && trace.sessionId || '', provider: r.usageProvider, model: r.model || '',
+    in: u ? u.in : Math.ceil((system.length + user.length) / 2), out: u ? u.out : Math.ceil(r.text.length / 2),
+    est: !u, tier: tier || 'post', purpose: trace && trace.purpose || '' });
+  return r.text;
 }
 function larkPush() { /* No automatic external messages in the standalone edition. */ }
 
@@ -1843,7 +1822,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
   if (req.method === 'GET' && p.endsWith('/health')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({crashedSinceStart, ok: true, app:'tinghuitai-desktop',
     // 模型健康：页面刷新后靠这两个字段把红条重新挂上（N-01）
     llmDown: LLM_HEALTH.down, llmReason: LLM_HEALTH.down ? LLM_HEALTH.reason : '', llmDegraded: LLM_HEALTH.degraded && !LLM_HEALTH.down, llmDegradedReason: LLM_HEALTH.degraded ? LLM_HEALTH.degradedReason : '', llmFailStreak: LLM_HEALTH.failStreak, llmLastOkAt: LLM_HEALTH.lastOkAt || 0,
-    llmModelLive: tierModel(loadEnv(), 'live'), llmModelPost: tierModel(loadEnv(), 'post'),
+    ...(c => ({ llmModelLive: c[0] ? llm.pickModel(c[0], 'live') : '', llmModelPost: c[0] ? llm.pickModel(c[0], 'post') : '', llmChain: c.map(x => x.label) }))(llm.chainOf(loadEnv())),
     // 这三个字段是为了能一眼看出「现在跑的到底是哪份代码」。
     // 2026-09-11 踩过：pid 文件是陈旧的，按它杀进程杀错了，老服务继续跑了一整天，
     // 改完的服务端代码一直没生效，而界面因为是从磁盘读的看起来像已经更新。
