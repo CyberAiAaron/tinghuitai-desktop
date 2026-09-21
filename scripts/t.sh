@@ -22,11 +22,13 @@ if [ "$MODE" = "changed" ]; then
   for f in $CHANGED; do
     case "$f" in
       tests/*.test.js) FILES+=("$f") ;;
+      web/src/*|web/index.html) for t in tests/frontend.test.js tests/contract.test.js; do [ -f "$t" ] && FILES+=("$t"); done ;;   # 前端源文件名带序号（19-one-line-fix），测试里不会提到它，按名字找一定落空
       app/*|web/*|scripts/*) b=$(basename "$f"); b="${b%.*}"
         while IFS= read -r t; do FILES+=("$t"); done < <(grep -l -- "$b" tests/*.test.js 2>/dev/null) ;;
     esac
   done
-  for t in tests/arch-*.test.js tests/contract.test.js; do [ -f "$t" ] && FILES+=("$t"); done
+  # 架构约束测试（全仓 grep 式：厂商名、外发通道、资料读取口）每次都跑，它们就是为了拦「改一处、别处漏」
+  for t in tests/arch-*.test.js tests/llm-everywhere.test.js tests/contract.test.js; do [ -f "$t" ] && FILES+=("$t"); done
   [ ${#FILES[@]} -gt 0 ] || { echo "改动没对上任何测试文件，改跑全量"; MODE="all"; }
 fi
 node scripts/build-web.js > /dev/null 2>&1 || { echo "build-web 失败"; exit 2; }
@@ -35,6 +37,7 @@ if [ "$MODE" = "all" ] || [ "$MODE" = "commit" ]; then node --test tests/*.test.
 else UNIQ=$(printf '%s\n' "${FILES[@]}" | sort -u); echo "跑 $(echo "$UNIQ" | wc -l | tr -d ' ') 个测试文件"; node --test $UNIQ > "$OUT" 2>&1; fi
 T=$(grep -E "^(ℹ|#) tests" "$OUT" | awk '{print $3}'); P=$(grep -E "^(ℹ|#) pass" "$OUT" | awk '{print $3}'); F=$(grep -E "^(ℹ|#) fail" "$OUT" | awk '{print $3}')
 echo "tests ${T:-?} / pass ${P:-?} / fail ${F:-?} · $(( $(date +%s) - START )) 秒 · 全量输出在 $OUT"
+echo "$(date '+%F %T') $MODE tests=${T:-?} pass=${P:-?} fail=${F:-?} secs=$(( $(date +%s) - START )) $(git rev-parse --short HEAD 2>/dev/null)" >> .tmp/test-history.log
 if [ "${F:-x}" != "0" ]; then grep -nE "^\s*(✖|not ok)" "$OUT" | cut -c1-200 | head -20; exit 1; fi
 if [ "$MODE" = "commit" ]; then git commit -q -a -m "$MSG
 
