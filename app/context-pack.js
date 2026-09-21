@@ -154,6 +154,7 @@ function globUnder(base, pattern) {
   return cur.sort();
 }
 
+const DEFAULT_CONTEXT_FILES = ['kb_reorg/*.md', 'kb_backup/决策板*.md', '.memory/MEMORY.md', '.memory/meeting-memory.md', '.memory/project-state.md', 'CLAUDE.md'];
 function loadContextFiles(env, cap, perFile) {
   const dir = String(env.PROJECT_CONTEXT_DIR || '').trim();
   if (!dir) return { text: '', parts: [], configured: false };
@@ -162,7 +163,7 @@ function loadContextFiles(env, cap, perFile) {
   catch (e) { return { text: '', parts: [{ key: 'context-files', missing: true, source: expand(dir), reason: '背景目录不在' }], configured: true }; }
   let wanted = env.PROJECT_CONTEXT_FILES;
   if (!Array.isArray(wanted) || !wanted.length)
-    wanted = ['kb_reorg/*.md', 'kb_backup/决策板*.md', '.memory/MEMORY.md', '.memory/meeting-memory.md', '.memory/project-state.md', 'CLAUDE.md'];
+    wanted = DEFAULT_CONTEXT_FILES;
   const seen = new Set(), out = [], parts = [];
   let used = 0;
   for (const pat of wanted.slice(0, 20)) {
@@ -238,6 +239,32 @@ function roster(env) {
     part: { key: 'roster', title: '团队名单', source: r.source, chars: r.text.length, truncated: r.truncated, version: r.version, syncedAt: r.syncedAt } };
 }
 
+// 工具层（app/tools/local.js 的「搜本机项目资料」「找人」）要的是「有哪些文件」，不是拼好的一段文字。
+// 那四个资料设置项只许在这个文件里被认出来（tests/arch-context-pack.test.js 盯着），所以文件清单也从这里出，
+// 通配规则、「决策板备份只要最新一份」都和上面进 prompt 的那条路是同一套。
+function sourceFiles(env = {}) {
+  const out = [];
+  const dir = String(env.PROJECT_CONTEXT_DIR || '').trim();
+  if (dir) {
+    let base = null;
+    try { base = fs.realpathSync(expand(dir)); if (!fs.statSync(base).isDirectory()) base = null; } catch (e) { base = null; }
+    if (base) {
+      let wanted = env.PROJECT_CONTEXT_FILES;
+      if (!Array.isArray(wanted) || !wanted.length) wanted = DEFAULT_CONTEXT_FILES;
+      for (const pat of wanted.slice(0, 20)) {
+        if (typeof pat !== 'string') continue;
+        let hits = globUnder(base, pat);
+        if (pat.includes('kb_backup')) hits = hits.slice(-1);
+        for (const f of hits.slice(0, 12)) out.push(f);
+      }
+    }
+  }
+  for (const f of [...fileList(env.PROJECT_FOCUS_FILES), ...fileList(env.FACT_SOURCE_FILES)]) out.push(expand(f));
+  return [...new Set(out)];
+}
+// 团队名单文件在哪（没配就是空串）。
+function rosterFile(env = {}) { const f = String(env.TEAM_MEMBERS_FILE || '').trim(); return f ? expand(f) : ''; }
+
 // ============================ 组装 ============================
 function loadPart(spec, { env, dataDir, memoryBlock }) {
   const cap = Number(spec.cap) || 0, perFile = Number(spec.perFile) || 0;
@@ -311,4 +338,4 @@ function build(env, { purpose, dataDir, session, meetingId, memoryBlock, budget 
 const stamp = pack => ({ contextHash: pack && pack.hash ? pack.hash : '',
   contextParts: (((pack && pack.parts) || []).map(p => ({ key: p.key, version: p.missing ? 'missing' : (p.version || '') }))) });
 
-module.exports = { build, roster, parseNames, memoryProjectionDir, stamp, TABLE, PURPOSES };
+module.exports = { build, roster, parseNames, memoryProjectionDir, stamp, sourceFiles, rosterFile, TABLE, PURPOSES };

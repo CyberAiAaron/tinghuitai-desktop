@@ -1775,7 +1775,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     try {
       const out = await withMeetingLock(sid, () => actions.apply({
         dir: ACTIONS_DIR, sessionId: sid, cardId, action: String(j.do || ''), draft: j.draft,
-        env: loadEnv(), log, hub: workHub && workHub.hub,
+        env: loadEnv(), log, hub: workHub && workHub.hub, dataDir: DATA,
       }));
       log('meeting-action ' + sid + ' ' + cardId + ' ' + j.do);
       return reply(200, { ok:true, card: out.card, actions: out.actions });
@@ -1987,7 +1987,36 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     } else res.end();
     return;
   }
+  // ===== 工具权限层（2026-09-22）：清单 + 只读调用 =====
+  // 工具只定义一份（app/tools/），界面、模型循环、本机 MCP 出口都从那一份走。
+  // 这两条路由是给 MCP 桥和别的本机程序用的口子；写类工具在这里一律 403——
+  // 真外发只有会后处理台点「发出 / 派发」那一条路（只有它带 confirmedByUser）。
+  if (req.method === 'GET' && p.endsWith('/tools')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ ok: true, tools: require('./tools').list(loadEnv(), { dataDir: DATA }) }));
+  }
+  if (p.endsWith('/tools/call')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method not allowed'); }
+    const parts = []; let size = 0;
+    for await (const c of req) { size += c.length; if (size > 20000) return reply(413, { ok: false, error: '太长' }); parts.push(c); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+    const toolReg = require('./tools');
+    const def = toolReg.get(String(j.name || ''));
+    if (!def) return reply(404, { ok: false, error: '没有这个工具：' + String(j.name || '').slice(0, 60) });
+    if (def.level !== 'read') {
+      // 被挡下的也留一行审计：事后要查得出「谁在什么时候想从这条口子外发」
+      toolReg.auditRejected(def.name, j.args || {}, { dataDir: DATA, caller: 'mcp', log }, '写类工具走不了 /tools/call，已挡下');
+      return reply(403, { ok: false, error: '这条路由只接读类工具；写类只有界面上点确认那条路能走' });
+    }
+    const r = await toolReg.call(def.name, j.args || {}, { env: loadEnv(), dataDir: DATA, caller: 'mcp', log, hub: workHub && workHub.hub });
+    return reply(r.ok ? 200 : 400, r);
+  }
   if (req.method === 'GET' && p.endsWith('/health')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({crashedSinceStart, ok: true, app:'tinghuitai-desktop',
+    // 工具权限层：接上了几个、没接的缺什么。只给名字和原因，不给任何密钥。
+    ...(t => ({ tools: { total: t.length, available: t.filter(x => x.available).length, unavailable: t.filter(x => !x.available).map(x => ({ name: x.name, reason: x.reason })) } }))(require('./tools').list(loadEnv(), { dataDir: DATA })),
     // 模型健康：页面刷新后靠这两个字段把红条重新挂上（N-01）
     llmDown: LLM_HEALTH.down, llmReason: LLM_HEALTH.down ? LLM_HEALTH.reason : '', llmDegraded: LLM_HEALTH.degraded && !LLM_HEALTH.down, llmDegradedReason: LLM_HEALTH.degraded ? LLM_HEALTH.degradedReason : '', llmFailStreak: LLM_HEALTH.failStreak, llmLastOkAt: LLM_HEALTH.lastOkAt || 0,
     ...(c => ({ llmModelLive: c[0] ? llm.pickModel(c[0], 'live') : '', llmModelPost: c[0] ? llm.pickModel(c[0], 'post') : '', llmChain: c.map(x => x.label) }))(llm.chainOf(loadEnv())),
