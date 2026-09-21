@@ -1,6 +1,7 @@
 'use strict';
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),{spawn}=require('child_process');
 const managers=new Map();
+// THT_NODE：Python 管线要起 node 跑 app/llm-cli.js 调模型；launchd 起的进程 PATH 很薄，直接把当前 node 的路径传下去。
 module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.join(require('./config').dataDir,'state/meeting-pipeline'),idle=()=>true,log=()=>{},onComplete=()=>{}}={}){
  if(managers.has(dir))return managers.get(dir);
  fs.mkdirSync(dir,{recursive:true});let child=null;
@@ -54,7 +55,7 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
     shelveEnhanced(j.key);
     write(p2,{...cur,status:'queued',phase:'总结没出来，自动补跑一次',summaryRetries:(cur.summaryRetries||0)+1});
     log('自动补跑总结 '+j.key);}
-  child=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),path.join(dir,j.key+'.job.json')],{env:{...process.env,THT_PIPELINE_DIR:dir},stdio:'ignore'});
+  child=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),path.join(dir,j.key+'.job.json')],{env:{...process.env,THT_PIPELINE_DIR:dir,THT_NODE:process.execPath},stdio:'ignore'});
   child.on('error',()=>{const p=path.join(dir,j.key+'.job.json'),s=read(p);write(p,{...s,status:'error',error:'后处理进程未启动',attempts:(s.attempts||0)+1,nextRetry:Date.now()/1000+120,phase:'归档待重试'});});
   child.on('close',()=>{child=null;const jobPath=path.join(dir,j.key+'.job.json'),done=read(jobPath);if(done.status==='error'||done.status==='partial')unshelveEnhanced(j.key);
   if(done.status==='running'||done.status==='queued'){unshelveEnhanced(j.key);done.status='error';done.error='后处理进程中断，原始录音仍保留';done.attempts=(done.attempts||0)+1;done.nextRetry=Date.now()/1000+120;write(jobPath,done);}if(['done','partial'].includes(done.status)){const resultPath=path.join(dir,j.key+'.job.enhanced.json');try{onComplete(read(resultPath),done,read(done.input));delete done.hubSyncWarning;write(jobPath,done);}catch(e){done.status='partial';done.hubSyncWarning=e.message;done.phase='工作台同步待重试';write(jobPath,done);log('hub archive update failed '+e.message);}}log('meeting pipeline finished '+j.key);setTimeout(pump,1000).unref();});
@@ -73,7 +74,7 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
  const paths=id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;return{enhanced:path.join(dir,j.key+'.job.enhanced.json'),state:path.join(dir,j.key+'.brief.json')};};
  function brief(id){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))throw Error('这场会还没整理完');const jb=list().find(x=>x.sessionId===id);if(jb&&['queued','running'].includes(jb.status))throw Error('这场会还在整理，稍后再点');if(briefRuns.has(id))return{state:'running'};
   write(p.state,{state:'running',phase:'排队',started:Date.now()/1000});
-  const c=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),'--brief',p.enhanced],{env:{...process.env,THT_PIPELINE_DIR:dir},stdio:'ignore'});briefRuns.set(id,c);
+  const c=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),'--brief',p.enhanced],{env:{...process.env,THT_PIPELINE_DIR:dir,THT_NODE:process.execPath},stdio:'ignore'});briefRuns.set(id,c);
   const fail=msg=>{try{const s=read(p.state);if(s.state==='running')write(p.state,{...s,state:'failed',error:msg});}catch{}};
   c.on('error',()=>{briefRuns.delete(id);fail('整理进程未启动');});c.on('close',code=>{briefRuns.delete(id);if(code)fail('整理进程中断');});return{state:'running'};}
  function briefState(id){const p=paths(id);if(!p||!fs.existsSync(p.state))return{state:'none'};const s=read(p.state);if(s.state==='running'&&!briefRuns.has(id)&&Date.now()/1000-(s.started||0)>2400)return{...s,state:'failed',error:'整理超时'};return s;}

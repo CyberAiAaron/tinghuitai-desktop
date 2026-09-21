@@ -39,6 +39,8 @@ function render(s){
   const ppl=Array.isArray(s.participants)?s.participants.filter(Boolean):[];
   if(ppl.length)parts.push('<span>参会人 <b>'+esc(ppl.join('、'))+'</b></span>');
   if(s.speakerWarning)parts.push('<span>'+esc(s.speakerWarning)+'</span>');
+  // 降级要看得见：首选模型没回应、备用顶上了，这一行说清这场是谁写的（会中那条黄条的会后版）
+  if(s.modelNote||(s.brief&&s.brief.modelNote))parts.push('<span>'+esc(s.modelNote||s.brief.modelNote)+'</span>');
   $('#meta').innerHTML=parts.join('');
   mountPlayer();
   mountMemoryLink();
