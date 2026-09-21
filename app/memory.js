@@ -21,6 +21,21 @@ const DEFAULT_STATE = { decision: 'active', term: 'active', question: 'open', pr
 const TERMINAL = new Set(['revoked', 'superseded', 'resolved', 'done', 'cancelled']);
 const DROP_STATE = { decision: 'revoked', term: 'revoked', question: 'resolved', promise: 'cancelled' };
 
+// 老库补列。加列失败分两种：列已经在（正常，什么都不用做）和真出事了（库被锁、只读、文件坏）。
+// 后者必须抛出来 —— 吞掉的话，后面按新列名写入会一路失败，表面上是「记忆莫名其妙存不下」，
+// 日志里一个字都没有。判据是「报的是 duplicate column」且「这一列现在确实在表上」，两条都成立才算正常。
+function addColumn(db, table, column, ddl, log) {
+  try { db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + ddl); return; }
+  catch (e) {
+    const dup = /duplicate column/i.test(String(e.message || ''));
+    let has = false;
+    try { has = db.prepare('PRAGMA table_info(' + table + ')').all().some(c => c.name === column); } catch (e2) {}
+    if (dup && has) return;
+    if (log) { try { log('记忆库升级失败（' + table + '.' + column + ' 列）：' + e.message); } catch (e3) {} }
+    throw new Error('记忆库升级失败（' + table + '.' + column + ' 列）：' + e.message);
+  }
+}
+
 // 每次调用都新建连接会把 fd 和内存吃光（retrieve 是高频路径）。按数据目录做单例。
 const POOL = new Map();
 function open(dataDir) {
@@ -43,25 +58,18 @@ function open(dataDir) {
     supersedes_id TEXT, change_reason TEXT NOT NULL DEFAULT '', human_edited INTEGER NOT NULL DEFAULT 0, needs_review INTEGER NOT NULL DEFAULT 0,
     review_note TEXT NOT NULL DEFAULT '')`);
   // 老库没有这一列：被替代的旧决定要留下「是哪句话把它推翻的」。
-  // 加列失败分两种：列已经在（正常）和真出事了（锁住、只读、库坏）。后者必须抛出来，
-  // 否则后面按新列名写入会一路失败，看起来像记忆莫名其妙存不下。
-  try { db.exec("ALTER TABLE cards ADD COLUMN change_reason TEXT NOT NULL DEFAULT ''"); }
-  catch (e) {
-    // 只有「这列本来就有」才是正常情况。锁住、只读、库坏都必须抛出来，
-    // 否则后面按新列名写入会一路失败，看起来像记忆莫名其妙存不下。
-    const dup = /duplicate column/i.test(String(e.message || ''));
-    const has = db.prepare('PRAGMA table_info(cards)').all().some(c => c.name === 'change_reason');
-    if (!dup || !has) throw new Error('记忆库升级失败（change_reason 列）：' + e.message);
-  }
+  addColumn(db, 'cards', 'change_reason', "change_reason TEXT NOT NULL DEFAULT ''");
   db.exec(`CREATE TABLE IF NOT EXISTS card_history(
     id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, changed_at TEXT NOT NULL,
     PRIMARY KEY(id, revision))`);
   // status 区分「正在抽」和「抽完了」：进程中途死掉时，claiming 会过期，不会让这场永远抽不了
   db.exec(`CREATE TABLE IF NOT EXISTS ingested(
     meeting_id TEXT PRIMARY KEY, input_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'done', at TEXT NOT NULL)`);
-  try { db.exec("ALTER TABLE ingested ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"); } catch (e) { /* 已有 */ }
+  // D9：这两处原来是裸 catch。库被锁或只读时「加列失败」被当成「列已经有了」吞掉，
+  // 接着 claiming / attempts 全写不进去，表现就是这台机器永远抽不出记忆，而且没有任何日志。
+  addColumn(db, 'ingested', 'status', "status TEXT NOT NULL DEFAULT 'done'");
   // P-11：失败的抽卡要能自动重来，得记住重来过几次，免得坏数据无限重跑
-  try { db.exec("ALTER TABLE ingested ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* 已有 */ }
+  addColumn(db, 'ingested', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_kind_state ON cards(kind,state)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_meeting ON cards(meeting_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_live ON cards(state,needs_review,recorded_at)');
@@ -272,3 +280,5 @@ module.exports.putLex = putLex;
 module.exports.lexHotwords = lexHotwords;
 module.exports.lexAll = lexAll;
 module.exports.lexScore = lexScore;
+// D9 单测要能直接驱动「加列失败」这条路（真把库锁住太脆），所以把判别函数导出来。
+module.exports.addColumn = addColumn;
