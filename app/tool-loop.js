@@ -79,8 +79,10 @@ function refOf(x) {
   if (!x || typeof x !== 'object' || typeof x.ref !== 'string' || !x.ref) return null;
   const out = { ref: x.ref, source: x.source || '', at: x.at || '' };
   if (x.url) out.url = x.url;
-  if (x.title) out.title = String(x.title).slice(0, 160);
-  else if (x.text) out.title = String(x.text).slice(0, 160);
+  // 依据这一行要让他一眼看出「凭哪句话」，所以优先取命中的那段原文；没有原文才退回标题。
+  // （会议的标题常常就是会议 id，挂上去等于没写。）
+  if (x.text) out.title = String(x.text).slice(0, 160);
+  else if (x.title) out.title = String(x.title).slice(0, 160);
   if (x.meetingId) out.meetingId = x.meetingId;
   if (x.path) out.path = x.path;
   return out;

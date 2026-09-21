@@ -111,3 +111,30 @@ test('页面上改过再存回来，依据不会被洗掉', () => {
   assert.equal(kept.refs[0].meetingId, 'sess-ref-old');
   assert.equal(kept.scope, '改了一版');
 });
+
+test('页面上的「依据」这一块：会议能点回那一场，没有依据就整块不出现', () => {
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(__dirname, '../web/archive.js'), 'utf8');
+  const part = src.slice(src.indexOf('function draftHtml('), src.indexOf('function meetingForm('));
+  const ctx = { T: (zh) => zh, esc: s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])),
+    meetingForm: () => '', delegateForm: () => '' };
+  vm.createContext(ctx);
+  vm.runInContext(part, ctx);
+
+  const html = ctx.draftHtml({ kind: 'research', draft: {
+    scope: '覆盖全球白板 OCR 供应商', sources: ['厂商官网'], expected: '一张对照表',
+    refs: [
+      { ref: 'meeting:sess-ref-old#79', title: '白板 OCR 的供应商名单要用 AI 检索一遍', source: 'local:meeting', at: '2026-09-17T09:58:17.476Z', meetingId: 'sess-ref-old' },
+      { ref: 'lark:COqzdi', title: '产品需求总纲', source: 'lark:docs', at: '2026-09-20T09:00:00+08:00', url: 'https://x.feishu.cn/docx/COqzdi' },
+      { ref: 'file:/tmp/a.md@2026-09-20T01:00:00.000Z', title: '白板内容理解的指标取向', source: 'local:file', at: '2026-09-20T01:00:00.000Z' },
+    ],
+  } });
+  assert.match(html, /依据/);
+  assert.match(html, /archive\.html\?id=sess-ref-old/, '会议那条点得回去');
+  assert.match(html, /白板 OCR 的供应商名单要用 AI 检索一遍/, '写的是凭哪句话，不是光一个编号');
+  assert.match(html, /href="https:\/\/x\.feishu\.cn\/docx\/COqzdi"/, '飞书文档点得开原文');
+  assert.ok(!/href="file:/.test(html), '本机文件不做成链接，浏览器点不开');
+
+  const bare = ctx.draftHtml({ kind: 'research', draft: { scope: 'x', expected: 'y', refs: [] } });
+  assert.doesNotMatch(bare, /依据/, '没有依据就整块不出现，不写「无」');
+});

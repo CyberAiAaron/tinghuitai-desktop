@@ -1999,7 +1999,11 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const toolReg = require('./tools');
     const def = toolReg.get(String(j.name || ''));
     if (!def) return reply(404, { ok: false, error: '没有这个工具：' + String(j.name || '').slice(0, 60) });
-    if (def.level !== 'read') return reply(403, { ok: false, error: '这条路由只接读类工具；写类只有界面上点确认那条路能走' });
+    if (def.level !== 'read') {
+      // 被挡下的也留一行审计：事后要查得出「谁在什么时候想从这条口子外发」
+      toolReg.auditRejected(def.name, j.args || {}, { dataDir: DATA, caller: 'mcp', log }, '写类工具走不了 /tools/call，已挡下');
+      return reply(403, { ok: false, error: '这条路由只接读类工具；写类只有界面上点确认那条路能走' });
+    }
     const r = await toolReg.call(def.name, j.args || {}, { env: loadEnv(), dataDir: DATA, caller: 'mcp', log, hub: workHub && workHub.hub });
     return reply(r.ok ? 200 : 400, r);
   }
