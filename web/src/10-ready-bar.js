@@ -10,9 +10,16 @@
   let llmDownNow = false;
   function setLlmDown(down, msg){
     llmDownNow = !!down;
+    if (down) { const d = $('#llm-degraded-bar'); if (d) d.hidden = true; }
     const bar = $('#llm-bar'); if (!bar) return;
     bar.hidden = !down;
     const m = $('#llm-bar-msg'); if (m) m.textContent = down ? (msg || '要点和总结已暂停；录音和转写不受影响，会后可以补跑。') : '';
+  }
+  // 降级黄条：首选模型没回应、备用模型顶上了。红条亮着时不显示（两条路都断了，说降级没有意义）。
+  function setLlmDegraded(on, msg){
+    const bar = $('#llm-degraded-bar'); if (!bar) return;
+    bar.hidden = !on || llmDownNow;
+    const m = $('#llm-degraded-msg'); if (m) m.textContent = on ? (msg || '首选模型没回应，已临时改用备用模型；要点和总结照常出。') : '';
   }
   $('#llm-bar-setup') && ($('#llm-bar-setup').onclick = () => openSettings('llm'));
   function updateReadyBar(){

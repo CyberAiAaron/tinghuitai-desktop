@@ -136,7 +136,7 @@ function usageBySession() {
 // 09-18 那场：Claude 命令行被账号侧拒绝 48 分钟、备用 API 欠费，要点 0 条，页面一个字都没提示，两天后才发现。
 // 规则：连续 3 次拿不到模型回复就认定「模型断了」，给所有在开的会推红条；下一次成功立刻撤掉。
 // 计数全局不按场次——账号被拒、额度用尽都是全局故障，按场次算会让刚开的会看不到已经发生的故障。
-const LLM_HEALTH = { failStreak: 0, down: false, reason: '', since: 0, lastOkAt: 0 };
+const LLM_HEALTH = { failStreak: 0, down: false, reason: '', since: 0, lastOkAt: 0, degraded: false, degradedReason: '' };
 // 失败原因跟着这一次调用走。以前放在模块级单变量里，会中三路分析同时在飞时，
 // 先失败那一路读到的是后发起那一路清空后的空串（→ unknown），红条上的原因就不对了。
 function broadcastAll(msg) { for (const s of SESSIONS.values()) { try { s.broadcast(msg); } catch (e) {} } }
@@ -153,6 +153,16 @@ function markLlm(ok, reason) {
     broadcastAll({ type: 'llm_down', reason: LLM_HEALTH.reason, message: '模型连续 ' + LLM_HEALTH.failStreak + ' 次没回应（' + LLM_HEALTH.reason + '），要点和总结已暂停。录音和转写不受影响，会后可以补跑。' });
   }
 }
+// 降级要看得见（THT-R3/R8）：首选的命令行模型没回应、备用 API 顶上了，要点照常出，但页面得说一声现在用的是备用模型。
+// 首选恢复成功一次就撤掉。它和红条是两回事：红条 = 两条路都不通、分析停了；这条 = 还在出，只是换了人。
+function markDegraded(on, reason) {
+  on = !!on;
+  if (on === LLM_HEALTH.degraded) { if (on) LLM_HEALTH.degradedReason = reason || LLM_HEALTH.degradedReason; return; }
+  LLM_HEALTH.degraded = on; LLM_HEALTH.degradedReason = on ? (reason || 'unknown') : '';
+  log(on ? '模型降级：首选没回应（' + LLM_HEALTH.degradedReason + '），改用备用 API' : '模型降级解除：首选已恢复');
+  broadcastAll({ type: 'llm_degraded', on, reason: LLM_HEALTH.degradedReason,
+    message: on ? '首选模型没回应（' + LLM_HEALTH.degradedReason + '），已临时改用备用模型；要点和总结照常出。' : '' });
+}
 // tier：'live' = 会中实时（Sonnet，慢模型会拖住字幕）｜'post' = 会后慢思考（Opus）。不指定按会后算，宁可慢不可蠢。
 function tierModel(env, tier) {
   if (tier === 'live' || tier === 'quick') return env.LLM_MODEL_LIVE || 'sonnet';
@@ -163,6 +173,7 @@ async function deepseek(env, system, user, maxTokens, tier, trace) {
   const r = await llmCall(env, system, user, maxTokens, tier, trace, box);
   // 一把钥匙都没配不是「模型坏了」，是还没配：不计入故障计数，交给就绪条去说。
   if (box.reason !== 'no_provider') markLlm(!!r, box.reason);
+  if (r) markDegraded(!!box.cliReason, box.cliReason);
   return r;
 }
 async function llmCall(env, system, user, maxTokens, tier, trace, box) {
@@ -182,7 +193,7 @@ async function llmCall(env, system, user, maxTokens, tier, trace, box) {
         est: !u, tier: tier || 'post', purpose: trace && trace.purpose || '' });
       return r.text;
     }
-    box.reason = kind + ':' + (r.reason || 'unknown');
+    box.reason = kind + ':' + (r.reason || 'unknown'); box.cliReason = box.reason;
     log('CLI 模型没回应（' + box.reason + '），退回 API');
   }
   const key = env.DEEPSEEK_API_KEY; if (!key) { if (!box.reason) box.reason = 'no_provider'; return null; }
@@ -1063,6 +1074,13 @@ const server = http.createServer(async (req, res) => {
   // 只杀掉本安装的那个 pid → 起新版」。THT_NO_OPEN 是别再弹一个新标签页，页面自己会刷新。
   function relaunchAfterUpdate(){
     setTimeout(()=>{
+      // 由 launchd 守护时（开机自启那份 plist 会带 THT_SUPERVISED=1）不能再自己拉一个新进程：
+      // launchd 见旧进程退出会立刻补一个，两个抢同一个端口，输的那个每 10 秒被重拉一次。
+      // 这时只要干净退出，launchd 拉起来的就是新版。正在录音就不退，等下一次启动再生效。
+      if(process.env.THT_SUPERVISED==='1'){
+        if([...SESSIONS.values()].some(s=>!s.finalized)){log('更新完成；正在录音，不自动重启，下次启动生效');return;}
+        log('更新完成，退出交给系统守护重启');process.exit(0);
+      }
       try{
         const fd=fs.openSync(path.join(DATA,'launcher.log'),'a',0o600);
         const c=require('child_process').spawn(process.execPath,[path.join(__dirname,'../scripts/launch.js')],
@@ -1815,7 +1833,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
   }
   if (req.method === 'GET' && p.endsWith('/health')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({crashedSinceStart, ok: true, app:'tinghuitai-desktop',
     // 模型健康：页面刷新后靠这两个字段把红条重新挂上（N-01）
-    llmDown: LLM_HEALTH.down, llmReason: LLM_HEALTH.down ? LLM_HEALTH.reason : '', llmFailStreak: LLM_HEALTH.failStreak, llmLastOkAt: LLM_HEALTH.lastOkAt || 0,
+    llmDown: LLM_HEALTH.down, llmReason: LLM_HEALTH.down ? LLM_HEALTH.reason : '', llmDegraded: LLM_HEALTH.degraded && !LLM_HEALTH.down, llmDegradedReason: LLM_HEALTH.degraded ? LLM_HEALTH.degradedReason : '', llmFailStreak: LLM_HEALTH.failStreak, llmLastOkAt: LLM_HEALTH.lastOkAt || 0,
     llmModelLive: tierModel(loadEnv(), 'live'), llmModelPost: tierModel(loadEnv(), 'post'),
     // 这三个字段是为了能一眼看出「现在跑的到底是哪份代码」。
     // 2026-09-11 踩过：pid 文件是陈旧的，按它杀进程杀错了，老服务继续跑了一整天，

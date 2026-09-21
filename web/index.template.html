@@ -231,6 +231,8 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 /* 模型断了的红条：会中要一眼看见，不能再出现 09-18 那种「静默 48 分钟 0 要点」。恢复时自己消失。 */
 .llm-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid #d33;background:#3a1212;color:#ffd7d7;font-size:12px}
 .llm-bar[hidden]{display:none}
+.llm-bar.degraded{border-bottom-color:#b8860b;background:#3a2f12;color:#ffe9b0}
+.llm-bar.degraded b{color:#ffcc55}
 .llm-bar b{color:#ff8a8a}
 .llm-bar .btn{border-color:#d33;color:#ffd7d7}
 .grp-span{float:right;font:11px var(--mono);color:var(--muted);font-weight:400}
@@ -397,6 +399,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   <!-- 就绪条：不拦人，只说明「现在能干什么、还缺什么」。两样都配好了就不出现，老用户看不到。 -->
   <div class="post-cards" id="post-cards" hidden></div>
   <div class="review-bar" id="review-bar" hidden><span>📖</span><span data-i18n="rv_label">回看</span><b id="review-title"></b><span class="sp"></span><button class="btn sm" id="review-note" data-i18n="rv_note">纪要 / 下载分享</button><button class="btn sm primary" id="review-exit" data-i18n="rv_exit">回到当前</button></div>
+  <div class="llm-bar degraded" id="llm-degraded-bar" hidden><b>已改用备用模型</b><span id="llm-degraded-msg"></span></div>
   <div class="llm-bar" id="llm-bar" hidden><b>模型没回应</b><span id="llm-bar-msg"></span><span style="flex:1"></span><button type="button" class="btn sm" id="llm-bar-setup">去设置里检测</button></div>
   <div class="ready-bar" id="ready-bar" hidden>
     <button type="button" class="rb-chip" id="rb-asr"></button>

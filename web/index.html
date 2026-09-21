@@ -231,6 +231,8 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 /* 模型断了的红条：会中要一眼看见，不能再出现 09-18 那种「静默 48 分钟 0 要点」。恢复时自己消失。 */
 .llm-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid #d33;background:#3a1212;color:#ffd7d7;font-size:12px}
 .llm-bar[hidden]{display:none}
+.llm-bar.degraded{border-bottom-color:#b8860b;background:#3a2f12;color:#ffe9b0}
+.llm-bar.degraded b{color:#ffcc55}
 .llm-bar b{color:#ff8a8a}
 .llm-bar .btn{border-color:#d33;color:#ffd7d7}
 .grp-span{float:right;font:11px var(--mono);color:var(--muted);font-weight:400}
@@ -397,6 +399,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   <!-- 就绪条：不拦人，只说明「现在能干什么、还缺什么」。两样都配好了就不出现，老用户看不到。 -->
   <div class="post-cards" id="post-cards" hidden></div>
   <div class="review-bar" id="review-bar" hidden><span>📖</span><span data-i18n="rv_label">回看</span><b id="review-title"></b><span class="sp"></span><button class="btn sm" id="review-note" data-i18n="rv_note">纪要 / 下载分享</button><button class="btn sm primary" id="review-exit" data-i18n="rv_exit">回到当前</button></div>
+  <div class="llm-bar degraded" id="llm-degraded-bar" hidden><b>已改用备用模型</b><span id="llm-degraded-msg"></span></div>
   <div class="llm-bar" id="llm-bar" hidden><b>模型没回应</b><span id="llm-bar-msg"></span><span style="flex:1"></span><button type="button" class="btn sm" id="llm-bar-setup">去设置里检测</button></div>
   <div class="ready-bar" id="ready-bar" hidden>
     <button type="button" class="rb-chip" id="rb-asr"></button>
@@ -1187,9 +1190,16 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   let llmDownNow = false;
   function setLlmDown(down, msg){
     llmDownNow = !!down;
+    if (down) { const d = $('#llm-degraded-bar'); if (d) d.hidden = true; }
     const bar = $('#llm-bar'); if (!bar) return;
     bar.hidden = !down;
     const m = $('#llm-bar-msg'); if (m) m.textContent = down ? (msg || '要点和总结已暂停；录音和转写不受影响，会后可以补跑。') : '';
+  }
+  // 降级黄条：首选模型没回应、备用模型顶上了。红条亮着时不显示（两条路都断了，说降级没有意义）。
+  function setLlmDegraded(on, msg){
+    const bar = $('#llm-degraded-bar'); if (!bar) return;
+    bar.hidden = !on || llmDownNow;
+    const m = $('#llm-degraded-msg'); if (m) m.textContent = on ? (msg || '首选模型没回应，已临时改用备用模型；要点和总结照常出。') : '';
   }
   $('#llm-bar-setup') && ($('#llm-bar-setup').onclick = () => openSettings('llm'));
   function updateReadyBar(){
@@ -1973,7 +1983,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   // 那是第四个恢复入口；现在只记状态，由启动时那一个恢复面板统一处理。
   let macRecovery=false;
   const macRecoveryNeeded=()=>macRecovery;
-  async function checkMac(){ if (!cfg.relayToken && !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) { macOnline = false; try { updateModeChip(); } catch(e){} return false; } try { const r = await fetch(`${relayBase()}/health?token=${encodeURIComponent(cfg.relayToken)}`, {cache:'no-store', signal: AbortSignal.timeout(4000)}); macOnline = r.ok;if(r.ok){const h=await r.json();archiveAttention=h.archiveNeedsAttention||0;if(!!h.llmDown!==llmDownNow)setLlmDown(!!h.llmDown,h.llmReason?('原因 '+h.llmReason+'。要点和总结已暂停；录音和转写不受影响，会后可以补跑。'):'');macRecovery=!!h.recoveryNeeded;} } catch(e) { macOnline = false; } try { updateModeChip(); updateAssistantIdentity(); } catch(e){} return macOnline; }
+  async function checkMac(){ if (!cfg.relayToken && !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) { macOnline = false; try { updateModeChip(); } catch(e){} return false; } try { const r = await fetch(`${relayBase()}/health?token=${encodeURIComponent(cfg.relayToken)}`, {cache:'no-store', signal: AbortSignal.timeout(4000)}); macOnline = r.ok;if(r.ok){const h=await r.json();archiveAttention=h.archiveNeedsAttention||0;if(!!h.llmDown!==llmDownNow)setLlmDown(!!h.llmDown,h.llmReason?('原因 '+h.llmReason+'。要点和总结已暂停；录音和转写不受影响，会后可以补跑。'):'');try{setLlmDegraded(!!h.llmDegraded,h.llmDegradedReason?('首选模型没回应（'+h.llmDegradedReason+'），已临时改用备用模型；要点和总结照常出。'):'');}catch(e){}macRecovery=!!h.recoveryNeeded;} } catch(e) { macOnline = false; } try { updateModeChip(); updateAssistantIdentity(); } catch(e){} return macOnline; }
   function resolveMode(){
     const v = el.lang && el.lang.value; if (v && v !== 'auto') return v;
     if (!macOnline) return 'ime';
@@ -2344,6 +2354,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       else if (m.type === 'ended') { cur.relayHandled=true;persist();refreshArchive(); }
       else if (m.type === 'stall') note(m.message || (T('stall_relay')||'中转报告采音异常。'), true);
       else if (m.type === 'llm_down') setLlmDown(true, m.message||'');
+      else if (m.type === 'llm_degraded') setLlmDegraded(!!m.on, m.message||'');
       else if (m.type === 'llm_up') { setLlmDown(false); note(ui==='en'?'Model is back; analysis resumes.':'模型已恢复，分析继续'); }
       else if (m.type === 'error') note('中转报错：' + (m.message||''), true);
     };
