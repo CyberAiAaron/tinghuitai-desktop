@@ -65,6 +65,15 @@ const QUEUE_MAX_SEC = 600;               // 火山断线期间最多缓存 10 �
 function log(m) { try { fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} }
 // 本地免 token：⚠️ tailscale serve/funnel 是本机反代，会把外网请求也转发到 127.0.0.1，光看 remoteAddress 会把 funnel 流量误判成本地——
 // 所以额外要求「没有代理头」：serve/funnel 转发时会带 x-forwarded-for/x-forwarded-proto，真正直连 127.0.0.1 的浏览器请求不会有这些头。
+// 手机口令：主口令之外，settings 里的 PHONE_TOKENS 也算数（数组或逗号分隔，短于 24 位的不认）。
+// 用途：手机入口从旧中转切过来时，手机上存的旧地址不用重配。设置页的写操作仍然只认主口令。
+function tokenOk(env, t) {
+  t = String(t || ''); if (!t) return false;
+  const extra = Array.isArray(env.PHONE_TOKENS) ? env.PHONE_TOKENS : String(env.PHONE_TOKENS || '').split(',');
+  const all = [env.RELAY_TOKEN, ...extra.map(x => String(x || '').trim()).filter(x => x.length >= 24)].filter(Boolean);
+  const crypto = require('crypto'), h = x => crypto.createHash('sha256').update(x).digest();
+  return all.some(x => crypto.timingSafeEqual(h(x), h(t)));
+}
 function isLocalReq(req) {
   const ip = (req.socket && req.socket.remoteAddress) || '';
   const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
@@ -1014,7 +1023,7 @@ const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,
 const shareBundles=require('./share-bundles')({settings});
 const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
 const server = http.createServer(async (req, res) => {
-  const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || (env0.RELAY_TOKEN && u.searchParams.get('token') === env0.RELAY_TOKEN); const p = u.pathname;
+  const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || tokenOk(env0, u.searchParams.get('token')); const p = u.pathname;
   if(p.replace(/^\/asr-relay/,'').startsWith('/sharing/bundle') && await shareBundles.route(req,res,u,authed))return;
   if(p.endsWith('/sharing/lark') && req.method==='POST'){
     const send=(status,j)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
@@ -1849,7 +1858,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
 const wss = new WebSocket.Server({ server });  // 不限路径：funnel 子路径代理会剥掉 /asr-relay
 wss.on('connection', (ws, req) => {
   const env = loadEnv(); const q = new URL(req.url, 'http://localhost'); const token = q.searchParams.get('token');
-  if (!env.RELAY_TOKEN || token !== env.RELAY_TOKEN) { log('auth fail'); ws.close(4401, 'bad token'); return; }
+  if (!tokenOk(env, token)) { log('auth fail'); ws.close(4401, 'bad token'); return; }
   const isView = q.searchParams.get('role') === 'view';
   log('client connected' + (isView ? ' [view]' : ''));
   let session = null, rate = 16000, role = isView ? 'view' : 'unknown';
