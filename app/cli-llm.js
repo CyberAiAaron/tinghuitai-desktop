@@ -3,6 +3,7 @@
 // 支持 Codex（ChatGPT 登录）和 Claude Code（Claude 订阅）。两者都是只读沙箱，只让它读本场材料。
 const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const CANDIDATES = {
@@ -18,8 +19,39 @@ const CANDIDATES = {
 };
 
 function findBin(kind) {
+  // THT_CODEX_BIN / THT_CLAUDE_BIN：指定用哪个可执行文件。测试拿它挂假命令行，
+  // 装在别处的人也能靠它指路（不设就按下面的常见位置找）。
+  const forced = String(process.env['THT_' + kind.toUpperCase() + '_BIN'] || '').trim();
+  if (forced) { try { fs.accessSync(forced, fs.constants.X_OK); return forced; } catch (e) { return ''; } }
   for (const p of CANDIDATES[kind] || []) { try { fs.accessSync(p, fs.constants.X_OK); return p; } catch (e) {} }
   return '';
+}
+
+// —— Codex 净室 ——
+// Claude 那条早就是净室启动了（--setting-sources ''、--strict-mcp-config、工具只留 Read）。
+// Codex 这条原来只有 --sandbox read-only，它会把 $CODEX_HOME/config.toml 里配的 MCP 全连上、
+// 把 $CODEX_HOME/AGENTS.md（Aaron 那份几千字的全局规则）当成系统指令带进去。
+// 那就违反了「模型知道的一切只来自引擎递给它的那份输入」：同一段会议材料，换台机器结果不一样，
+// 而且它凭什么看到那些东西没人说得清。所以给它一个干净的家。
+// 依据 codex-cli 0.155.0-alpha.9.2 的 `codex exec --help`：
+//   --ignore-user-config  不读 $CODEX_HOME/config.toml（MCP 就配在那儿），auth 仍然从 CODEX_HOME 取
+//   --ignore-rules        不读用户 / 项目的 execpolicy .rules
+//   --ephemeral           不往盘上写会话文件
+//   -c project_doc_max_bytes=0   项目文档（AGENTS.md）一个字都不带（这是 config.toml 里的真实键，默认 32768）
+// 全局 AGENTS.md 读的是 CODEX_HOME 底下那份，--ignore-user-config 管不着它，所以还要换家：
+// <数据目录>/state/codex-home 里只软链一个 auth.json，别的什么都没有。
+function codexHome(dataDir) {
+  if (!dataDir) return '';
+  try {
+    const real = path.join(os.homedir(), '.codex', 'auth.json');
+    if (!fs.existsSync(real)) return '';        // 没有这份凭证就别换家，不然直接登不上
+    const dir = path.join(dataDir, 'state', 'codex-home');
+    fs.mkdirSync(dir, { recursive: true });
+    const link = path.join(dir, 'auth.json');
+    let cur = null; try { cur = fs.readlinkSync(link); } catch (e) {}
+    if (cur !== real) { try { fs.rmSync(link, { force: true }); } catch (e) {} fs.symlinkSync(real, link); }
+    return dir;
+  } catch (e) { return ''; }                    // 建不出来就退回原来的家，宁可带上规则也别调不起来
 }
 // 装了不等于能用：没登录的话调用会失败。检测只回「装没装」，能不能用由一次真实试跑决定。
 function detect() {
@@ -33,7 +65,8 @@ function detect() {
 const MIN_SYSTEM = '你是会议记录分析助手。只输出被要求的内容，不解释、不寒暄。';
 
 function args(kind, { model = '', system = '' } = {}) {
-  if (kind === 'codex') return ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-'];
+  if (kind === 'codex') return ['exec', '--sandbox', 'read-only', '--skip-git-repo-check',
+    '--ignore-user-config', '--ignore-rules', '--ephemeral', '-c', 'project_doc_max_bytes=0', '-'];
   const a = ['-p', '--output-format', 'json'];
   if (model) a.push('--model', model);
   a.push(
@@ -57,7 +90,9 @@ function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}
     let done = false;
     const finish = v => { if (!done) { done = true; resolve(v); } };
     let p;
-    try { p = spawn(bin, args(kind, { model, system }), { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '' } }); }
+    const home = kind === 'codex' ? codexHome(dataDir) : '';
+    try { p = spawn(bin, args(kind, { model, system }),
+      { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}) } }); }
     catch (e) { log('cli-llm spawn 失败 ' + e.message); return finish({ ok: false, reason: 'spawn_failed' }); }
     let out = '', err = '';
     const timer = setTimeout(() => { log('cli-llm 超时 ' + kind); finish({ ok: false, reason: 'timeout' }); try { p.kill('SIGTERM'); } catch (e) {} setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} }, 2000); }, timeoutMs);
@@ -137,4 +172,4 @@ async function probe(kind, dataDir) {
   return { ok: /READY/i.test(t), reason: /READY/i.test(t) ? '' : 'unexpected_reply', bin, sample: t.slice(0, 80) };
 }
 
-module.exports = { detect, findBin, ask, askDetailed, probe, mainModel };
+module.exports = { detect, findBin, codexHome, ask, askDetailed, probe, mainModel };

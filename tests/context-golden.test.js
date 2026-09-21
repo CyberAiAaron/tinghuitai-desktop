@@ -232,7 +232,12 @@ test('金样 · post-summary / brief / review / title / share（会后管线）'
 sb=importlib.util.module_from_spec(spec2);spec2.loader.exec_module(sb)
 sb.generate(SESSION)`);
     const shareRows = take(2);                        // 先 summarize 一次，再 share 一次
+    golden('share-summarize', shareRows[0]);          // 分享包里那次总结也不许带本机资料，单独钉一份
     golden('share', shareRows[shareRows.length - 1]);
+    // 金样是「和以前一模一样」，这一条是「本来就不该有」：隐私边界不靠人去读金样文件发现。
+    for (const row of shareRows)
+      for (const [name, body] of [['核心记忆', CORE], ['项目状态', STATE], ['项目重点', FOCUS], ['事实源', FACTS], ['团队名单', '约会顺序'], ['会议记忆', '以往会议沉淀']])
+        assert.ok(!(row.system + row.user).includes(body.trim().slice(0, 12)), '分享包带上了' + name + '，这是隐私边界');
   } finally { api.stop(); h.clean(); }
 });
 
