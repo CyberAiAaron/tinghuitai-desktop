@@ -16,3 +16,4 @@ preset.json
 
 # 发行产物不进源码树
 *.zip
+.tmp/
