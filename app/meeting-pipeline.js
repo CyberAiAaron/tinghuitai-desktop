@@ -55,6 +55,9 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   if(fs.existsSync(cur)||!fs.existsSync(prev))return;
   try{fs.copyFileSync(prev,cur);log('这次没跑成，已把上一版整理结果放回 '+key);}catch(e){}
  }
+ let nextPump=null;
+ // 下一次 pump 的句柄：stop() 要能连它一起停，不然关掉的管线还会再醒一次（测试里表现为对着已删目录 readdir）
+ const later=ms=>{clearTimeout(nextPump);nextPump=setTimeout(pump,ms);nextPump.unref();};
  function pump(){
   if(child||!idle())return;
   // P-03：以前只有 error 会自动重试，「归档完成但总结没出来」的那些就永远停在那儿，
@@ -80,17 +83,20 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
    try{process.kill(-kid.pid,'SIGKILL');}catch(e){}try{kid.kill('SIGKILL');}catch(e){}},PY_TIMEOUT_MS);
   guard.unref();
   child.on('error',()=>{clearTimeout(guard);const p=path.join(dir,j.key+'.job.json'),s=read(p);write(p,{...s,status:'error',error:'后处理进程未启动',attempts:(s.attempts||0)+1,nextRetry:Date.now()/1000+120,phase:'归档待重试'});});
-  child.on('close',()=>{child=null;clearTimeout(guard);const jobPath=path.join(dir,j.key+'.job.json'),done=read(jobPath);
+  child.on('close',()=>{child=null;clearTimeout(guard);try{const jobPath=path.join(dir,j.key+'.job.json'),done=read(jobPath);
   const errTail=tail.trim();
   if(killed){unshelveEnhanced(j.key);if(errTail)log('后处理 stderr 尾部 '+j.key+'：'+errTail);
-   write(jobPath,{...done,status:'error',phase:'归档待重试',error:'后处理超过 '+Math.round(PY_TIMEOUT_MS/60000)+' 分钟没结束，已中断，原始录音仍保留'+(errTail?'｜'+errTail.slice(-200):''),attempts:(done.attempts||0)+1,nextRetry:Date.now()/1000+120});
-   log('meeting pipeline killed '+j.key);setTimeout(pump,1000).unref();return;}
+   write(jobPath,{...done,status:'error',phase:'归档待重试',error:'后处理超过 '+(PY_TIMEOUT_MS>=60000?Math.round(PY_TIMEOUT_MS/60000)+' 分钟':Math.round(PY_TIMEOUT_MS/1000)+' 秒')+'没结束，已中断，原始录音仍保留'+(errTail?'｜'+errTail.slice(-200):''),attempts:(done.attempts||0)+1,nextRetry:Date.now()/1000+120});
+   log('meeting pipeline killed '+j.key);later(1000);return;}
   if(errTail&&(done.status==='error'||done.status==='partial')){log('后处理 stderr 尾部 '+j.key+'：'+errTail);
    try{const cur=read(jobPath);cur.stderrTail=errTail.slice(-2048);if(cur.status==='error'&&!String(cur.error||'').includes('｜'))cur.error=String(cur.error||'')+'｜'+errTail.slice(-200);write(jobPath,cur);Object.assign(done,cur);}catch(e){}}
   if(done.status==='error'||done.status==='partial')unshelveEnhanced(j.key);
-  if(done.status==='running'||done.status==='queued'){unshelveEnhanced(j.key);done.status='error';done.error='后处理进程中断，原始录音仍保留';done.attempts=(done.attempts||0)+1;done.nextRetry=Date.now()/1000+120;write(jobPath,done);}if(['done','partial'].includes(done.status)){const resultPath=path.join(dir,j.key+'.job.enhanced.json');try{onComplete(read(resultPath),done,read(done.input));delete done.hubSyncWarning;write(jobPath,done);}catch(e){done.status='partial';done.hubSyncWarning=e.message;done.phase='工作台同步待重试';write(jobPath,done);log('hub archive update failed '+e.message);}}log('meeting pipeline finished '+j.key);setTimeout(pump,1000).unref();});
+  if(done.status==='running'||done.status==='queued'){unshelveEnhanced(j.key);done.status='error';
+   // Python 半路死掉（多半是起不来或抛了异常）时，它的 stderr 就是唯一线索，别只留一句「进程中断」（审查 S8）
+   if(errTail){log('后处理 stderr 尾部 '+j.key+'：'+errTail);done.stderrTail=errTail.slice(-2048);}
+   done.error='后处理进程中断，原始录音仍保留'+(errTail?'｜'+errTail.slice(-200):'');done.attempts=(done.attempts||0)+1;done.nextRetry=Date.now()/1000+120;write(jobPath,done);}if(['done','partial'].includes(done.status)){const resultPath=path.join(dir,j.key+'.job.enhanced.json');try{onComplete(read(resultPath),done,read(done.input));delete done.hubSyncWarning;write(jobPath,done);}catch(e){done.status='partial';done.hubSyncWarning=e.message;done.phase='工作台同步待重试';write(jobPath,done);log('hub archive update failed '+e.message);}}log('meeting pipeline finished '+j.key);}catch(e){log('后处理收尾出错 '+j.key+'：'+e.message);}later(1000);});
  }
- const timer=setInterval(pump,30000);timer.unref();setTimeout(pump,3000).unref();
+ const timer=setInterval(pump,30000);timer.unref();later(3000);
  // P-02：以前只重跑 error / partial，已归档（done）的点「重新整理」什么都不做，界面却说「已排进队列」。
  // 现在 done 也真重跑；重跑前把上一版整理结果另存 .prev，万一这次答得更差还能拿回来。
  // 正在跑的（queued / running）不重复入队，把当前任务原样回给调用方，由它如实显示。
@@ -138,5 +144,5 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
  // 认人（会后一屏）把名字写进归档结果的 names。空串 = 清掉这个名字，认错了要能改回来。
  function setNames(id,patch){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))return null;
   return patchEnhanced(p.enhanced,{names:patch||{}});}
- const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>clearInterval(timer)};managers.set(dir,api);return api;
+ const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
 };
