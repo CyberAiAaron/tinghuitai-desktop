@@ -39,17 +39,45 @@ function unreadTitle(url){let host='未知来源',id='';try{const u=new URL(cano
  const parts=u.pathname.split('/').filter(Boolean).filter(p=>!URL_NOISE.has(p.toLowerCase()));
  id=(parts[parts.length-1]||'').slice(0,8);}catch{}return '未读取 · '+host+(id?'/'+id:'');}
 const isUnread=t=>/^未读取 · /.test(String(t||''));
+// 只对公网 https 放行：资料链接是用户贴的，别让一条 http://127.0.0.1 或内网地址的链接变成本机替它发请求。
+const HOPS=3, BODY_CAP=300000;
+function publicHttps(url){
+ try{const u=new URL(url);
+  if(u.protocol!=='https:')return null;
+  if(/^(localhost$|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[)|\.(local|internal|lan)$/i.test(u.hostname))return null;
+  return u;}catch{return null;}}
+// 边读边数，到上限就主动断开：对方甩一个不结束的流过来时，别把它整个拉进内存再截断。
+// 老的假 fetch（测试里那种只有 text() 的）没有 body，退回一次性读。
+async function readCapped(r,cap){
+ const body=r&&r.body;
+ if(!body||typeof body.getReader!=='function')return String(await r.text()).slice(0,cap);
+ const reader=body.getReader(),dec=new TextDecoder('utf-8',{fatal:false});let text='';
+ try{for(;;){const {done,value}=await reader.read();if(done)break;
+   text+=dec.decode(value,{stream:true});
+   if(text.length>=cap){text=text.slice(0,cap);try{await reader.cancel();}catch{}break;}}}
+ finally{try{reader.releaseLock&&reader.releaseLock();}catch{}}
+ return text;}
 // 不带凭据的一次 GET，只取 <title>；超时 5 秒，任何失败都返回空串由调用方兜底。
+// X7：原来只挡第一跳——一个公网域名 302 到 http://127.0.0.1 或内网地址，fetch 自己就跟过去了，
+// 等于贴一条链接就能让本机替他探内网。现在自己跟跳转，每一跳重新过一遍白名单，最多 3 跳。
 async function fetchPageTitle(url,fetchImpl){
  if(typeof fetchImpl!=='function')return '';
- // 只对公网 https 发请求：资料链接是用户贴的，别让一条 http://127.0.0.1 或内网地址的链接变成本机替它发请求。
- try{const u=new URL(url);if(u.protocol!=='https:'||/^(localhost$|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[)|\.(local|internal|lan)$/i.test(u.hostname))return '';}catch{return '';}
+ let u=publicHttps(url);if(!u)return '';
  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),5000);
- try{const r=await fetchImpl(url,{redirect:'follow',signal:ctl.signal,headers:{accept:'text/html,application/xhtml+xml','user-agent':'Mozilla/5.0 (Macintosh) Tinghuitai/1.0'}});
-  if(!r||!r.ok)return '';
-  const type=String(r.headers?.get?.('content-type')||'');if(type&&!/html|xml|text\/plain/i.test(type))return '';
-  const body=String(await r.text()).slice(0,300000),m=body.match(/<title[^>]*>([\s\S]{0,400}?)<\/title>/i);
-  return m?tidyTitle(m[1]).slice(0,200):'';
+ try{
+  for(let hop=0;;hop++){
+   const r=await fetchImpl(u.href,{redirect:'manual',signal:ctl.signal,headers:{accept:'text/html,application/xhtml+xml','user-agent':'Mozilla/5.0 (Macintosh) Tinghuitai/1.0'}});
+   if(!r)return '';
+   const status=Number(r.status||0),location=r.headers?.get?.('location');
+   if(status>=300&&status<400&&location){
+    if(hop>=HOPS)return '';                                  // 跳太多次，多半是跳转环，不跟了
+    const next=publicHttps(new URL(location,u.href).href);    // Location 指内网就停在这里
+    if(!next)return '';
+    u=next;continue;}
+   if(!r.ok)return '';
+   const type=String(r.headers?.get?.('content-type')||'');if(type&&!/html|xml|text\/plain/i.test(type))return '';
+   const body=await readCapped(r,BODY_CAP),m=body.match(/<title[^>]*>([\s\S]{0,400}?)<\/title>/i);
+   return m?tidyTitle(m[1]).slice(0,200):'';}
  }catch{return '';}finally{clearTimeout(timer);}}
 // 飞书走已有的读取路径（和「读取／更新原文」同一条命令），只取第一行标题；超时 5 秒。
 const isLark=url=>{try{const h=new URL(url).hostname;return /(^|\.)(larksuite\.com|feishu\.cn|doubao\.com)$/.test(h);}catch{return false;}};
