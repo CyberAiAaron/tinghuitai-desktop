@@ -1531,6 +1531,34 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     return 0;
   }
   const segOf = x => { const r=(x.sourceRefs||[])[0]; return r&&r.segId!=null?String(r.segId):''; };
+  // 会中排好的议题树要送一份到 Mac：会后回看页照这套划分渲染，不另起一套议题。
+  // 送的是算好的摘要（标题、结论、起止、这一组的要点带 segId），不是 keys 原文——服务端不用再回表查一遍。
+  function outlineDigest(sess){
+    const groups=(sess&&sess.hlGroups&&sess.hlGroups.groups)||[];
+    if(groups.length<2)return null;
+    const byText=new Map();for(const x of (sess.highlights||[]))if(!byText.has(x.text))byText.set(x.text,x);
+    const out=[];
+    for(const g of groups){
+      const list=(g.keys||[]).map(k=>byText.get(k)).filter(Boolean);
+      if(!list.length)continue;
+      const merged=g.merged||{},hidden=new Set();
+      for(const [keep,from] of Object.entries(merged))for(const t of from)if(hlKey(t)!==hlKey(keep))hidden.add(hlKey(t));
+      const main=list.filter(x=>!hidden.has(hlKey(x.text)));
+      const ats=list.map(x=>atOf(sess,x)).filter(v=>v>0);
+      out.push({title:String(g.title||'').slice(0,120),summary:String(g.summary||'').slice(0,600),
+        status:g.status==='unresolved'?'unresolved':'settled',
+        from:ats.length?Math.min(...ats):0,to:ats.length?Math.max(...ats):0,
+        points:(main.length?main:list).slice(0,12).map(x=>({text:String(x.text||'').slice(0,200),at:atOf(sess,x)||0,seg:segOf(x)}))});
+    }
+    return out.length>=2?out:null;
+  }
+  function sendOutline(sess){
+    try{
+      if(cur!==sess||!asrWs||asrWs.readyState!==1)return;
+      const groups=outlineDigest(sess);
+      if(groups)asrWs.send(JSON.stringify({type:'outline',groups}));
+    }catch(e){console.debug('[outline] 没送上去',e&&e.message);}
+  }
   // 议题行收起来时只显示一句话：summary 的第一句就是结论（提示词里要求的）
   const firstSentence = v => { const t=String(v||'').trim(); const m=t.match(/^[\s\S]*?[。！？!?](?=\s|$)|^[^。！？!?]+/); return (m?m[0]:t).trim().slice(0,160); };
   const hlKey = v => String(v||'').replace(/\s+/g,'').replace(/[，。、；;,.!！?？"'“”‘’()（）]/g,'').slice(0,60);
@@ -1614,7 +1642,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         }
         // 还没排完的（partial）不记 input，下一轮接着往后排；排完了才记，避免每次渲染空转。
         sess.hlGroups={groups,input:partial?'':signature,language,count:ready.length,at:Date.now(),fails:0,done,rounds};
-        persist();if(cur===sess)render();
+        persist();sendOutline(sess);if(cur===sess)render();
       }).catch(e=>{sess.hlGroups={...(sess.hlGroups||{}),at:Date.now(),fails:(prev.fails||0)+1};persist();console.debug('[outline]',e.message);})
       .finally(()=>{groupingBusy=false;});
   }
@@ -2920,7 +2948,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     finally { try { ctx && ctx.close(); } catch(e){} [ds,mic].forEach(st => { try { st && st.getTracks().forEach(t=>t.stop()); } catch(e){} }); }
   }
   async function asrStart(){ asrStarting=true;audioQueue=[];audioQueueBytes=0;try{await asrAudioUp();if(!running){asrStop();return;}el.status.textContent=T('st_live')||'正在听';el.status.className='pill live';asrOpen();}finally{asrStarting=false;if(!running)el.start.disabled=false;} }
-  function asrStop(){ let delivered=false;try { if(asrWs?.readyState===1){asrWs.send(JSON.stringify({type:'end',notes:cur?.notes||'',browserGapSeconds:cur?.untranscribedSeconds||0,transcriptEdits:cur?.transcriptEdits||[]}));delivered=true;} } catch(e){} const w = asrWs; setTimeout(()=>{ try { w && w.close(); if(asrWs===w)asrWs=null; } catch(e){} }, 125000); if(safetyRecording){safetyRecording.stop();safetyRecording=null;} try { asrNode && asrNode.disconnect(); } catch(e){} try { asrCtx && asrCtx.close(); } catch(e){} try { asrStream && asrStream.getTracks().forEach(t=>t.stop()); (asrStream && asrStream._extra || []).forEach(s=>s.getTracks().forEach(t=>t.stop())); } catch(e){} asrNode = asrCtx = asrStream = null; stopSpkTrack(); lastFinalAt = 0;return delivered; }
+  function asrStop(){ let delivered=false;try { if(asrWs?.readyState===1){asrWs.send(JSON.stringify({type:'end',notes:cur?.notes||'',browserGapSeconds:cur?.untranscribedSeconds||0,transcriptEdits:cur?.transcriptEdits||[],outline:outlineDigest(cur)||undefined}));delivered=true;} } catch(e){} const w = asrWs; setTimeout(()=>{ try { w && w.close(); if(asrWs===w)asrWs=null; } catch(e){} }, 125000); if(safetyRecording){safetyRecording.stop();safetyRecording=null;} try { asrNode && asrNode.disconnect(); } catch(e){} try { asrCtx && asrCtx.close(); } catch(e){} try { asrStream && asrStream.getTracks().forEach(t=>t.stop()); (asrStream && asrStream._extra || []).forEach(s=>s.getTracks().forEach(t=>t.stop())); } catch(e){} asrNode = asrCtx = asrStream = null; stopSpkTrack(); lastFinalAt = 0;return delivered; }
 
   // ===== 输入法听写 =====
   let imeUsed = 0, imeLastLen = 0, imeLastChange = 0;
