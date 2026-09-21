@@ -5,7 +5,28 @@
   let cfg = Object.assign({}, DEF); try { Object.assign(cfg, JSON.parse(localStorage.getItem('tht-settings')||'{}')); } catch(e){}
   const ctxHint = () => { $('#s-ctx-hint').textContent = ctx ? `已加载 ${ctx.length} 字。` : '未填：Mac 离线时会中分析只能靠转写本身。'; };
   const dlg = $('#dlg');
-  function openSettings(){ loadServerSettings(); $('#s-provider').value = cfg.provider; $('#s-key').value = cfg.key; $('#s-base').value = cfg.base; $('#s-quick').value = cfg.quick; $('#s-model').value = cfg.model; $('#s-relay').value = cfg.relayToken||''; $('#s-hot').value = cfg.hotwords||''; fillMics(); $('#s-auto').value = cfg.autoEndMin||12; $('#f-base').hidden = cfg.provider!=='openai'; $('#s-msg').hidden = true; $('#s-ctx').value = ctx; ctxHint(); dlg.showModal(); }
+  // L-13：以前有两套设置界面——设置弹窗和 setup.html，同一批配置两处都能改，setup.html 还有 5 个入口。
+  // 现在 setup.html 只留首次引导（launch.js 在没配好时直接开它），其余入口一律开设置弹窗并跳到对应那一栏。
+  const SET_SECTION = {
+    asr: {el:'#s-asr', adv:false},           // 转写方式
+    llm: {el:'#s-agent-provider', adv:false},// MyAgent 后台
+    api: {el:'#s-key', adv:true},            // 自己填 API Key
+    mic: {el:'#s-mic', adv:false},           // 收音设备
+    ctx: {el:'#s-ctx', adv:true},            // 项目上下文
+  };
+  function jumpTo(section){
+    const t = SET_SECTION[section]; if (!t) return;
+    const adv = $('#adv'); if (t.adv && adv) adv.open = true;
+    const el = $(t.el); if (!el) return;
+    // 等弹窗自己排完版再滚，否则滚到的是旧位置
+    requestAnimationFrame(() => {
+      try { el.scrollIntoView({block:'center', behavior:'smooth'}); } catch(e) { el.scrollIntoView(); }
+      const box = el.closest('.field') || el;
+      box.classList.add('jump-hi'); setTimeout(() => box.classList.remove('jump-hi'), 1600);
+      try { el.focus({preventScroll:true}); } catch(e) {}
+    });
+  }
+  function openSettings(section){ loadServerSettings(); $('#s-provider').value = cfg.provider; $('#s-key').value = cfg.key; $('#s-base').value = cfg.base; $('#s-quick').value = cfg.quick; $('#s-model').value = cfg.model; $('#s-relay').value = cfg.relayToken||''; $('#s-hot').value = cfg.hotwords||''; fillMics(); $('#s-auto').value = cfg.autoEndMin||12; $('#f-base').hidden = cfg.provider!=='openai'; $('#s-msg').hidden = true; $('#s-ctx').value = ctx; ctxHint(); dlg.showModal(); if (section) jumpTo(section); }
   async function autoPickMic(){
     if (cfg.micId) return;                       // 他自己指定过就不动
     try {
@@ -28,4 +49,4 @@
       hint.textContent = ds.some(d=>d.label) ? (T('mic_hint')||'桌面 App 开会时选「聚合设备（BlackHole + 麦克风）」，才能听见对方。') : (T('mic_nolabel')||'先允许一次麦克风权限，设备名才显示得出来。');
     } catch(e){ hint.textContent = String(e.message||e); }
   }
-  $('#gear').onclick = () => { window.open('setup.html', 'tinghuitai-service-settings', 'popup,width=720,height=860'); };
+  $('#gear').onclick = () => openSettings('asr');

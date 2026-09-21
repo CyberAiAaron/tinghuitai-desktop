@@ -213,13 +213,29 @@ def summary_input(session):
             for field in ['speaker','spk','who']:row.pop(field,None)
     return result
 
-CLI_ARGS = {
-    'codex': ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-'],
+def post_model():
+    """会后这条路用更强的模型（Aaron 2026-09-20：会中 Sonnet、会后 Opus）。"""
+    try: return ((read(ROOT/'settings.json', {}) or {}).get('LLM_MODEL_POST') or 'opus').strip()
+    except Exception: return 'opus'
+
+def cli_args(kind, system=''):
+    """和 app/cli-llm.js 的 args() 同一套瘦身参数。会中那条路 2026-09-20 已经瘦过身，
+    会后这条路当时漏掉，每次调用仍白带 6 万 token 的默认系统提示词、工具表和用户设置。"""
+    if kind == 'codex':
+        return ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-']
+    a = ['-p', '--output-format', 'json']
+    m = post_model()
+    if m: a += ['--model', m]
     # 总结不需要任何工具。--allowedTools Read 只是「读不用确认」，不等于「只能读」，
     # 会议原文里若夹带指令仍可能诱导它去读别的文件。这里把工具全部关掉。
-    'claude': ['-p', '--output-format', 'text', '--allowedTools', '',
-               '--disallowedTools', 'Bash,Edit,Write,WebFetch,WebSearch,Read,Glob,Grep,Task'],
-}
+    a += ['--setting-sources', '',       # 不读 ~/.claude 的 settings、CLAUDE.md、skill
+          '--strict-mcp-config',         # 不连任何 MCP
+          '--disable-slash-commands',    # 不加载 skill
+          '--tools', '',                 # 工具表是大头：实测带着 31,522 token，清空后 597
+          '--allowedTools', '',
+          '--disallowedTools', 'Bash,Edit,Write,WebFetch,WebSearch,Read,Glob,Grep,Task',
+          '--system-prompt', system or '你是会议记录分析助手。只输出被要求的内容，不解释、不寒暄。']
+    return a
 CLI_NAMES = {'codex': ['codex'], 'claude': ['claude']}
 
 def find_cli(kind):
@@ -237,7 +253,23 @@ def find_cli(kind):
 
 CLI_FAIL = {'reason': ''}
 
-def cli_ask(kind, system, user, timeout=300):
+def _record_cli_usage(result, session_id='', purpose=''):
+    usage = result.get('usage') or {}
+    if not usage: return
+    row = {'ts': int(time.time() * 1000), 'sessionId': session_id, 'provider': 'claude',
+           'model': next(iter((result.get('modelUsage') or {}).keys()), post_model()),
+           'tier': 'post', 'purpose': purpose,
+           'in': sum(usage.get(k, 0) or 0 for k in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens')),
+           'out': usage.get('output_tokens', 0), 'est': False}
+    dest = ROOT / 'state/usage.jsonl'
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try: os.write(fd, (json.dumps(row, ensure_ascii=False) + '\n').encode())
+        finally: os.close(fd)
+    except OSError: pass
+
+def cli_ask(kind, system, user, timeout=300, session_id='', purpose=''):
     """用本机 CLI 生成。失败返回 None 并把原因留在 CLI_FAIL，调用方退回 API。"""
     binp = find_cli(kind)
     if not binp:
@@ -245,14 +277,15 @@ def cli_ask(kind, system, user, timeout=300):
     env = dict(os.environ); env['CLAUDECODE'] = ''
     try:
         # start_new_session：超时后按进程组整棵杀掉，免得 CLI 拉起的子进程继续跑
-        proc = subprocess.Popen([binp, *CLI_ARGS[kind]], stdin=subprocess.PIPE,
+        proc = subprocess.Popen([binp, *cli_args(kind, system)], stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, encoding='utf-8', errors='replace',
                                 env=env, start_new_session=True)
     except Exception as e:
         CLI_FAIL['reason'] = kind + ' 启动失败：' + type(e).__name__; return None
     try:
-        out, err = proc.communicate(system + '\n\n' + user, timeout=timeout)
+        # claude 的系统提示词走 --system-prompt，stdin 只放本场材料；codex 没有这个参数，仍拼在前面
+        out, err = proc.communicate(user if kind == 'claude' else system + '\n\n' + user, timeout=timeout)
     except subprocess.TimeoutExpired:
         try: os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except Exception: pass
@@ -265,6 +298,16 @@ def cli_ask(kind, system, user, timeout=300):
         CLI_FAIL['reason'] = kind + ' 退出码 ' + str(proc.returncode) + '：' + (err or '')[:160]; return None
     out = (out or '').strip()
     if not out: CLI_FAIL['reason'] = kind + ' 没有输出'
+    if kind == 'claude' and out:
+        try: result = json.loads(out)
+        except ValueError:
+            CLI_FAIL['reason'] = 'claude 输出不是 JSON'; return None
+        _record_cli_usage(result, session_id, purpose)
+        if result.get('is_error') or result.get('permission_denials'):
+            CLI_FAIL['reason'] = 'claude 调用失败：' + str(result.get('result') or result.get('permission_denials'))[:160]
+            return None
+        out = str(result.get('result') or '').strip()
+        if not out: CLI_FAIL['reason'] = 'claude 没有正文'
     return out or None
 
 def read_context():
@@ -306,7 +349,7 @@ def summarize(session, on_phase=None):
             raise RuntimeError('总结超时（超过 30 分钟），原文仍可归档')
         sys_prompt = prompt + (ctx_block if final else '')   # 核心记忆只在最终那轮注入，避免混进分块摘要后分不清来源
         if provider in ('codex', 'claude') and not cli_dead['off']:
-            out = cli_ask(provider, sys_prompt, source, timeout=min(300, max(60, int(deadline - time.time()))))
+            out = cli_ask(provider, sys_prompt, source, timeout=min(300, max(60, int(deadline - time.time()))), session_id=session.get('id',''), purpose='summary')
             if out: return out
             cli_dead['off'] = True
             if not key: raise RuntimeError('本机 AI 没能生成总结（' + (CLI_FAIL.get('reason') or '原因未知') + '），也没有配置 API Key')
@@ -383,11 +426,11 @@ def _brief_text(session, cap=150000):
         text = '\n'.join(ls[int(i*step)] for i in range(int(len(ls)/step)))
     return text
 
-def _ask(system, user, timeout=420):
+def _ask(system, user, timeout=420, session_id='', purpose='brief'):
     config = read(ROOT/'settings.json', {}) or {}
     provider = (config.get('LLM_PROVIDER') or '').strip(); key = config.get('DEEPSEEK_API_KEY')
     if provider in ('codex', 'claude'):
-        out = cli_ask(provider, system, user, timeout=timeout)
+        out = cli_ask(provider, system, user, timeout=timeout, session_id=session_id, purpose=purpose)
         if out: return out
         if not key: raise RuntimeError(CLI_FAIL.get('reason') or '本机 AI 没有输出')
     if not key: raise RuntimeError('总结服务未配置')
@@ -396,7 +439,7 @@ def _ask(system, user, timeout=420):
     with urllib.request.urlopen(req, timeout=150) as r: return json.load(r)['choices'][0]['message']['content']
 
 def make_brief(session, timeout=420):
-    raw = _json_out(_ask(BRIEF_PROMPT, '已有纪要（供参考）：\n' + str(session.get('summary') or '')[:8000] + '\n\n逐字稿（[时间] 说话人：内容）：\n' + _brief_text(session), timeout=timeout))
+    raw = _json_out(_ask(BRIEF_PROMPT, '已有纪要（供参考）：\n' + str(session.get('summary') or '')[:8000] + '\n\n逐字稿（[时间] 说话人：内容）：\n' + _brief_text(session), timeout=timeout, session_id=session.get('id',''), purpose='brief'))
     try: total = max(0, int(_epoch(session.get('end')) - _epoch(session.get('start')))) if session.get('end') and session.get('start') is not None else 0
     except Exception: total = 0
     ov = raw.get('overview') or {}
@@ -451,7 +494,7 @@ def make_review(session, brief, attendees=None, timeout=600):
     user = (('项目背景：\n' + background + '\n\n') if background else '') + ('参会人名单：' + json.dumps(attendees or [], ensure_ascii=False) + '\n已整理的总结 JSON：\n' + json.dumps({k: brief.get(k) for k in ('meta', 'overview', 'topics')}, ensure_ascii=False)
             + '\n会中记下的待核查：\n' + '\n'.join('- ' + c for c in checks if c) + '\n本人笔记：' + str(session.get('notes') or '')[:2000]
             + '\n\n逐字稿：\n' + _brief_text(session, cap=70000))
-    raw = _json_out(_ask(system, user, timeout=timeout))
+    raw = _json_out(_ask(system, user, timeout=timeout, session_id=session.get('id',''), purpose='review'))
     rv = raw.get('review') or {}
     qs = []
     for i, q in enumerate((raw.get('questions') or [])[:3]):
@@ -536,7 +579,7 @@ def title_for(session, summary_text=''):
     out = None
     if use_cli:
         # 标题跟总结走同一个 MyAgent 后端；命令行失败再退回 API（有 key 才退）。
-        out = cli_ask(provider, system, material, timeout=90)
+        out = cli_ask(provider, system, material, timeout=90, session_id=session.get('id',''), purpose='title')
         if not out and not key: raise RuntimeError('标题生成失败：' + str(CLI_FAIL.get('reason') or provider))
     if out: return clean_title(out)
     payload = {'model':model,'messages':[{'role':'system','content':system},{'role':'user','content':material}],'max_tokens':40,'temperature':0.2}
@@ -618,6 +661,8 @@ def update_meetings_index(session,title,summary):
     """跨会记忆的事实层：每场一行，重跑同 id 覆盖不重复。数据目录是真源，记忆投影目录是只读镜像。"""
     sid=str(session.get('id') or '')
     if not sid or not (title or '').strip():return False
+    # L-07：bench / mactest / rc 这类脚本造的压测场不进索引（判据与 app/session-kind.js 同文）
+    if re.match(r'^(bench|smoke|test|mactest|rc|legacy|probe|dev)[-_0-9]|^mt\d{11,}$|^legacy\d*$',sid,re.I):return False
     start=str(session.get('start',''))
     try:
         if start.isdigit():start=datetime.datetime.fromtimestamp(int(start)/1000).strftime('%Y-%m-%d %H:%M')

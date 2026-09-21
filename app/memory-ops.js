@@ -146,13 +146,14 @@ async function ingest(dataDir, session, ask, log = () => {}) {
   let ok = false;
   const finish = () => {
     try {
-      if (ok) db.prepare("UPDATE ingested SET status='done',at=? WHERE meeting_id=?").run(mem.now(), mid);
-      else db.prepare("UPDATE ingested SET status='failed',at=? WHERE meeting_id=?").run(mem.now(), mid);
+      if (ok) db.prepare("UPDATE ingested SET status='done',at=?,attempts=0 WHERE meeting_id=?").run(mem.now(), mid);
+      // 失败记一次数：后台补跑靠它判断还能不能再试（见 failedMeetings）
+      else db.prepare("UPDATE ingested SET status='failed',at=?,attempts=COALESCE(attempts,0)+1 WHERE meeting_id=?").run(mem.now(), mid);
     } catch (e) {}
   };
 
   try {
-    if (text.replace(/\s/g, '').length < 60) { log('memory: 内容太短，不抽'); return { skipped: true, reason: 'too-short' }; }
+    if (text.replace(/\s/g, '').length < 60) { ok = true; log('memory: 内容太短，不抽'); return { skipped: true, reason: 'too-short' }; }
     const raw = await ask(EXTRACT_PROMPT, text.slice(0, 40000));
     if (!raw) { log('memory: 模型没返回，这场不抽'); return { skipped: true, reason: 'no-model' }; }
     let j; try { j = JSON.parse(cutJson(raw)); } catch (e) { log('memory: 返回不是 JSON，丢弃'); return { skipped: true, reason: 'bad-json' }; }
@@ -291,7 +292,7 @@ function retrieve(dataDir, query, { limit = 12, log = () => {} } = {}) {
   return picked.map(p => ({ ...p.row, _hit: p.hit }));
 }
 
-const KIND_CN = { decision: '决定', question: '未决', promise: '承诺', term: '术语' };
+const KIND_CN = { decision: '决定', question: '未决', promise: '承诺', term: '术语', rule: '会中规矩' };
 // 卡片内容来自模型，直接拼进下一场的提示词等于把它变成长期生效的注入面。
 // 去掉换行和方括号段头，单条和总长都封顶。
 const safe = s => String(s || '').replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, ' ').replace(/[\[\]【】]/g, ' ').slice(0, 220);
@@ -309,14 +310,15 @@ function project(dataDir, outFile, log = () => {}) {
   // 待核对的照样导出并打 ⚠️：把它们藏起来会让记忆随使用单向变空，也没法在每周复核里处理
   const rows = db.prepare(`SELECT * FROM cards WHERE state NOT IN ('revoked','superseded','resolved','done','cancelled')
       ORDER BY kind, recorded_at DESC LIMIT 2000`).all();
-  const g = { decision: [], question: [], promise: [], term: [] };
+  const g = { decision: [], question: [], promise: [], term: [], rule: [] };
   for (const r of rows) (g[r.kind] || (g[r.kind] = [])).push(r);
   const fmt = r => `- ${safe(r.text)}${r.owner ? '（' + safe(r.owner) + '）' : ''}${r.due ? ' 截止 ' + safe(r.due) : ''}` +
     `${r.state !== 'active' && r.state !== 'open' && r.state !== 'pending' ? ' 〔' + safe(r.state) + '〕' : ''}` +
     `${r.needs_review ? ' ⚠️ 待你核对' : ''}\n  来自《${safe(r.meeting_title) || safe(r.meeting_id)}》 ${String(r.recorded_at).slice(0, 10)}`;
-  const body = ['---', 'name: meeting-memory', 'description: 听会台自动沉淀的会议记忆（决定/未决/承诺/术语）。这份是只读投影，真源在听会台。', 'metadata:', '  type: project', '---', '',
+  const body = ['---', 'name: meeting-memory', 'description: 听会台自动沉淀的会议记忆（会中规矩/决定/未决/承诺/术语）。这份是只读投影，真源在听会台。', 'metadata:', '  type: project', '---', '',
     '> 这份文件由听会台自动生成，**直接改这里不会生效**。发现哪条不对，在听会台的记忆页里改，或者跟我说哪条错了。', ''];
-  for (const k of ['decision', 'question', 'promise', 'term']) {
+  // 会中规矩排在最前：它是你亲口定的口径，读这份文件的人要先看到它
+  for (const k of ['rule', 'decision', 'question', 'promise', 'term']) {
     const list = g[k] || []; if (!list.length) continue;
     body.push(`## ${KIND_CN[k]}（${list.length}）`, '', ...list.map(fmt), '');
   }
@@ -331,4 +333,23 @@ function project(dataDir, outFile, log = () => {}) {
   return rows.length;
 }
 
-module.exports = { ingest, retrieve, toPromptBlock, project, terms, sessionText, EXTRACT_PROMPT };
+// P-11：抽卡只在收尾后跑一次，模型那次没回应就永远是 failed，界面上这场会永远没有记忆。
+// 列出还能再试的（最多 MAX_INGEST_ATTEMPTS 次），由服务端定时挑一场补跑。
+// 冷却 10 分钟：刚失败多半是模型正不可用，立刻重试只会连着再失败一次。
+const MAX_INGEST_ATTEMPTS = 3, RETRY_COOLDOWN_MS = 600000;
+function failedMeetings(dataDir, limit = 5) {
+  try {
+    const db = mem.open(dataDir); if (!db) return [];
+    return db.prepare("SELECT meeting_id,attempts,at FROM ingested WHERE status='failed' AND COALESCE(attempts,0)<? ORDER BY at ASC LIMIT ?")
+      .all(MAX_INGEST_ATTEMPTS, limit)
+      .filter(r => Date.now() - Date.parse(r.at || 0) > RETRY_COOLDOWN_MS)
+      .map(r => String(r.meeting_id));
+  } catch (e) { return []; }
+}
+// 补跑时发现材料已经没了（pending 文件被删、没有转写），把 attempts 加满，别让它永远占着队首名额。
+function skipRetry(dataDir, mid, why = '') {
+  try { const db = mem.open(dataDir); if (!db) return;
+    db.prepare("UPDATE ingested SET attempts=?,at=? WHERE meeting_id=?").run(MAX_INGEST_ATTEMPTS, mem.now(), String(mid));
+  } catch (e) {}
+}
+module.exports = { ingest, retrieve, toPromptBlock, project, terms, sessionText, failedMeetings, skipRetry, EXTRACT_PROMPT };

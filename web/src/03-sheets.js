@@ -68,8 +68,10 @@
   $('#b-work-top') && ($('#b-work-top').onclick = openWorkHub);
   $('#b-memory').onclick = () => { const d=$('#memory-dialog'); const f=d.querySelector('iframe'); if(!f.src)f.src='memory.html'; d.showModal(); };
   $('#mode-chip').onclick = () => { toggleSheet('#sh-mode', renderModeList); };
-  $('#hist-pull').onclick = async () => {
-    const m = $('#hist-msg'); if (m) m.textContent = T('pull_wait')||'从 Mac 找回中……';
+  // L-11：从 Mac 找回原来只在「往期会议」右上角有，启动时发现 Mac 上有未结束的会只能发一句提示
+  // 让用户自己去翻。现在抽成函数，启动那一个恢复入口直接调它。
+  async function pullFromMac(msgEl){
+    const m = msgEl || $('#hist-msg'); if (m) m.textContent = T('pull_wait')||'从 Mac 找回中……';
     try {
       const r = await fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store'});
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -79,6 +81,8 @@
       (d.sessions||[]).forEach(x => { if (x && x.id && !have.has(x.id)) { state.sessions.push(normalizeSession(x)); n++; } });
       if (n) persist();
       await refreshBoard();
-      const m2 = $('#hist-msg'); if (m2) m2.textContent = n ? ((T('pull_ok')||'找回 ') + n + (T('pull_ok2')||' 场。')) : (T('pull_none')||'Mac 上没有这台设备缺的场次。');
-    } catch(e){ const m2 = $('#hist-msg'); if (m2) m2.textContent = (T('pull_fail')||'找不回：') + (e.message||e) + (T('pull_fail2')||'（Mac 在线吗？）'); }
-  };
+      if (m) m.textContent = n ? ((T('pull_ok')||'找回 ') + n + (T('pull_ok2')||' 场。')) : (T('pull_none')||'Mac 上没有这台设备缺的场次。');
+      return n;
+    } catch(e){ if (m) m.textContent = (T('pull_fail')||'找不回：') + (e.message||e) + (T('pull_fail2')||'（Mac 在线吗？）'); throw e; }
+  }
+  $('#hist-pull').onclick = () => pullFromMac().catch(()=>{});

@@ -146,7 +146,8 @@ test('the source markers these tests slice on still exist',()=>{
  for (const m of ['  function groupedHighlights(','  // Wait for the recent discussion','  function openFix(',
                   '  // Literal,',"  $('#fix-save').onclick","  $('#fix-del').onclick",
                   '  function syncCorrectionContext()','  function rememberFix(',
-                  '  const FIX_FIELDS =','  function fixTargetOf(',"  $('#fix-say-cancel').onclick"]) {
+                  '  const FIX_FIELDS =','  function fixTargetOf(',"  $('#fix-say-cancel').onclick",
+                  '  function validateOutline(','  // ===== 往期会议看板']) {
   assert.ok(html.includes(m), 'missing slice marker: '+m);
  }
 });
@@ -164,13 +165,27 @@ test('every dialog has a close control that is not buried in a collapsed section
  assert.deepEqual(bad.length,0,'dialogs with no reachable close control: '+bad.join(', '));
 });
 
-function outlineValidator(){const c={};vm.createContext(c);vm.runInContext(code('  function validateOutline(', '  // ===== 录音管理看板'),c);return c.validateOutline;}
-test('outline rejects unknown references, duplicates and hiding manual edits',()=>{
- const check=outlineValidator(),items=[{text:'one'},{text:'two',edited:true}];
- assert.equal(check({groups:[{title:'x',summary:'y',keys:['invented']}]},items).length,0);
- assert.equal(check({groups:[{title:'x',summary:'y',keys:['two']}]},items).length,0);
- assert.equal(check({groups:[{title:'x',summary:'y',keys:['one','one']}]},items).length,0);
- assert.equal(check({groups:[{title:'x',summary:'y',keys:['one']}]},items).length,1);
+function outlineValidator(){const c={};vm.createContext(c);vm.runInContext(code('  function validateOutline(', '  // ===== 往期会议看板'),c);return c.validateOutline;}
+// 2026-09-20 起 keys/roles/merged 都是序号，不是原文：序号换回原文由 validateOutline 做，
+// 越界、重复、指向被手改过的要点、以及直接回原文字符串，一律整组丢掉（要点退回平铺，不会消失）。
+test('outline rejects out-of-range numbers, duplicates, raw text and hiding manual edits',()=>{
+ const check=outlineValidator(),items=[{text:'one'},{text:'two',edited:true},{text:'three'}];
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:[9]}]},items).length,0,'越界');
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:[-1]}]},items).length,0,'负数');
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:['one']}]},items).length,0,'回原文不算序号');
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:[1]}]},items).length,0,'手改过的要点不能被藏起来');
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:[0,0]}]},items).length,0,'同一条报两次');
+ assert.equal(check({groups:[{title:'x',summary:'y',keys:[0]},{title:'z',summary:'w',keys:[0,2]}]},items).length,1,'跨组重复的那一组丢掉');
+ const ok=check({groups:[{title:'x',summary:'y',keys:[0,2]}]},items);
+ assert.equal(ok.length,1);assert.equal(ok[0].keys.join(','),'one,three','序号换回原文');
+});
+test('outline roles and merged are looked up by number and stored by source text',()=>{
+ const check=outlineValidator(),items=[{text:'a'},{text:'b'},{text:'c'},{text:'d'}];
+ const g=check({groups:[{title:'t',summary:'s',status:'unresolved',keys:[0,1,2],
+   roles:{'1':'否定','2':'瞎编的','3':'分歧'},merged:{'0':[1,2,3,0]}}]},items)[0];
+ assert.equal(g.status,'unresolved');
+ assert.equal(JSON.stringify(g.roles),'{"b":"否定"}','不认识的角色和组外的序号都丢掉');
+ assert.equal(JSON.stringify(g.merged),'{"a":["b","c"]}','组外的 3 和指向自己的 0 都丢掉');
 });
 test('changed source invalidates condensation, unmatched points remain visible and numbered',()=>{
  const c={ui:'zh',running:true};vm.createContext(c);vm.runInContext(code('  function groupedHighlights(','  // Wait for the recent discussion'),c);
@@ -206,6 +221,16 @@ test('only pure interjections count as filler; agreement words are kept',()=>{
  for(const t of['啊。','嗯嗯，','哦…','Um.','hmm','呃啊'])assert.equal(r(t),true,t);
  for(const t of['对','好。','是的','嗯行','啊对','ok','','谢谢'])assert.equal(r(t),false,t);
 });
+// 2026-09-20：跳转处理器绑在 [data-jump-at] 上，但 pointCard 从来没吐过这个按钮，
+// 转写段落也没有 data-at——两头都不在，功能整条是死的，测试却全绿。这条守住「绑了就得有人产」。
+test('every point can jump to what was said: button, anchor and handler all exist',()=>{
+ const src=fs.readFileSync(__dirname+'/../web/src/11-render.js','utf8');
+ assert.ok(src.includes('data-jump-seg="${esc(seg)}" data-jump-at="${jat}"'),'论点卡要产出跳转按钮');
+ assert.ok(src.includes('<p data-at="${Number(x.at)||0}" data-seg='),'转写段落要带 data-at 和 data-seg 锚点');
+ assert.ok(src.includes("ps.find(p => p.dataset.seg === seg)"),'优先按 segId 精确命中');
+ assert.ok(src.includes("querySelectorAll('[data-jump-at]')"),'跳转处理器还在');
+ assert.ok(src.includes("el.tr.querySelectorAll('p[data-at]')"),'处理器找的就是那个锚点');
+});
 test('view cards keep the raw claim as their key so edit and feedback still find the item',()=>{
  const src=fs.readFileSync(__dirname+'/../web/src/11-render.js','utf8');
  assert.ok(src.includes('data-fix="ck" data-key="${esc(x.claim)}"'));assert.ok(!src.includes('data-key="${esc(tt('),'no card key may go through the display mapper');
@@ -213,7 +238,35 @@ test('view cards keep the raw claim as their key so edit and feedback still find
 });
 
 // 2026-09-20 会中进度感：旧组冻结，只把「最后一组 + 新要点」送模型。
-function outlineTools(){const c={};vm.createContext(c);vm.runInContext(code('  function outlinePlan(', '  function validateOutline(')+';this.outlinePlan=outlinePlan;this.mergeOutline=mergeOutline;',c);return c;}
+function outlineTools(){const c={};vm.createContext(c);vm.runInContext('const OUTLINE_CHUNK=80;'+code('  function outlinePlan(', '  function validateOutline(')+';this.outlinePlan=outlinePlan;this.mergeOutline=mergeOutline;this.outlineCovered=outlineCovered;',c);return c;}
+// Codex 09-20 审出：模型把整批 80 条归成一个组时，冻结组是 0 → 被记成没进展，下一轮还原样重送同一批。
+test('outline: one group covering a whole chunk still counts as progress and is not re-sent',()=>{
+ const t=outlineTools();
+ const ready=Array.from({length:120},(_,i)=>({text:'P'+i}));
+ const big=[{title:'一个大议题',summary:'s',keys:ready.slice(0,80).map(x=>x.text)}];
+ assert.equal(t.outlineCovered(big),80);                 // 进度 = 已归组的要点数，含最后一组
+ const plan=t.outlinePlan(big,ready);
+ assert.equal(plan.frozen.length,1);assert.equal(plan.last,null);
+ assert.equal(plan.tail.length,40);assert.equal(plan.tail[0].text,'P80');   // 下一轮从第 81 条接着排
+ const out=t.mergeOutline(plan,[{title:'后续',summary:'s2',keys:['P80','P81']}]);
+ assert.equal(out.length,2);assert.equal(out[0].title,'一个大议题');
+});
+test('outline: a small last group stays open so new points can join it across chunks',()=>{
+ const t=outlineTools();
+ const ready=Array.from({length:140},(_,i)=>({text:'P'+i}));
+ const prev=[{title:'A',summary:'s',keys:ready.slice(0,10).map(x=>x.text)},{title:'B',summary:'s',keys:ready.slice(10,40).map(x=>x.text)}];
+ const plan=t.outlinePlan(prev,ready);
+ assert.equal(plan.frozen.length,1);assert.equal(plan.last.title,'B');
+ assert.equal(plan.tail.length,130);                      // B 的 30 条 + 100 条新要点
+ assert.equal(plan.tail.slice(0,80).filter(x=>Number(x.text.slice(1))>=40).length,50);   // 一批 80 条里有 50 条是新的
+});
+test('outline: empty or keyless groups fall back to a full re-plan and count as zero progress',()=>{
+ const t=outlineTools();
+ const ready=[{text:'A1'},{text:'A2'}];
+ assert.equal(t.outlineCovered([]),0);assert.equal(t.outlineCovered([{title:'x'}]),0);assert.equal(t.outlineCovered(null),0);
+ assert.equal(t.outlinePlan([{title:'x',keys:[]}],ready).tail.length,2);
+ assert.equal(t.outlinePlan([{title:'x'}],ready).frozen.length,0);
+});
 test('outline freezes settled groups and only re-sends the tail',()=>{
  const t=outlineTools();
  const prev=[{title:'定了走方案二',summary:'s1',keys:['A1','A2']},{title:'隐私不是阻力',summary:'s2',keys:['B1']}];

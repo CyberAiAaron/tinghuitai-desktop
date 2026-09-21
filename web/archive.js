@@ -139,14 +139,18 @@ async function saveAnswer(qid,choice,text){
   try{const r=await fetch('/asr-relay/meeting-answer?token='+encodeURIComponent(settings.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,qid,choice,text:(text||'').trim()})});if(!r.ok)throw 0;}
   catch(e){delete record.brief.answers[qid];render(record);const row=document.querySelector('.bf-qrow[data-q="'+qid+'"]');if(row){const n=document.createElement('span');n.className='bf-tag bad';n.textContent='没存上，Mac 在线后再点一次';row.appendChild(n);}}
 }
+// P-17：以前这里叫「整理成新版」走 /meeting-brief，往期会议列表那个「重新整理」走 /meeting-retry，
+// 同一个诉求两个按钮做两件事。现在两边都调 /meeting-retry，由服务端按缺什么补什么
+// （缺总结就整场重跑、然后补新版数据、收敛和会议记忆），进度合成一条 /meeting-refresh-state。
 async function buildBrief(btn){
-  btn.disabled=true;btn.textContent='整理中，约 3–8 分钟…';
+  btn.disabled=true;btn.textContent='重新整理中，约 3–8 分钟…';
   const tk=encodeURIComponent(settings.relayToken||'');
-  const back=msg=>{btn.disabled=false;btn.textContent='整理成新版';btn.title=msg||'';const n=document.createElement('span');n.className='bf-src';n.textContent=' '+(msg||'没整理出来');btn.after(n);setTimeout(()=>n.remove(),8000);};
-  try{const r=await fetch('/asr-relay/meeting-brief?token='+tk,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)return back(j.error||'Mac 没接上');}catch(e){return back('Mac 没接上');}
+  const back=msg=>{btn.disabled=false;btn.textContent='重新整理';btn.title=msg||'';const n=document.createElement('span');n.className='bf-src';n.textContent=' '+(msg||'没整理出来');btn.after(n);setTimeout(()=>n.remove(),8000);};
+  try{const r=await fetch('/asr-relay/meeting-retry?token='+tk,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id})});
+      if(!r.ok)return back(await r.text().catch(()=>'')||'Mac 没接上');}catch(e){return back('Mac 没接上');}
   const began=Date.now();let idle=0;
-  const poll=async()=>{try{const r=await fetch('/asr-relay/meeting-brief?id='+encodeURIComponent(id)+'&token='+tk,{cache:'no-store'});const j=await r.json();
-      if(j.state==='done'){location.reload();return;} if(j.state==='failed')return back(j.error);
+  const poll=async()=>{try{const r=await fetch('/asr-relay/meeting-refresh-state?id='+encodeURIComponent(id)+'&token='+tk,{cache:'no-store'});const j=await r.json();
+      if(j.state==='done'){location.reload();return;} if(j.state==='failed'||j.state==='empty')return back(j.error);
       if(j.state==='none'&&++idle>=6)return back('没启动起来，再点一次');if(Date.now()-began>45*60000)return back('等太久了，稍后刷新看看');
       if(j.phase)btn.textContent=j.phase+'…';}catch(e){}
     setTimeout(poll,5000);};

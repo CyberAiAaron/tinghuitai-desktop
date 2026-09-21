@@ -37,7 +37,9 @@ textarea{width:100%;box-sizing:border-box;border:1px solid #d2d2d7;border-radius
 </section>
 </main><div id="msg"></div>
 <script>
-const KIND={decision:'记忆',question:'未决',promise:'承诺',term:'术语'};
+// L-18：'rule' = 会中在 MyAgent 里点「以后也记住」留下的规矩，以前只存在浏览器里，这个页面根本看不到。
+// 它是你亲口定的（human_edited=1），不走「待处理」那条复核流程，所以单独一组，直接列所有还有效的。
+const KIND={rule:'会中规矩',decision:'记忆',question:'未决',promise:'承诺',term:'术语'};
 const STATE={active:'有效',superseded:'已被替代',revoked:'已作废',open:'未解决',resolved:'已解决',pending:'待完成',done:'已完成',cancelled:'已取消'};
 let all=[],tab='all';
 // 三个去处：待处理（还没看过的）、已确认（你确认或改过的）、已作废（你标掉的）。
@@ -106,6 +108,7 @@ function render(){
   const counts={all:pend.length,review:pend.filter(c=>c.needs_review).length,
     confirmed:all.filter(isHandled).length,dropped:all.filter(isDropped).length};
   for(const k of Object.keys(KIND)) counts[k]=pend.filter(c=>c.kind===k).length;
+  counts.rule=all.filter(c=>c.kind==='rule'&&!isDropped(c)).length;
   t.innerHTML='';
   const mk=(key,label)=>{const b=document.createElement('button');b.textContent=label+'（'+(counts[key]||0)+'）';b.setAttribute('aria-selected',String(tab===key));b.onclick=()=>{tab=key;render();};t.appendChild(b);};
   mk('all','待处理'); mk('review','待你核对'); for(const [k,v] of Object.entries(KIND)) mk(k,v);
@@ -114,11 +117,13 @@ function render(){
   if(tab==='review') rows=pend.filter(c=>c.needs_review);
   else if(tab==='confirmed') rows=all.filter(isHandled);
   else if(tab==='dropped') rows=all.filter(isDropped);
+  else if(tab==='rule') rows=all.filter(c=>c.kind==='rule'&&!isDropped(c));
   else if(tab!=='all') rows=pend.filter(c=>c.kind===tab);
   const box=document.getElementById('list');
   if(!rows.length){box.innerHTML='<p class="empty">'+(
     tab==='confirmed'?'还没有确认过的。在「待处理」里点「确认无误」，它就收到这里。'
     :tab==='dropped'?'还没有作废的。'
+    :tab==='rule'?'还没有会中规矩。开会时在 MyAgent 里纠正一次，点「以后也记住」，就会收到这里。'
     :tab==='all'?'待处理清空了。确认过的在「已确认」里，作废的在「已作废」里。'
     :'这一组是空的。')+'</p>';return;}
   box.innerHTML='';

@@ -26,15 +26,47 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   const job={key,sessionId:String(session.id),title:session.title||'未命名会议',input,status:'queued',phase:'等待整理',created:new Date().toISOString(),attempts:0};write(jobPath,job);pump();return job;
  }
  function list(){return fs.readdirSync(dir).filter(f=>f.endsWith('.job.json')).map(f=>{try{return read(path.join(dir,f));}catch{return null;}}).filter(Boolean).sort((a,b)=>a.created.localeCompare(b.created));}
+ // 只自动补跑最近 7 天的会：一次补 22 场老会议会连着跑一小时模型，老的交给他自己点「重新整理」
+ const fresh=j=>Date.now()-Date.parse(j.created||0)<7*864e5;
+ // 重跑要想真的把总结补出来，必须先把上一版 enhanced 挪走：meeting-pipeline.py 只有在
+ // .job.enhanced.json 不存在时才会重新 summarize（见 py 的 `if enhanced is None`），
+ // 留着它重跑就只是把同样的内容再归档一遍，summaryGenerated 永远上不去。
+ // 留两级备份：.orig 是第一版（只写一次），.prev 是上一版（每次覆盖）。跑失败会把 .prev 放回去。
+ function shelveEnhanced(key){
+  const cur=path.join(dir,key+'.job.enhanced.json'); if(!fs.existsSync(cur))return false;
+  try{const orig=path.join(dir,key+'.job.enhanced.orig.json');if(!fs.existsSync(orig))fs.copyFileSync(cur,orig);
+      fs.copyFileSync(cur,path.join(dir,key+'.job.enhanced.prev.json'));fs.unlinkSync(cur);return true;}
+  catch(e){log('备份上一版整理结果失败 '+e.message);return false;}
+ }
+ function unshelveEnhanced(key){
+  const cur=path.join(dir,key+'.job.enhanced.json'),prev=path.join(dir,key+'.job.enhanced.prev.json');
+  if(fs.existsSync(cur)||!fs.existsSync(prev))return;
+  try{fs.copyFileSync(prev,cur);log('这次没跑成，已把上一版整理结果放回 '+key);}catch(e){}
+ }
  function pump(){
   if(child||!idle())return;
-  const j=list().find(x=>x.status==='queued'||x.status==='running'||(x.status==='error'&&x.attempts<4&&x.nextRetry*1000<Date.now()));if(!j)return;
+  // P-03：以前只有 error 会自动重试，「归档完成但总结没出来」的那些就永远停在那儿，
+  // 界面还显示「已归档」。现在这类自动补跑一次（只一次，空会和坏数据不会无限重跑）。
+  const j=list().find(x=>x.status==='queued'||x.status==='running'
+    ||(x.status==='error'&&x.attempts<4&&x.nextRetry*1000<Date.now())
+    ||(x.status==='done'&&x.summaryGenerated!==true&&(x.summaryRetries||0)<1&&fresh(x)));if(!j)return;
+  if(j.status==='done'){const p2=path.join(dir,j.key+'.job.json');const cur=read(p2);
+    shelveEnhanced(j.key);
+    write(p2,{...cur,status:'queued',phase:'总结没出来，自动补跑一次',summaryRetries:(cur.summaryRetries||0)+1});
+    log('自动补跑总结 '+j.key);}
   child=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),path.join(dir,j.key+'.job.json')],{env:{...process.env,THT_PIPELINE_DIR:dir},stdio:'ignore'});
   child.on('error',()=>{const p=path.join(dir,j.key+'.job.json'),s=read(p);write(p,{...s,status:'error',error:'后处理进程未启动',attempts:(s.attempts||0)+1,nextRetry:Date.now()/1000+120,phase:'归档待重试'});});
-  child.on('close',()=>{child=null;const jobPath=path.join(dir,j.key+'.job.json'),done=read(jobPath);if(done.status==='running'||done.status==='queued'){done.status='error';done.error='后处理进程中断，原始录音仍保留';done.attempts=(done.attempts||0)+1;done.nextRetry=Date.now()/1000+120;write(jobPath,done);}if(['done','partial'].includes(done.status)){const resultPath=path.join(dir,j.key+'.job.enhanced.json');try{onComplete(read(resultPath),done,read(done.input));delete done.hubSyncWarning;write(jobPath,done);}catch(e){done.status='partial';done.hubSyncWarning=e.message;done.phase='工作台同步待重试';write(jobPath,done);log('hub archive update failed '+e.message);}}log('meeting pipeline finished '+j.key);setTimeout(pump,1000).unref();});
+  child.on('close',()=>{child=null;const jobPath=path.join(dir,j.key+'.job.json'),done=read(jobPath);if(done.status==='error'||done.status==='partial')unshelveEnhanced(j.key);
+  if(done.status==='running'||done.status==='queued'){unshelveEnhanced(j.key);done.status='error';done.error='后处理进程中断，原始录音仍保留';done.attempts=(done.attempts||0)+1;done.nextRetry=Date.now()/1000+120;write(jobPath,done);}if(['done','partial'].includes(done.status)){const resultPath=path.join(dir,j.key+'.job.enhanced.json');try{onComplete(read(resultPath),done,read(done.input));delete done.hubSyncWarning;write(jobPath,done);}catch(e){done.status='partial';done.hubSyncWarning=e.message;done.phase='工作台同步待重试';write(jobPath,done);log('hub archive update failed '+e.message);}}log('meeting pipeline finished '+j.key);setTimeout(pump,1000).unref();});
  }
  const timer=setInterval(pump,30000);timer.unref();setTimeout(pump,3000).unref();
- function retry(id){const j=list().find(x=>x.sessionId===id);if(!j)throw Error('找不到归档任务');if(!['error','partial'].includes(j.status))return j;j.status='queued';j.attempts=0;j.error='';j.phase='等待整理';write(path.join(dir,j.key+'.job.json'),j);pump();return j;}
+ // P-02：以前只重跑 error / partial，已归档（done）的点「重新整理」什么都不做，界面却说「已排进队列」。
+ // 现在 done 也真重跑；重跑前把上一版整理结果另存 .prev，万一这次答得更差还能拿回来。
+ // 正在跑的（queued / running）不重复入队，把当前任务原样回给调用方，由它如实显示。
+ function retry(id){const j=list().find(x=>x.sessionId===id);if(!j)throw Error('找不到归档任务');
+  if(['queued','running'].includes(j.status))return {...j,requeued:false,note:'这场正在整理，没有重复排队'};
+  if(j.status==='done')shelveEnhanced(j.key);
+  j.status='queued';j.attempts=0;j.error='';j.phase='等待整理';j.retriedAt=new Date().toISOString();write(path.join(dir,j.key+'.job.json'),j);pump();return {...j,requeued:true};}
  function reviseTranscript(id,result){const j=list().find(x=>x.sessionId===id);if(!j)throw Error('请先归档原会议，再进行本地补转');const previous=read(j.input);return enqueue({...previous,transcript:result.transcript,names:{},summary:'',providedLocalTranscript:true,speakerWarning:result.diarizationError||((result.speakerCount>8||result.transcript.filter(r=>!r.speaker||r.speakerUncertain).length/result.transcript.length>0.35)?'声音分组不稳定，分人结果需要核对':''),speakerCount:result.speakerCount});}
  // 回看页数据（REQ-004）：单独补跑、读进度、存「需要你定一下」的回答
  const briefRuns=new Map();

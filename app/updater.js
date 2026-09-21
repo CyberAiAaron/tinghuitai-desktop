@@ -36,6 +36,23 @@ function replaceFiles(source,names){
  }finally{fs.rmSync(stage,{recursive:true,force:true});}
 }
 function prevVersion(){ try{ return fs.readFileSync(path.join(PREV,'.version'),'utf8').trim(); }catch(e){ return ''; } }
+// P-20：0.6.13 之后的几版是直接拷文件装上去的，没走 apply()，所以 .prev 一直停在 0.6.12。
+// 点「回到上一版」其实会退掉四个版本，按钮上却什么都没写。现在把备份的真实版本和新旧差距一起报出来，
+// 由界面写在按钮上；同时把「装之前先存一份」单独导出成 snapshotCurrent，拷贝安装的那条路也能调。
+function prevInfo(){
+  const version=prevVersion(); if(!version) return {version:'',at:0,gap:0,stale:false};
+  let at=0; try{ at=fs.statSync(path.join(PREV,'.version')).mtimeMs; }catch(e){}
+  const cur=localVersion();
+  const n=v=>{const x=String(v).split('.').map(t=>parseInt(t,10)||0);return (x[0]||0)*1e6+(x[1]||0)*1e3+(x[2]||0);};
+  const gap=Math.max(0,n(cur)-n(version));
+  // 差一个小版本是正常的（上一次就是从它升上来的），差更多说明中间有几版没经过 apply()
+  return {version,at,gap,stale:gap>1};
+}
+// 供拷贝安装／部署脚本在覆盖文件之前调用：把当前这一版整份存进 .prev
+function snapshotCurrent(){
+  const names=fs.readdirSync(ROOT).filter(n=>!KEEP.has(n)&&!n.startsWith('.update-')&&!n.startsWith('.replace-')&&!n.startsWith('.prev'));
+  snapshot(localVersion(),names); return {version:localVersion(),files:names.length};
+}
 async function rollbackUnlocked(log=()=>{}){
   const v=prevVersion(); if(!v) throw new Error('没有可回退的版本');
   log('正在回到 '+v);
@@ -128,4 +145,4 @@ let busy=false;
 async function exclusive(fn){if(busy)throw Error('另一个更新操作正在进行');busy=true;try{return await fn();}finally{busy=false;}}
 const apply=(log,canApply)=>exclusive(()=>applyUnlocked(log,canApply));
 const rollback=log=>exclusive(()=>rollbackUnlocked(log));
-module.exports={check,apply,localVersion,fetchChangelog,rollback,prevVersion};
+module.exports={check,apply,localVersion,fetchChangelog,rollback,prevVersion,prevInfo,snapshotCurrent};

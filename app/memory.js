@@ -5,15 +5,19 @@ const path = require('path'), fs = require('fs');
 let DatabaseSync = null;
 try { ({ DatabaseSync } = require('node:sqlite')); } catch (e) { /* 旧 node：整层降级为不可用 */ }
 
-const KINDS = new Set(['decision', 'question', 'promise', 'term']);
+// L-18：'rule' = 你在 MyAgent 里点「以后也记住」留下的会中规矩（译名、口径、别改哪些字）。
+// 以前它只写进浏览器的 localStorage，底栏「它记住的」根本看不到，换个浏览器或清一次站点数据就没了。
+// 它不是模型从会上抽出来的，是你亲口定的，所以默认 human_edited=1、不进待复核。
+const KINDS = new Set(['decision', 'question', 'promise', 'term', 'rule']);
 // 四类记忆的生命周期不同，不能共用一套状态
 const STATES = {
   decision: ['active', 'superseded', 'revoked'],
   term:     ['active', 'superseded', 'revoked'],
   question: ['open', 'resolved'],
   promise:  ['pending', 'done', 'cancelled'],
+  rule:     ['active', 'revoked'],
 };
-const DEFAULT_STATE = { decision: 'active', term: 'active', question: 'open', promise: 'pending' };
+const DEFAULT_STATE = { decision: 'active', term: 'active', question: 'open', promise: 'pending', rule: 'active' };
 const TERMINAL = new Set(['revoked', 'superseded', 'resolved', 'done', 'cancelled']);
 const DROP_STATE = { decision: 'revoked', term: 'revoked', question: 'resolved', promise: 'cancelled' };
 
@@ -56,6 +60,8 @@ function open(dataDir) {
   db.exec(`CREATE TABLE IF NOT EXISTS ingested(
     meeting_id TEXT PRIMARY KEY, input_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'done', at TEXT NOT NULL)`);
   try { db.exec("ALTER TABLE ingested ADD COLUMN status TEXT NOT NULL DEFAULT 'done'"); } catch (e) { /* 已有 */ }
+  // P-11：失败的抽卡要能自动重来，得记住重来过几次，免得坏数据无限重跑
+  try { db.exec("ALTER TABLE ingested ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"); } catch (e) { /* 已有 */ }
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_kind_state ON cards(kind,state)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_meeting ON cards(meeting_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_live ON cards(state,needs_review,recorded_at)');

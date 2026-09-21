@@ -8,7 +8,7 @@
 const PRODUCT_STATES = ['not_started', 'pending', 'ok', 'retryable', 'unavailable'];
 
 // 每个产物看什么
-function productsOf(sess, job, memCount) {
+function productsOf(sess, job, memCount, memState) {
   const tr = (sess.transcript || []).filter(r => r && String(r.text || '').trim());
   const hasTranscript = tr.length > 0;
   const jobStatus = (job && job.status) || '';
@@ -31,7 +31,14 @@ function productsOf(sess, job, memCount) {
   else if (jobStatus === 'empty') archive = 'unavailable';
   else if (sess.end && hasTranscript) archive = 'not_started';
 
-  const memory = noteConfirmed ? (memCount > 0 ? 'ok' : 'retryable') : 'not_started';
+  // P-11：记忆是收尾后自动抽的，「过一遍」那个流程 09 月已经撤了，再拿它当前提就永远显示「没开始」。
+  // 有卡 = ok。没卡时分两种：抽卡失败过（ingested.status='failed'）才叫可重试——后台补跑只认这种；
+  // 跑过但一条都没抽出来（done / too-short）是「这场没什么可记的」，不是失败，不要挂个假的重试提示。
+  const memory = memCount > 0 ? 'ok'
+    : memState === 'failed' ? 'retryable'
+    : memState === 'claiming' ? 'pending'
+    : memState === 'done' ? 'unavailable'
+    : (sess.end ? 'retryable' : 'not_started');
 
   const audio = sess.audioSaveError ? 'retryable' : (sess.audioPath ? 'ok' : 'not_started');
 
@@ -46,7 +53,7 @@ function productsOf(sess, job, memCount) {
             rawCount: items },
     archive: { state: archive, phase: (job && job.phase) || '', startedAt: (job && job.created) || '',
                error: String((job && job.error) || '').slice(0, 200), url: (job && job.url) || '' },
-    memory: { state: memory, count: memCount || 0 },
+    memory: { state: memory, count: memCount || 0, ingest: memState || '' },
     audio: { state: audio, error: sess.audioSaveError || '' },
   };
 }
@@ -68,8 +75,8 @@ const LABEL = {
         processing:'Processing', note_failed:'Note failed — transcript is there', unprocessed:'Not processed' },
 };
 
-function describe(sess, job, memCount, recording, lang) {
-  const products = productsOf(sess, job, memCount);
+function describe(sess, job, memCount, recording, lang, memState) {
+  const products = productsOf(sess, job, memCount, memState);
   const overall = overallOf(products, !!recording);
   return { state: overall, label: (LABEL[lang === 'en' ? 'en' : 'zh'])[overall] || overall, products, updatedAt: new Date().toISOString() };
 }
