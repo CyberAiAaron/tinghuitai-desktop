@@ -124,6 +124,8 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .scroll{flex:1;min-height:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .notice{margin:0 12px 8px;padding:8px 12px;border-radius:10px;background:var(--panel-2);color:var(--muted);font-size:13px;border:1px solid var(--line);grid-column:1/-1}
 .notice.warn{border-color:var(--warn);color:var(--text)}
+/* 红条：留给「已经丢了内容」这类看漏了就来不及的提示，比黄条再重一级 */
+.notice.danger{border-color:var(--conf);background:color-mix(in srgb,var(--conf) 12%,var(--panel-2));color:var(--text);font-weight:600}
 .notice[hidden]{display:none}
 
 /* 转写 */

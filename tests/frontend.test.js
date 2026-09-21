@@ -299,3 +299,47 @@ test('outline keeps the last settled group when the model omits it, and counts d
  const out2=t.mergeOutline(plan,[{title:'half',summary:'s',keys:['B1','C1']}]);
  assert.deepEqual(out2.map(g=>g.title),['g1','g2']);
 });
+// R1：中转 12 分钟没收到音频就自己收尾并发 ended。页面原来收到它只记一笔、继续录，
+// 结果手机锁屏解锁之后的后半场一个字都没进库，界面上还显示着正在听会。
+// 起点要写得够长：15-tongue.js 里也有一条同样缩进的 ended 分支，只写前半句会切错地方
+const endedBranch=()=>{const b=code("else if (m.type === 'ended') { cur.relayHandled=true","      else if (m.type === 'stall')");
+ return 'handleRelay=(m)=>{if(false){}'+b+'};';};
+const relayCtx=over=>{const c={cur:{},persist(){},refreshArchive(){},stops:[],notes:[],ui:'zh',T:()=>'',
+  stopAll(...a){c.stops.push(a);c.running=false;},note(...a){c.notes.push(a);},running:true,...over};
+ vm.createContext(c);vm.runInContext(endedBranch(),c);return c;};
+
+test('服务端结束了这场会而本机还在录：立刻停录，并且用红条说明后面没录上',()=>{
+ const c=relayCtx();
+ c.handleRelay({type:'ended'});
+ assert.equal(c.cur.relayHandled,true);
+ assert.deepEqual(c.stops,[[false]],'要停录，且不是用户主动结束那条路');
+ assert.equal(c.notes.length,1);
+ assert.equal(c.notes[0][1],'danger','这条必须是红条，黄条会被当成又一次网络抖动');
+ assert.match(c.notes[0][0],/没有被记录/);
+ assert.match(c.notes[0][0],/重新开始/,'要告诉人下一步做什么');
+});
+
+test('英文界面下这条提示也是英文',()=>{
+ const c=relayCtx({ui:'en'});
+ c.handleRelay({type:'ended'});
+ assert.match(c.notes[0][0],/not recorded/);
+});
+
+test('本机已经不在录了（正常结束后收到 ended）：不弹红条、不重复停录',()=>{
+ const c=relayCtx({running:false});
+ c.handleRelay({type:'ended'});
+ assert.equal(c.cur.relayHandled,true);
+ assert.deepEqual(c.stops,[]);
+ assert.deepEqual(c.notes,[]);
+});
+
+test('红条是真的红：note 认 danger，样式表里也有这一档',()=>{
+ const c={el:{notice:{}}};vm.createContext(c);
+ // const 声明不会挂到 vm 的上下文对象上，换成 var 才拿得到；跑的仍是页面里那一行真代码
+ vm.runInContext(code('  const note = (msg, warn)','  const noteAction').replace('const note','var note'),c);
+ c.note('普通');assert.equal(c.el.notice.className,'notice');
+ c.note('黄条',true);assert.equal(c.el.notice.className,'notice warn');
+ c.note('红条','danger');assert.equal(c.el.notice.className,'notice warn danger');
+ assert.equal(c.el.notice.hidden,false);
+ assert.match(html,/\.notice\.danger\{[^}]*var\(--conf\)/,'样式表里得有 danger 这一档，否则红条只是个类名');
+});

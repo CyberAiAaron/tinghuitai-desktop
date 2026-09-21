@@ -124,6 +124,8 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .scroll{flex:1;min-height:0;overflow:auto;padding:10px 12px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .notice{margin:0 12px 8px;padding:8px 12px;border-radius:10px;background:var(--panel-2);color:var(--muted);font-size:13px;border:1px solid var(--line);grid-column:1/-1}
 .notice.warn{border-color:var(--warn);color:var(--text)}
+/* 红条：留给「已经丢了内容」这类看漏了就来不及的提示，比黄条再重一级 */
+.notice.danger{border-color:var(--conf);background:color-mix(in srgb,var(--conf) 12%,var(--panel-2));color:var(--text);font-weight:600}
 .notice[hidden]{display:none}
 
 /* 转写 */
@@ -626,7 +628,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const fmt = sec => String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
   const hms = ts => new Date(ts).toTimeString().slice(0,8);
-  const note = (msg, warn) => { el.notice.hidden = !msg; el.notice.textContent = msg||''; el.notice.className = 'notice'+(warn?' warn':''); };
+  // warn 传 true 是黄条；传 'danger' 多一条红边，留给「已经丢了东西」这种必须看见的事，别滥用。
+  const note = (msg, warn) => { el.notice.hidden = !msg; el.notice.textContent = msg||''; el.notice.className = 'notice'+(warn?' warn':'')+(warn==='danger'?' danger':''); };
   const noteAction = (msg, label, fn) => {
     el.notice.hidden = false; el.notice.className = 'notice warn'; el.notice.textContent = '';
     const t = document.createElement('span'); t.textContent = msg + '  ';
@@ -2389,7 +2392,13 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }
-      else if (m.type === 'ended') { cur.relayHandled=true;persist();refreshArchive(); }
+      // R1：中转 12 分钟收不到音频就自己把这场收尾，然后发这条。页面原来只记一笔就接着录——
+      // 手机锁屏再解锁那种场合，后半场其实一个字都没进库，人却毫无察觉。服务端那边已经结束了，
+      // 本机再录也没有去处：直接停下，并且用红条把「后面的没录上」说明白。
+      else if (m.type === 'ended') { cur.relayHandled=true;persist();refreshArchive();
+        if(running){ stopAll(false);
+          note(ui==='en'?'The Mac ended this meeting; anything spoken after that was not recorded. Please start a new meeting.'
+                        :'服务端已经结束了这场会，后面的内容没有被记录。请重新开始一场。','danger'); } }
       else if (m.type === 'stall') note(m.message || (T('stall_relay')||'中转报告采音异常。'), true);
       else if (m.type === 'llm_down') setLlmDown(true, m.message||'');
       else if (m.type === 'llm_degraded') setLlmDegraded(!!m.on, m.message||'');
