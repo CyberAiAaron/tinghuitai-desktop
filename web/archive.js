@@ -228,10 +228,14 @@ function mountPlayer(){
   host.innerHTML='<span class="ph">'+(uiLang==='en'?'Replay this meeting · click any timestamp to jump there':'回听本场录音 · 点任意时间戳跳到那一刻')+'</span><audio id="player" controls preload="metadata" src="'+audioUrl().replace(/"/g,'&quot;')+'"></audio>';
 }
 
+// 工作台的会议待办点「回到原句」会带着 #t=<秒> 过来：渲染完直接跳过去，
+// 展开逐字稿、高亮那一句；有录音时顺手把播放器也拨到那一刻。
+function jumpFromHash(){const m=/(?:^|[#&])t=(\d+(?:\.\d+)?)/.exec(location.hash||'');if(m)jumpTo(Number(m[1]));}
+window.addEventListener('hashchange',jumpFromHash);
 (async()=>{
   if(!id){$('#title').textContent='缺少会议编号';return;}
-  try{const s=await fromMac();source='mac';await probeAudio();render(s);}
-  catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
+  try{const s=await fromMac();source='mac';await probeAudio();render(s);jumpFromHash();}
+  catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);jumpFromHash();}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
 })();
 
 // 下载和分享是同一件事，只留一个入口（顶栏这个）。

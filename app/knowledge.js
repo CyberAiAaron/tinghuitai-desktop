@@ -1,5 +1,6 @@
 'use strict';
 const crypto=require('crypto');
+const {bucketOf,BUCKETS}=require('./work-hub');
 const seeds=[];
 const hash=s=>crypto.createHash('sha256').update(String(s)).digest('hex').slice(0,20);
 const now=()=>new Date().toISOString();
@@ -24,7 +25,11 @@ function prepare(hub){
   }
   w.memberIds.push(t.id);w.revision++;mapped.set(t.id,w);
  }
- for(const w of d.workItems){const ts=w.memberIds.map(id=>d.tasks.find(t=>t.id===id)).filter(Boolean);if(!w.manual)w.sourceIds=[...new Set([...w.sourceIds,...ts.flatMap(t=>t.sourceIds)])];if(ts.length&&!w.manual){w.status=ts.every(t=>t.status==='done')?'done':ts.every(t=>t.status==='dismissed')?'parked':ts.some(t=>t.status==='blocked')?'blocked':ts.some(t=>t.status==='doing')?'doing':ts.some(t=>t.status==='todo')?'todo':'proposed';}const owners=[...new Set(ts.map(t=>t.owner).filter(o=>o&&!/未指定|待定|待确认/.test(o)))];if(!w.manual&&owners.length===1)w.owner=owners[0];if(owners.length>1)w.ownerConflict=owners;else delete w.ownerConflict;}
+ for(const w of d.workItems){const ts=w.memberIds.map(id=>d.tasks.find(t=>t.id===id)).filter(Boolean);if(!w.manual)w.sourceIds=[...new Set([...w.sourceIds,...ts.flatMap(t=>t.sourceIds)])];if(ts.length&&!w.manual){w.status=ts.every(t=>t.status==='done')?'done':ts.every(t=>t.status==='dismissed')?'parked':ts.some(t=>t.status==='blocked')?'blocked':ts.some(t=>t.status==='doing')?'doing':ts.some(t=>t.status==='todo')?'todo':'proposed';}// 归类跟着成员走：有一条是「我来做」，这条工作就还留在我的默认页；全是「不是我的 / 忽略」才隐藏。
+ // 每次重算都从成员重新推一遍，所以 prepare() 反复跑不会把归类丢掉；手建的没有成员，永远算我的。
+ const bs=ts.map(t=>bucketOf(t));
+ w.bucket=!ts.length?(BUCKETS.includes(w.bucket)?w.bucket:'mine'):bs.includes('mine')?'mine':bs.includes('candidate')?'candidate':bs.includes('notmine')?'notmine':'ignored';
+ const owners=[...new Set(ts.map(t=>t.owner).filter(o=>o&&!/未指定|待定|待确认/.test(o)))];if(!w.manual&&owners.length===1)w.owner=owners[0];if(owners.length>1)w.ownerConflict=owners;else delete w.ownerConflict;}
  for(const s of d.sources){if(!s.nodeId)s.nodeId=refine(topic(s.title+' '+(s.category||''), 'library'),s.title);if(!s.knowledgeRole)s.knowledgeRole=role(s);}
  d.knowledgeVersion=1;
 }

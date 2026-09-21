@@ -4,13 +4,14 @@ const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>
 const labels={proposed:'待核实',todo:'待开始',doing:'进行中',blocked:'受阻',done:'已完成',parked:'暂存'};
 const types={action:'待办',decision:'待决策',report:'汇报交付',insight:'研究输入'};
 const roles={master:'长期主文档',report:'汇报材料',evidence:'会议与证据',reference:'参考资料',archive:'历史归档'};
-let db=null,jobs=[],view='tasks',node='',query='',filter='',showClosed=false,loadedAt=0;
+let db=null,jobs=[],view='tasks',node='',query='',filter='',showClosed=false,loadedAt=0,undoable=null;
+const VIEWS=['tasks','candidates','graph','sources'];
 // 首访引导：URL 带 ?token= 就存进 tht-settings.relayToken 并从地址栏抹掉（手机扫码一次即可）
 try{const q=new URLSearchParams(location.search),t=q.get('token');if(t){const c=JSON.parse(localStorage.getItem('tht-settings')||'{}');c.relayToken=t;localStorage.setItem('tht-settings',JSON.stringify(c));q.delete('token');history.replaceState(null,'',location.pathname+(q.toString()?'?'+q:'')+location.hash);}}catch{}
 const auth=()=>{try{return JSON.parse(localStorage.getItem('tht-settings')||'{}').relayToken||''}catch{return ''}};
 const base='/asr-relay/hub';
 async function api(route='',body){const r=await fetch(base+route+(route.includes('?')?'&':'?')+'token='+encodeURIComponent(auth()),{cache:'no-store',...(body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})});const j=await r.json();if(!r.ok)throw Error(j.error||'读取失败');return j;}
-function message(s){$('#message').innerHTML=esc(s)+(jobs.some(j=>['error','interrupted'].includes(j.status))?' <button class="btn" id="review-local-jobs">查看转写任务</button>':'')+(db?.sync?.recovery?.status==='warning'?` <button class="btn" id="review-recovery">核对恢复记录</button>`:'');}
+function message(s){$('#message').innerHTML=esc(s)+(undoable?' <button class="btn" id="undo-triage">撤销</button>':'')+(jobs.some(j=>['error','interrupted'].includes(j.status))?' <button class="btn" id="review-local-jobs">查看转写任务</button>':'')+(db?.sync?.recovery?.status==='warning'?` <button class="btn" id="review-recovery">核对恢复记录</button>`:'');}
 const day=d=>{const t=new Date(d);return isNaN(t)?'':t.toLocaleDateString('zh-CN');};
 const options=(list,v)=>list.map(([id,t])=>`<option value="${esc(id)}" ${id===v?'selected':''}>${esc(t)}</option>`).join('');
 const closed=w=>['done','parked'].includes(w.status);
@@ -23,31 +24,72 @@ function selectedItems(){const ids=scope(node);return db.workItems.filter(w=>ids
 function selectedSources(){const ids=scope(node),linked=new Set(db.workItems.filter(w=>ids.has(w.nodeId)).flatMap(w=>w.sourceIds));return db.sources.filter(s=>(ids.has(s.nodeId)||linked.has(s.id))&&(!query||(s.title+' '+(s.preview||'')).toLowerCase().includes(query.toLowerCase())));}
 function syncWarning(){return Object.entries(db?.sync||{}).filter(([k,v])=>v&&['error','partial','warning'].includes(v.status)).map(([k,v])=>({disk:'本机资料',index:'飞书索引',knowledge:'知识关联',recovery:'恢复记录'}[k]||k)+'：'+(v.error||(v.errors?String(v.errors)+'项未完成':'部分未完成'))).join('；');}
 async function load(){[db,jobs]=await Promise.all([api(),api('/jobs').catch(()=>[])]);loadedAt=Date.now();render();const warning=syncWarning()||(jobs.some(j=>['error','interrupted'].includes(j.status))?'本地转写有未完成任务，原始录音保留。':'');if(warning)message(warning);}
-function navigate(v,id=node){view=['graph','sources'].includes(v)?v:'tasks';node=id;query='';filter='';limit=12;message('');render();window.scrollTo({top:0,behavior:'instant'});}
+function navigate(v,id=node){view=VIEWS.includes(v)?v:'tasks';node=id;query='';filter='';limit=12;undoable=null;message('');render();window.scrollTo({top:0,behavior:'instant'});}
 const dialogTop=t=>`<div class="dialog-top"><h2>${esc(t)}</h2><button class="btn" data-close>关闭</button></div>`;
 function show(html){$('#detail-content').innerHTML=html;if(!$('#detail').open)$('#detail').showModal();}
 async function submit(e,fn){e.preventDefault();const b=e.target.querySelector('[type=submit]');b.disabled=true;try{await fn();$('#detail').close();await load();message('已保存。');}catch(err){$('.form-status').textContent=err.message;}finally{b.disabled=false;}}
 function crumbs(){return `<div class="breadcrumbs"><button data-node="">全部工作</button>${path(node).map(n=>`<span>›</span><button data-node="${n.id}">${esc(n.title)}</button>`).join('')}</div>`;}
 function sourceRow(s){return `<div class="source-row"><div class="row-main">${s.url?`<a class="row-title" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)} ↗</a>`:`<button class="row-title" data-source="${s.id}">${esc(s.title)}</button>`}<div class="meta">${esc(roles[s.knowledgeRole]||'资料')} · ${esc(s.channel||'来源')} · ${s.hasBody?'已读取快照':'原文链接'}${s.changed?' · 内容有变化，请核对':''}${s.fetchedAt?' · '+esc(day(s.fetchedAt)):s.snapshotDate?' · '+esc(s.snapshotDate):''}</div></div>${s.url?`<button class="row-action" data-source="${s.id}">笔记</button>`:''}</div>`;}
 let limit=12,taskScope='mine';
-const mine=w=>!w.owner||/自己|^我$|待核实|未指定/i.test(w.owner);
+// 归类由服务端算好放在 bucket 里（mine / candidate / notmine / ignored），这里不再按负责人猜：
+// 生产库里 owner 写的是「本人」「Aaron」「S2」，旧的正则把 776 条真属于我的待办藏掉了。
+const bucket=w=>w.bucket||'mine';
 const editProjectOptions=v=>options(db.knowledgeNodes.map(n=>[n.id,path(n.id).map(n=>n.title).join(' / ')]),v);
 const rootOf=id=>path(id)[0]?.id||id;
 const projectOptions=v=>options([['','全部项目'],...db.knowledgeNodes.filter(n=>!n.parentId).map(n=>[n.id,n.title])],v);
+// 会议产生的待办先进候选，按场分组：每条三个动作，外加组头的「整场都不要」。
+// 只改归类，不改文本、负责人、期限；每条都留一条回原句的路。
+function candidateGroups(){
+ const groups=new Map();
+ for(const t of db.tasks.filter(t=>bucket(t)==='candidate')){
+  const src=(t.sourceIds||[]).map(id=>db.sources.find(s=>s.id===id)).filter(Boolean);
+  const s=src.find(x=>x.kind==='meeting')||src[0]||null;
+  const key=s?s.id:'';
+  if(!groups.has(key))groups.set(key,{source:s,tasks:[]});
+  groups.get(key).tasks.push(t);
+ }
+ return [...groups.values()].sort((a,b)=>String(b.source?.date||'').localeCompare(String(a.source?.date||'')));
+}
+// 回原句：会议来源跳回看页并定位到那一刻（#t=秒），文档来源就开原文链接。
+function backLink(t,s){
+ if(s&&s.sessionId)return 'archive.html?id='+encodeURIComponent(s.sessionId)+(Number.isFinite(t.atSec)?'#t='+Math.round(t.atSec):'');
+ return s&&s.url?s.url:'';
+}
+function candRow(t,s){const back=backLink(t,s);
+ return `<div class="task-row cand-row" tabindex="0" data-cand="${esc(t.id)}"><div class="row-main"><div class="row-title">${esc(t.text)}</div><div class="meta">${t.owner?esc(t.owner)+' · ':''}${t.due?esc(t.due)+' · ':''}${back?`<a href="${esc(back)}" target="_blank" rel="noopener">回到原句 ↗</a>`:'原句位置没记下来'}</div></div><div class="cand-actions">${[['mine','我来做','1'],['notmine','不是我的','2'],['ignore','忽略','3']].map(([a,label,k])=>`<button class="btn" data-triage="${a}" data-id="${esc(t.id)}">${label}<span class="cand-key">${k}</span></button>`).join('')}</div></div>`;}
+function candGroup(g){const s=g.source;
+ return `<section class="cand-group"><div class="cand-head"><div><h2 class="section-title">${esc(s?s.title:'未关联来源')}</h2><div class="meta">${s&&s.date?esc(day(s.date))+' · ':''}${g.tasks.length} 条待认领</div></div>${s?`<button class="btn" data-ignore-all="${esc(s.id)}">整场都不要</button>`:''}</div><div class="listbox">${g.tasks.map(t=>candRow(t,s)).join('')}</div></section>`;}
+const TRIAGE_DONE={mine:'已放进你的待办',notmine:'已标成不是你的',ignore:'已忽略','ignore-all':'整场已忽略'};
+async function triage(body){
+ const r=await api('/triage',body);
+ const ids=(r.tasks||[]).map(t=>t.id);
+ undoable=ids.length?{ids}:null;
+ await load();
+ message((TRIAGE_DONE[body.action]||'已处理')+' · '+ids.length+' 条。');
+ // 重新渲染后焦点没了，键盘就断在这儿：把焦点放到下一条，1/2/3 才能连着按。
+ if(view==='candidates')$('[data-cand]')?.focus();
+}
 function itemRow(w){return `<div class="task-row"><input type="checkbox" aria-label="完成：${esc(w.title)}" data-check="${w.id}" ${w.status==='done'?'checked':''}><div class="row-main"><button class="row-title ${w.status==='done'?'completed':''}" data-work="${w.id}">${esc(w.title)}</button><div class="meta">${esc(nodeName(rootOf(w.nodeId)))}${w.status!=='todo'?' · '+esc(labels[w.status]||w.status):''}${w.due?' · '+esc(w.due):''}${taskScope==='all'&&w.owner?' · '+esc(w.owner):''}</div></div></div>`;}
 const list=(items,fn,empty='这里暂时没有内容。')=>items.length?`<div class="listbox">${items.map(fn).join('')}</div>`:`<div class="blank">${empty}</div>`;
 function render(){if(!db?.workItems)return;if(view!=='graph'&&node)node=rootOf(node);document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.view===view)));
- const titles={tasks:['待办','记下下一步，完成一件，勾掉一件。'],graph:['项目','每个项目的进展和资料，放在一起。'],sources:['资料','会议纪要、长期文档，都从这里找。']};const title=titles[view]||titles.tasks;
- $('#heading').textContent=node&&view==='graph'?nodeName(node):title[0];$('#subtitle').textContent=title[1];$('#add').hidden=view==='graph';$('#add').textContent=view==='sources'?'＋ 资料':'＋ 待办';$('#today').textContent=new Date().toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'long'});
- $('#filters').innerHTML=view==='graph'?node?'<button class="back-link" data-node="">← 所有项目</button>':'':`<div class="filters"><input id="search" aria-label="搜索" placeholder="${view==='sources'?'搜索资料':'搜索待办'}" value="${esc(query)}"><select id="node-filter" aria-label="项目">${projectOptions(node)}</select></div>${view==='tasks'?`<div class="segments"><button data-scope-filter="mine" aria-pressed="${taskScope==='mine'}">我的</button><button data-scope-filter="all" aria-pressed="${taskScope==='all'}">全部</button><label><input type="checkbox" id="show-closed" ${showClosed?'checked':''}>已完成与暂存</label></div>`:''}`;
+ const titles={tasks:['待办','记下下一步，完成一件，勾掉一件。'],candidates:['会议待办（候选）','开完会记下来的，按场归好。点「我来做」它才进你的待办。'],graph:['项目','每个项目的进展和资料，放在一起。'],sources:['资料','会议纪要、长期文档，都从这里找。']};const title=titles[view]||titles.tasks;
+ // 候选条数放在导航上：不点进去也知道有多少条等着认领。
+ const pending=db.tasks.filter(t=>bucket(t)==='candidate').length,navBtn=document.querySelector('[data-view="candidates"]');
+ if(navBtn)navBtn.textContent='会议待办'+(pending?' · '+pending:'');
+ $('#heading').textContent=node&&view==='graph'?nodeName(node):title[0];$('#subtitle').textContent=title[1];$('#add').hidden=['graph','candidates'].includes(view);$('#add').textContent=view==='sources'?'＋ 资料':'＋ 待办';$('#today').textContent=new Date().toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'long'});
+ $('#filters').innerHTML=view==='candidates'?'':view==='graph'?node?'<button class="back-link" data-node="">← 所有项目</button>':'':`<div class="filters"><input id="search" aria-label="搜索" placeholder="${view==='sources'?'搜索资料':'搜索待办'}" value="${esc(query)}"><select id="node-filter" aria-label="项目">${projectOptions(node)}</select></div>${view==='tasks'?`<div class="segments"><button data-scope-filter="mine" aria-pressed="${taskScope==='mine'}">我的</button><button data-scope-filter="all" aria-pressed="${taskScope==='all'}">全部</button><label><input type="checkbox" id="show-closed" ${showClosed?'checked':''}>已完成与暂存</label></div>`:''}`;
  if(view==='graph')$('#filters').innerHTML+=crumbs()+`<details class="secondary"><summary>项目设置与导出</summary><button class="btn" id="new-node">新增层级</button>${node?'<button class="btn" id="edit-node">编辑当前层级</button>':''}<button class="btn" id="csv">导出工作清单 CSV</button></details>`+(node?db.knowledgeNodes.filter(n=>n.parentId===node).map(n=>`<button class="btn" data-node="${esc(n.id)}">${esc(n.title)} →</button>`).join(''):'');
  let ws=selectedItems(),ss=selectedSources(),html='';const order={doing:0,blocked:1,todo:2,proposed:3,done:4,parked:5};ws.sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)||(a.due||'9999').localeCompare(b.due||'9999')||String(b.created||'').localeCompare(a.created||''));
  if(view==='tasks'){
-   const visible=ws.filter(w=>taskScope==='all'||mine(w)),actions=visible.filter(w=>w.kind==='action'||w.kind==='report'),decisions=visible.filter(w=>w.kind==='decision');
+   // 默认页只有「我的」：我手输的，和我在会议待办里点过「我来做」的。候选和忽略的都不在这儿。
+   const visible=ws.filter(w=>taskScope==='all'?['mine','notmine'].includes(bucket(w)):bucket(w)==='mine'),actions=visible.filter(w=>w.kind==='action'||w.kind==='report'),decisions=visible.filter(w=>w.kind==='decision');
    html=list(actions.slice(0,limit),itemRow,query?'没有找到匹配的待办。':'目前没有你的未完成待办。可以新增一条，或切到「全部」查看协作事项。');
    if(actions.length>limit)html+=`<button class="more-items" id="show-more">再看 ${Math.min(12,actions.length-limit)} 条 · 还有 ${actions.length-limit} 条</button>`;
    const insights=visible.filter(w=>w.kind==='insight');if(insights.length)html+=`<details class="decision-list"><summary>研究输入 · ${insights.length}</summary>${list(insights,itemRow)}</details>`;
    if(decisions.length)html+=`<details class="decision-list"><summary>需要我决定 <span>${decisions.length}</span></summary>${list(decisions,itemRow)}</details>`;
+ }
+ if(view==='candidates'){const gs=candidateGroups();
+   html=gs.length?gs.map(candGroup).join(''):'<div class="blank">没有待认领的会议待办。<p>开完会在听会台点「收进工作台」，新的候选会出现在这里。</p></div>';
  }
  if(view==='graph'){
    if(!node)html='<div class="project-grid">'+db.knowledgeNodes.filter(n=>!n.parentId).map(n=>{const items=db.workItems.filter(w=>rootOf(w.nodeId)===n.id&&!closed(w)&&w.kind!=='insight');return `<button class="project-card" data-node="${n.id}"><h2>${esc(n.title)}</h2><p>${items.length?items.length+' 项进行中的工作':'暂无未完成事项'}</p><span>查看项目 →</span></button>`;}).join('')+'</div>';
@@ -70,14 +112,27 @@ function editNode(){const n=db.knowledgeNodes.find(n=>n.id===node);if(!n)return;
 function add(kind='work',parentId=''){if(kind==='node'){show(dialogTop('新增层级')+`<form id="create"><label>名称<input name="title" required autofocus></label><label>上级<select name="parentId"><option value="">无</option>${editProjectOptions(node||'')}</select></label><div class="form-status" role="status"></div><div class="dialog-actions"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">保存</button></div></form>`);$('#create').onsubmit=e=>submit(e,()=>api('/knowledge/create',{kind:'node',...Object.fromEntries(new FormData(e.target))}));return;}const source=kind==='source';show(dialogTop(source?'收集资料':'新增待办')+`<form id="create"><label>${source?'标题':'要做什么'}<input name="title" required autofocus></label>${source?'<label>原文链接<input name="url" type="url"></label><label>正文或笔记<textarea name="body"></textarea></label>':`<label>项目<select name="nodeId">${editProjectOptions(node||'operations')}</select></label>`}<div class="form-status" role="status"></div><div class="dialog-actions"><button class="btn" type="button" data-close>取消</button><button class="btn primary" type="submit">保存</button></div></form>`);$('#create').onsubmit=e=>submit(e,()=>api(source?'/create':'/knowledge/create',{kind:source?'sources':'work',...(!source?{type:'action',parentId}:{}),...Object.fromEntries(new FormData(e.target))}));}
 async function changeStatus(w,status){await api('/knowledge/update',{kind:'work',id:w.id,revision:w.revision,patch:{status}});await load();}
 document.addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;try{if(b.id==='review-local-jobs'){show(dialogTop('本地转写任务')+jobs.filter(j=>['error','interrupted'].includes(j.status)).map(j=>`<p>${esc(j.title)}：${esc(j.error||'处理已中断')} <button class="btn" data-retry-local="${esc(j.id)}">重试</button></p>`).join('')+'<div class="form-status" role="status"></div>');}if(b.dataset.retryLocal){b.disabled=true;try{await api('/asr/retry',{id:b.dataset.retryLocal});$('#detail').close();await load();}catch(err){$('.form-status').textContent=err.message;b.disabled=false;}}if(b.id==='review-recovery'){const r=db.sync.recovery;show(dialogTop('恢复记录')+`<p>${esc(r.error)}</p><p class="subtle">发现时间：${esc(r.at)}<br>恢复来源：${esc(r.backup)}</p><p>请先核对最近修改的待办和资料。确认只收起这条提醒，恢复记录仍保留。</p><div class="form-status" role="status"></div><div class="dialog-actions"><button class="btn" data-close>稍后核对</button><button class="btn primary" id="confirm-recovery">我已核对</button></div>`);$('#confirm-recovery').onclick=async ev=>{ev.target.disabled=true;try{await api('/recovery/ack',{at:r.at,backup:r.backup});$('#detail').close();await load();message(syncWarning()||'恢复记录已确认。');}catch(err){$('.form-status').textContent=err.message;ev.target.disabled=false;}};}
+if(b.dataset.triage)await triage({ids:[b.dataset.id],action:b.dataset.triage});
+if(b.dataset.ignoreAll)await triage({sourceId:b.dataset.ignoreAll,action:'ignore-all'});
+if(b.id==='undo-triage'&&undoable){const ids=undoable.ids;undoable=null;await api('/triage',{ids,action:'restore'});await load();message('已撤销 '+ids.length+' 条，回到候选。');}
 if(b.id==='show-more'){limit+=12;render();}if(b.dataset.scopeFilter){taskScope=b.dataset.scopeFilter;limit=12;render();}if(b.hasAttribute('data-close'))$('#detail').close();if(b.dataset.view)navigate(b.dataset.view,'');if(b.hasAttribute('data-node'))navigate('graph',b.dataset.node);if(b.dataset.lens)navigate(b.dataset.lens,b.dataset.scope);if(b.dataset.work)workDetail(b.dataset.work);if(b.dataset.source)await sourceDetail(b.dataset.source);if(b.dataset.addChild){const w=db.workItems.find(w=>w.id===b.dataset.addChild);node=w.nodeId;add('work',w.id);}if(b.dataset.split){const w=db.workItems.find(w=>w.id===b.dataset.collection);await api('/knowledge/split',{id:w.id,revision:w.revision,memberId:b.dataset.split});await load();workDetail(w.id);}if(b.id==='new-node')add('node');if(b.id==='edit-node')editNode();if(b.id==='csv')window.location.href=base+'/knowledge.csv?token='+encodeURIComponent(auth());}catch(err){message(err.message);const s=$('.form-status');if(s)s.textContent=err.message;}});
 document.addEventListener('change',async e=>{try{if(e.target.id==='node-filter'){node=e.target.value;limit=12;render();}if(e.target.id==='type-filter'){filter=e.target.value;render();}if(e.target.id==='show-closed'){showClosed=e.target.checked;render();}if(e.target.dataset.check){const w=db.workItems.find(w=>w.id===e.target.dataset.check);await changeStatus(w,e.target.checked?'done':'todo');message('进度已保存。');}}catch(err){message(err.message);await load();}});
+// 键盘 1/2/3：焦点落在某一条候选上就能直接分诊，一条一条过不用摸鼠标。
+document.addEventListener('keydown',async e=>{
+ if(view!=='candidates'||e.metaKey||e.ctrlKey||e.altKey)return;
+ if(/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))return;
+ const row=e.target.closest?.('[data-cand]'),action={1:'mine',2:'notmine',3:'ignore'}[e.key];
+ if(!row||!action)return;
+ e.preventDefault();
+ try{await triage({ids:[row.dataset.cand],action});}catch(err){message(err.message);}
+});
 let timer;document.addEventListener('input',e=>{if(e.target.id==='search'){query=e.target.value;clearTimeout(timer);timer=setTimeout(()=>{const p=e.target.selectionStart;render();$('#search').focus();$('#search').setSelectionRange(p,p);},250);}});
 $('#add').onclick=()=>add(view==='sources'?'source':'work');$('#sync').onclick=async e=>{e.target.disabled=true;message('正在收录和归类…');try{await api('/sync',{});await load();message(syncWarning()||'同步完成；未逐份核对的在线正文仍需读取。');}catch(err){message(err.message);}finally{e.target.disabled=false;}};
 $('#export').onclick=async()=>{const d=await api('/export');const u=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=u;a.download='工作记录.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);};
 window.addEventListener('focus',()=>{if(!$('#detail').open&&Date.now()-loadedAt>15000)load().catch(e=>message(e.message));});
 setInterval(()=>{if(!$('#detail').open&&jobs.some(j=>j.status==='running'))load().catch(e=>message(e.message));},10000);
-const params=new URLSearchParams(location.hash.slice(1));if(['graph','tasks','decisions','reports','sources','table'].includes(params.get('view')))view=['graph','sources'].includes(params.get('view'))?params.get('view'):'tasks';node=params.get('node')||'';
-window.addEventListener('hashchange',()=>{const p=new URLSearchParams(location.hash.slice(1));if(['graph','tasks','decisions','reports','sources','table'].includes(p.get('view')))view=['graph','sources'].includes(p.get('view'))?p.get('view'):'tasks';node=p.get('node')||'';render();});
+const fromHash=h=>{const v=new URLSearchParams(h.slice(1)).get('view');return VIEWS.includes(v)?v:['decisions','reports','table'].includes(v)?'tasks':null;};
+const params=new URLSearchParams(location.hash.slice(1));view=fromHash(location.hash)||view;node=params.get('node')||'';
+window.addEventListener('hashchange',()=>{const p=new URLSearchParams(location.hash.slice(1));view=fromHash(location.hash)||view;node=p.get('node')||'';render();});
 load().catch(e=>{message(e.message);$('#content').innerHTML='<div class="blank">暂时无法读取工作记录。请从已配置口令的听会台进入。<p><a href="./">打开听会台</a></p></div>';});
 })();
