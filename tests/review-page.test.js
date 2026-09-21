@@ -17,7 +17,7 @@ const MODEL_RAW={meta:{scope:'范围'},
   topics:[{n:1,conclusion:'定了走甲',decision:'已一致',points:[{text:'点一',at:'1:00'}],open:[]},
           {n:2,conclusion:'还没定',decision:'差不多吧',points:[{text:'点二',at:'5:00'}],open:['谁来做']},
           {n:3,conclusion:'多出来的',decision:'搁置',points:[],open:[]}]};
-const brief=(session,raw)=>py(`mp._ask=lambda *a,**k:${JSON.stringify(JSON.stringify(raw))}\nprint(json.dumps(mp.make_brief(json.loads(${JSON.stringify(JSON.stringify(session))}))))`);
+const brief=(session,raw)=>py(`mp.ask_model=lambda *a,**k:{'text':${JSON.stringify(JSON.stringify(raw))}}\nprint(json.dumps(mp.make_brief(json.loads(${JSON.stringify(JSON.stringify(session))}))))`);
 
 test('决定状态归一化：四个词照收，别的一律落到待讨论；缺省可以指定',()=>{
   assert.deepEqual(py(`print(json.dumps([mp._decision('已一致'),mp._decision('有分歧'),mp._decision('大概算定了'),mp._decision('',' 已一致'),mp._decision('','已一致'),mp._decision('','随便写的')]))`),

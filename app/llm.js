@@ -9,7 +9,7 @@
 // 返回 { text, provider, model, usage, errorCode, degraded, degradedReason, attempts, truncated, truncatedChars }。
 // truncated：这一次的 user 有没有因为超过接口上限被截掉（截了多少字在 truncatedChars）。
 // 链上前面的没成、后面某家成了 → degraded=true；调用方必须让人看见，不能当成首选成功。
-// 会后那条路是 Python 写的，它不自己调模型，而是起 app/llm-cli.js 进到这里——全仓只有这一层认厂商。
+// 会后那条路是 Python 写的，它不自己调模型，而是起 app/llm-bridge.js 进到这里——全仓只有这一层认厂商。
 const fs = require('fs');
 const path = require('path');
 const cliLlm = require('./cli-llm');
@@ -27,6 +27,20 @@ function normalize(p, env) {
   if (!p || typeof p !== 'object') return null;
   const models = p.models && typeof p.models === 'object' ? p.models : {};
   if (p.type === 'cli') {
+    // 第三种命令行不用改代码：配置里给出可执行文件和怎么把 prompt 递进去就够了。
+    //   {"type":"cli","kind":"custom","name":"显示名","bin":"/path/to/bin","args":["exec","--model","{model}"],
+    //    "stdin":"prompt"|"none","promptArg":"{prompt}","outputJson":"choices.0.text"}
+    // args / promptArg 里的 {prompt}、{model} 会被换成真实内容；stdin:"none" 表示这家只从参数收 prompt。
+    // outputJson 给「stdout 是一个 JSON、正文在某个字段里」的命令行用，按点号路径取（数组下标写数字）。
+    if (p.kind === 'custom') {
+      const bin = String(p.bin || '').trim();
+      if (!bin) return null;
+      return { type: 'cli', kind: 'custom', label: p.name || '命令行', usageProvider: 'cli', models,
+        custom: { bin, args: Array.isArray(p.args) ? p.args.map(String) : [],
+          stdin: p.stdin === 'none' ? 'none' : 'prompt',
+          promptArg: p.promptArg ? String(p.promptArg) : '',
+          outputJson: p.outputJson ? String(p.outputJson) : '' } };
+    }
     if (!['claude', 'codex'].includes(p.kind)) return null;
     return { type: 'cli', kind: p.kind, label: p.name || p.kind[0].toUpperCase() + p.kind.slice(1), usageProvider: p.kind, models };
   }
@@ -59,25 +73,46 @@ function pickModel(p, kind) {
   return m.post || m.live || '';
 }
 
+// 这家是不是「不认识 response_format 这个字段」——是的话去掉它重发一次，别把它当成一次失败。
+// 各家的说法不一样，所以既看状态码也看报错正文里的关键词。
+const jsonUnsupported = (status, d) => {
+  if (status === 400) return true;
+  const m = String((d && d.error && (d.error.message || d.error.code || d.error.type)) || '');
+  return /response_format|json_object|json[ _]?mode|unsupported|not support|invalid_request/i.test(m);
+};
+
 const ADAPTERS = {
   async cli(p, { model, system, user, dataDir, log, timeoutMs }) {
-    // 本机命令行没有这道墙（它自己按上下文窗口处理），所以这条路永远 truncated:false
-    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, timeoutMs: timeoutMs || CLI_TIMEOUT_MS });
+    // 本机命令行没有这道墙（它自己按上下文窗口处理），所以这条路永远 truncated:false。
+    // json 参数对命令行没意义（没有 response_format 这种开关），这条路直接忽略它。
+    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, custom: p.custom, timeoutMs: timeoutMs || CLI_TIMEOUT_MS });
     if (r.ok) return { ok: true, text: r.text, model: r.model || model, usage: r.usage || null, truncated: false, truncatedChars: 0 };
     return { ok: false, errorCode: p.kind + ':' + (r.reason || 'unknown'), truncated: false, truncatedChars: 0 };
   },
-  async openai(p, { model, system, user, maxTokens, temperature, timeoutMs, fetchImpl }) {
+  async openai(p, { model, system, user, maxTokens, temperature, timeoutMs, fetchImpl, json, log = () => {} }) {
     // 超长就截，但不能悄悄截：截了多少字要顺着返回值一路带到用量账里，
     // 不然「模型没看到后半场」会被当成模型变笨，查不出是这里剪掉的（2026-09-22 架构审查查出）。
     const whole = String(user), cap = p.maxInput || API_INPUT_CAP;
     const sent = whole.slice(0, cap), cutChars = whole.length - sent.length;
-    try {
+    // json:true（要的是一个 JSON 对象）→ 带 response_format。09-22 换家真跑：DeepSeek 不带这个字段时
+    // 吐回来的 JSON 缺逗号，点评那一步整段解析失败、回看页空白。
+    const send = async useJson => {
+      const body = { model, messages: [{ role: 'system', content: system }, { role: 'user', content: sent }],
+        max_tokens: maxTokens || 800, temperature: temperature == null ? 0.2 : temperature, stream: false };
+      if (useJson) body.response_format = { type: 'json_object' };
       const r = await (fetchImpl || fetch)(p.baseUrl + '/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + p.key, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: [{ role: 'system', content: system }, { role: 'user', content: sent }],
-          max_tokens: maxTokens || 800, temperature: temperature == null ? 0.2 : temperature, stream: false }),
-        signal: AbortSignal.timeout(timeoutMs || API_TIMEOUT_MS) });
-      const d = await r.json();
-      const text = (((d.choices || [])[0] || {}).message || {}).content || null;
+        body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs || API_TIMEOUT_MS) });
+      let d = null; try { d = await r.json(); } catch (e) {}
+      return { status: Number(r && r.status) || 0, d };
+    };
+    const pick = d => (((((d || {}).choices) || [])[0] || {}).message || {}).content || null;
+    try {
+      let { status, d } = await send(!!json);
+      let text = pick(d);
+      if (!text && json && jsonUnsupported(status, d)) {
+        log('这家不收 response_format，去掉这个字段重发一次');
+        ({ status, d } = await send(false)); text = pick(d);
+      }
       if (!text) return { ok: false, errorCode: 'api:' + ((d && d.error && (d.error.code || d.error.type || d.error.message)) || 'empty'), truncated: cutChars > 0, truncatedChars: cutChars };
       const u = d.usage;
       return { ok: true, text, model: d.model || model, usage: u ? { in: u.prompt_tokens || 0, out: u.completion_tokens || 0 } : null,
@@ -92,8 +127,9 @@ const ADAPTERS = {
 // skip：跳过链上前 N 家，给「这一趟已经试过它、别再逐块重试」的熔断用（会后总结把一场会切成十几块，
 // 第一家挂了还每块都等一遍，能白等几十分钟）。跳过也算降级，degraded 照样为真。
 // timeoutMs：每一家的等待上限（不是整条链的总预算）。不给就按适配器各自的默认值。
+// json：这一次要的是一个 JSON 对象。接口类带上 response_format（不收就去掉重发一次），命令行忽略。
 async function ask(env, { kind = 'post', system = '', user = '', maxTokens, dataDir, log = () => {}, fetchImpl,
-  noFallback = false, skip = 0, timeoutMs = 0, temperature } = {}) {
+  noFallback = false, skip = 0, timeoutMs = 0, temperature, json = false } = {}) {
   const all = chainOf(env);
   if (!all.length) return { text: null, errorCode: 'no_provider', degraded: false, truncated: false, truncatedChars: 0, attempts: [] };
   const skipped = noFallback ? 0 : Math.max(0, Number(skip) || 0);
@@ -101,8 +137,10 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
   if (!chain.length) return { text: null, errorCode: 'chain_exhausted', degraded: false, truncated: false, truncatedChars: 0, attempts, skipped };
   for (const p of chain) {
     const model = pickModel(p, kind);
-    const r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature });
-    if (r.ok) return { text: r.text, provider: p.label, usageProvider: p.usageProvider, model: r.model || model, usage: r.usage,
+    const r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json });
+    // requestedModel = 配置里点名要的那个；model = 接口实际回的那个。两者会不一样
+    // （09-22 实测：要 deepseek-chat，回 deepseek-flash），账本两个都记才查得清「那天跑的到底是谁」。
+    if (r.ok) return { text: r.text, provider: p.label, usageProvider: p.usageProvider, model: r.model || model, requestedModel: model || '', usage: r.usage,
       truncated: !!r.truncated, truncatedChars: Number(r.truncatedChars) || 0,
       degraded: attempts.length > 0 || skipped > 0, degradedReason: attempts.length ? attempts[0].errorCode : (skipped > 0 ? 'skipped' : ''), attempts, skipped };
     attempts.push({ provider: p.label, errorCode: r.errorCode });
@@ -113,7 +151,7 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
 
 // —— 用量账本 ——
 // 花 token 的地方在花费那一刻记一笔，成本只从这本账汇总。服务端（app/server.js）和会后管线
-// （Python → app/llm-cli.js）写的是同一个文件、同一种行，口径不能各写各的。
+// （Python → app/llm-bridge.js）写的是同一个文件、同一种行，口径不能各写各的。
 function recordUsage(dataDir, entry) {
   try {
     const f = path.join(dataDir, 'state', 'usage.jsonl');
@@ -131,7 +169,7 @@ function noteUsage(dataDir, r, { system = '', user = '', tier = 'post', sessionI
   const u = r.usage;
   if (!u && r.usageProvider === 'api') return;
   const ctx = pack ? require('./context-pack').stamp(pack) : { contextHash: '', contextParts: [] };
-  recordUsage(dataDir, { sessionId, provider: r.usageProvider, model: r.model || '',
+  recordUsage(dataDir, { sessionId, provider: r.usageProvider, model: r.model || '', requestedModel: r.requestedModel || r.model || '',
     in: u ? u.in : Math.ceil((String(system).length + String(user).length) / 2), out: u ? u.out : Math.ceil(r.text.length / 2),
     est: !u, tier, purpose, ...ctx,
     ...(r.truncated ? { truncated: true, truncatedChars: Number(r.truncatedChars) || 0 } : { truncated: false }) });

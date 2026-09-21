@@ -8,7 +8,7 @@
 //
 // 两条路各验一次：
 //   Node 起的     app/actions.js 的 projectFocus（带项目重点文件原文）
-//   Python 起的   meeting-pipeline.py 的 summarize（带核心记忆 + 会议记忆，经 app/llm-cli.js 这座桥）
+//   Python 起的   meeting-pipeline.py 的 summarize（带核心记忆 + 会议记忆，经 app/llm-bridge.js 这座桥）
 // 命令行那条路系统提示词走 --system-prompt、材料走 stdin，所以比的是拼接前的两段，不是拼完的一整坨。
 const { test } = require('node:test'), assert = require('node:assert/strict');
 const fs = require('fs'), os = require('os'), path = require('path'), http = require('http');
@@ -102,7 +102,7 @@ test('换家厂商 · Node 这条路（处理台「项目现在最重要的三�
   assert.ok(r.api.user.includes('D1 Pin 与手机绑定'), '项目重点文件的原文没进 prompt：' + r.api.user.slice(0, 120));
 });
 
-test('换家厂商 · Python 这条路（会后总结，资料由 app/llm-cli.js 填进占位符）：两家收到的 system / user 逐字相同', async () => {
+test('换家厂商 · Python 这条路（会后总结，资料由 app/llm-bridge.js 填进占位符）：两家收到的 system / user 逐字相同', async () => {
   const r = await bothWays('py', '一段总结正文', h => run('python3', ['-c', pyCode],
     { ...process.env, HOME: h.home, THT_DATA_DIR: h.dir, THT_PIPELINE_DIR: path.join(h.dir, 'state', 'meeting-pipeline'), THT_NODE: process.execPath }, 'python 驱动'));
   assert.equal(r.cli.system, r.api.system);

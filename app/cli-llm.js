@@ -53,6 +53,34 @@ function codexHome(dataDir) {
     return dir;
   } catch (e) { return ''; }                    // 建不出来就退回原来的家，宁可带上规则也别调不起来
 }
+// —— 第三种命令行（kind:'custom'）——
+// 只从配置来：bin / args / stdin / promptArg / outputJson（见 app/llm.js 的 normalize）。
+// 加第三家不改代码，改设置就行（Aaron 2026-09-22：「我现在优先调用 Claude 和 codex 不代表以后我不调用别的」）。
+// 净室同样适用：cwd 是数据目录，环境变量只留下面这三个——别的（AI 厂商的 key、代理设置、
+// 各种 *_HOME）都不传，不然「模型知道的一切只来自引擎递给它的那份输入」这条就破了。
+const CUSTOM_ENV_KEYS = ['PATH', 'HOME', 'LANG'];
+function customEnv() {
+  const e = {};
+  for (const k of CUSTOM_ENV_KEYS) if (process.env[k] != null) e[k] = process.env[k];
+  return e;
+}
+const slot = (s, prompt, model) => String(s).split('{prompt}').join(prompt).split('{model}').join(model || '');
+function customArgs(spec, { prompt, model }) {
+  const a = (spec.args || []).map(x => slot(x, prompt, model));
+  if (spec.promptArg) a.push(slot(spec.promptArg, prompt, model));
+  return a;
+}
+// outputJson:'a.b.0.c' —— stdout 是 JSON 时按点号路径取正文；取不到就当没拿到。
+function digPath(obj, route) {
+  let cur = obj;
+  for (const k of String(route).split('.')) {
+    if (cur == null) return null;
+    cur = Array.isArray(cur) && /^\d+$/.test(k) ? cur[Number(k)] : cur[k];
+  }
+  if (cur == null) return null;
+  return typeof cur === 'string' ? cur : JSON.stringify(cur);   // 有的命令行把答案直接放成 JSON 对象，不是字符串
+}
+
 // 装了不等于能用：没登录的话调用会失败。检测只回「装没装」，能不能用由一次真实试跑决定。
 function detect() {
   const out = {};
@@ -83,16 +111,21 @@ function args(kind, { model = '', system = '' } = {}) {
 
 // 返回 { ok, text, reason, usage, model }。reason 是失败原因码，给红条和日志用，不给用户看原文。
 // 失败原因码：not_installed / spawn_failed / timeout / proc_error / cli_exit_<码> / cli_is_error / empty / bad_json
-function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '' } = {}) {
-  const bin = findBin(kind);
+function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null } = {}) {
+  const spec = kind === 'custom' ? custom : null;
+  if (kind === 'custom' && !spec) return Promise.resolve({ ok: false, reason: 'not_configured' });
+  let bin = spec ? spec.bin : findBin(kind);
+  if (spec) { try { fs.accessSync(bin, fs.constants.X_OK); } catch (e) { bin = ''; } }
   if (!bin) return Promise.resolve({ ok: false, reason: 'not_installed' });
+  const full = system ? system + '\n\n' + prompt : prompt;
   return new Promise(resolve => {
     let done = false;
     const finish = v => { if (!done) { done = true; resolve(v); } };
     let p;
     const home = kind === 'codex' ? codexHome(dataDir) : '';
-    try { p = spawn(bin, args(kind, { model, system }),
-      { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}) } }); }
+    try { p = spawn(bin, spec ? customArgs(spec, { prompt: full, model }) : args(kind, { model, system }),
+      spec ? { cwd: dataDir || process.cwd(), env: customEnv() }
+           : { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}) } }); }
     catch (e) { log('cli-llm spawn 失败 ' + e.message); return finish({ ok: false, reason: 'spawn_failed' }); }
     let out = '', err = '';
     const timer = setTimeout(() => { log('cli-llm 超时 ' + kind); finish({ ok: false, reason: 'timeout' }); try { p.kill('SIGTERM'); } catch (e) {} setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} }, 2000); }, timeoutMs);
@@ -103,10 +136,14 @@ function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}
       clearTimeout(timer);
       if (code !== 0) { log('cli-llm 退出码 ' + code + ' ' + err.slice(0, 200)); return finish({ ok: false, reason: 'cli_exit_' + code, stderr: err.slice(0, 200) }); }
       if (!out.trim()) return finish({ ok: false, reason: 'empty' });
+      if (spec) return finish(parseCustom(spec, out, log));
       finish(parseOut(kind, out, log));
     });
-    // 系统提示词走 --system-prompt，stdin 只放本场材料
-    try { p.stdin.write(kind === 'codex' && system ? system + '\n\n' + prompt : prompt); p.stdin.end(); } catch (e) {}
+    // 系统提示词走 --system-prompt，stdin 只放本场材料；codex 和第三家命令行没有这个参数，拼进正文。
+    try {
+      if (spec && spec.stdin === 'none') p.stdin.end();
+      else { p.stdin.write(spec || kind === 'codex' ? (system ? full : prompt) : prompt); p.stdin.end(); }
+    } catch (e) {}
   });
 }
 
@@ -121,6 +158,17 @@ function mainModel(modelUsage) {
     if (score > bestCost) { best = name; bestCost = score; }
   }
   return best;
+}
+
+// 第三家命令行的输出：默认整个 stdout 就是回答；配了 outputJson 就按路径从 JSON 里取正文。
+// 用量它不回（各家格式不一样，不猜），账本按字符数估，和其他命令行同一口径。
+function parseCustom(spec, out, log) {
+  if (!spec.outputJson) { const t = String(out || '').trim(); return t ? { ok: true, text: t } : { ok: false, reason: 'empty' }; }
+  let d;
+  try { d = JSON.parse(String(out).trim()); }
+  catch (e) { log('cli-llm 第三家命令行的输出不是 JSON'); return { ok: false, reason: 'bad_json' }; }
+  const t = (digPath(d, spec.outputJson) || '').trim();
+  return t ? { ok: true, text: t } : { ok: false, reason: 'empty' };
 }
 
 function parseOut(kind, out, log) {
