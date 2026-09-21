@@ -2051,6 +2051,15 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,applied:result.applied,skipped:result.skipped,saved}));
       }
       else if (msg.type === 'spk') { if (session) session.applySpk(msg); }
+      // 只在测试进程里存在（THT_TEST）：灌一条 final，按需立刻跑一次分诊。
+      // 会中分析的 prompt 要有 ASR 出的 final 才拼得出来，测试里没有真 ASR，
+      // 金样测试（tests/context-golden.test.js）靠这个口子抓「真正发出去的那份 system + user」。
+      else if (msg.type === '__test_final' && process.env.THT_TEST) {
+        if (session) {
+          session.onMacResult({ type: 'final', text: String(msg.text || '') });
+          if (msg.triage) Promise.resolve(session.runTriage()).then(() => { try { ws.send(JSON.stringify({ type: '__test_triaged' })); } catch (e) {} });
+        }
+      }
       else if (msg.type === 'end') { if (session) {if(typeof msg.notes==='string')session.notes=msg.notes.slice(0,20000);if(msg.outline&&role==='speaker'&&!isView)session.setOutline(msg.outline);session.applyTranscriptEdits(msg.transcriptEdits);session.browserGapSeconds=Math.max(0,Math.min(Number(msg.browserGapSeconds)||0,86400));session.finalize('end 帧');} }
     } else if (session && role === 'speaker') { session.sendAudio(resamplePCM16(data, rate, 16000)); }
   });
