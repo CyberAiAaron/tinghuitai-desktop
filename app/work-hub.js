@@ -82,7 +82,18 @@ function loadHub(file,fallback){
 class Hub{
  // opts.fetch 是给标题解析用的出口：测试注入桩，THT_TEST 下默认不发真实请求。
  constructor(root,dir,opts={}){this.root=root;this.dir=dir;this.fetchImpl=opts.fetch||(process.env.THT_TEST?null:globalThis.fetch);fs.mkdirSync(dir,{recursive:true,mode:0o700});this.file=path.join(dir,'work-hub.json');this.data=loadHub(this.file,{version:1,revision:0,projects:[],sources:[],tasks:[],events:[],sync:{}});try{this.translationCache=readJSON(path.join(dir,'translations.json'),{});}catch{this.translationCache={};}this.syncing=null;this.aiBusy=false;}
- save(){require('./knowledge').prepare(this);const p=this.file+'.tmp';this.data.revision++;this.data.updated=now();const fd=fs.openSync(p,'w',0o600);try{fs.writeFileSync(fd,JSON.stringify(this.data));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}if(fs.existsSync(this.file)){const prior=this.file.replace('.json','.previous.json');fs.copyFileSync(this.file,prior+'.tmp');fs.renameSync(prior+'.tmp',prior);}fs.renameSync(p,this.file);const b=path.join(this.dir,'backup-'+now().slice(0,10)+'.json');if(!fs.existsSync(b))fs.copyFileSync(this.file,b);}
+ save(){require('./knowledge').prepare(this);const p=this.file+'.tmp';this.data.revision++;this.data.updated=now();const fd=fs.openSync(p,'w',0o600);try{fs.writeFileSync(fd,JSON.stringify(this.data));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}if(fs.existsSync(this.file)){const prior=this.file.replace('.json','.previous.json');fs.copyFileSync(this.file,prior+'.tmp');fs.renameSync(prior+'.tmp',prior);}fs.renameSync(p,this.file);const b=path.join(this.dir,'backup-'+now().slice(0,10)+'.json');if(!fs.existsSync(b)){fs.copyFileSync(this.file,b);this.pruneBackups();}}
+ // D8：日备份只增不删，生产上已经堆了 12 份、目录 77MB，再放下去只会更大。
+ // 每天第一次存盘（也就是刚新建一份备份）时顺手清一次：只删自己这套 backup-日期.json 命名的，
+ // .before-merge-* / .before-repair-* / work-hub.previous.json 是出事时救命用的，一律不碰。
+ pruneBackups(keepDays=14){
+  const cutoff=Date.now()-keepDays*86400000,removed=[];
+  let names=[];try{names=fs.readdirSync(this.dir);}catch{return removed;}
+  for(const name of names){
+   const m=/^backup-(\d{4}-\d{2}-\d{2})\.json$/.exec(name);if(!m)continue;
+   const day=Date.parse(m[1]+'T00:00:00Z');if(!Number.isFinite(day)||day>=cutoff)continue;
+   try{fs.rmSync(path.join(this.dir,name));removed.push(name);}catch{}}
+  return removed;}
  event(type,id,note){this.data.events.push({id:crypto.randomUUID(),at:now(),type,target:id,note});if(this.data.events.length>1000){const archived=this.data.events.slice(0,-500),text=JSON.stringify(archived),file=path.join(this.dir,'events-'+hash(text)+'.json');if(!fs.existsSync(file)){const tmp=file+'.tmp',fd=fs.openSync(tmp,'w',0o600);try{fs.writeFileSync(fd,text);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,file);}this.data.events=this.data.events.slice(-500);}}
  source(input){const key=input.key||(canonical(input.url)||'manual:'+crypto.randomUUID());let s=this.data.sources.find(x=>x.key===key);
   // 新归一让 Google / Notion 链接算出新 key，老库里存的是旧 key：按新 key 没找到就再按旧 key 找一次，
