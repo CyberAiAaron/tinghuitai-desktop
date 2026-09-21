@@ -11,10 +11,14 @@
 //   research  让我做的研究 → 预研究一页（覆盖什么 / 用哪些源 / 预计什么结论），不外发
 //   self      我自己做   → 进「我的待办」池，不外发
 //
-// 外发门禁：这个模块里只有 send() 会碰 lark-cli，而 send() 只接受调用方传进来的完整 draft。
+// 外发门禁：这个模块里只有 send() 会走到写类工具，而 send() 只接受调用方传进来的完整 draft。
 // 生成、分类、打叉、撤销、存草稿都不执行任何命令。这条是硬约束，tests/action-desk.test.js 盯着它。
-const fs = require('fs'), path = require('path'), crypto = require('crypto'), { execFile } = require('child_process');
+// 2026-09-22：外部命令不再由这里直接跑——飞书的活全部搬进 app/tools/ 的工具登记表，
+// 写类工具只有带 confirmedByUser 的调用才执行，而这个标志只有 send() 这一条路会带。
+const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const llm = require('./llm');
+const tools = require('./tools');
+const toolLoop = require('./tool-loop');
 
 const KINDS = ['meeting', 'research', 'delegate', 'self'];
 const STATES = ['open', 'dismissed', 'sent', 'claimed'];
@@ -142,6 +146,22 @@ async function askJSON(env, { system, user, maxTokens = 1500, dataDir, log = () 
   return { ok: true, data: j, degraded: !!r.degraded };
 }
 
+// 带工具的一问：和 askJSON 同一个出口，只是模型可以先让引擎替它查资料。
+// 走的是 app/tool-loop.js 那条纯文字协议，换一家模型不改这里。
+const RESEARCH_TOOLS = ['meetings.search', 'meetings.get', 'memory.search', 'project.context', 'hub.search', 'lark.docs.search', 'lark.docs.fetch'];
+async function askJSONWithTools(env, { system, user, maxTokens = 2500, dataDir, log = () => {}, noFallback = false,
+                                       tools: names = [], preFetch = [], maxRounds = 2, deadlineMs, sessionId }) {
+  const r = await toolLoop.askWithTools(env, {
+    kind: 'post', system: system + ' ' + DATA_NOTE, user, maxTokens, dataDir, log, noFallback,
+    tools: names, preFetch, maxRounds, deadlineMs, sessionId,
+  });
+  const meta = { sources: (r && r.sources) || [], toolCalls: (r && r.toolCalls) || [] };
+  if (!r || !r.ok || !r.text) return { ok: false, error: (r && r.error) || 'no_answer', ...meta };
+  const j = parseJSON(r.text);
+  if (!j) return { ok: false, error: 'bad_json', ...meta };
+  return { ok: true, data: j, degraded: !!r.degraded, ...meta };
+}
+
 // ===== 时间备选：接下来两个工作日的 10:00–11:00（本机时区） =====
 function twoSlots(from = new Date()) {
   const out = [], d = new Date(from.getTime());
@@ -154,7 +174,7 @@ function twoSlots(from = new Date()) {
   }
   return out;
 }
-// 本机时区的 ISO 串（lark-cli 的 --start/--end 收这个）
+// 本机时区的 ISO 串（飞书日历那条写类工具的 start / end 收这个）
 function local(d) {
   const p = n => String(n).padStart(2, '0');
   const off = -d.getTimezoneOffset(), sign = off >= 0 ? '+' : '-', a = Math.abs(off);
@@ -243,24 +263,42 @@ async function generate({ dir, sessionId, enhanced, env = {}, dataDir, attendees
     };
   }
 
-  // ④ 预研究：只对 research 类跑，每场最多 3 条，不联网，只基于本场内容。
+  // ④ 预研究：只对 research 类跑，每场最多 3 条。
+  // 2026-09-22 起它是第一个用上工具权限层的地方：引擎先替模型查本机会议 / 记忆 / 项目资料（preFetch），
+  // 再允许它自己查不超过 2 轮，草稿末尾带「依据」，每条一个能回到原处的 ref。
+  // 本机资料会进 prompt，所以这一次只许走链上第一家（noFallback），和团队名单那几处同一条规矩。
   const researchCards = out.cards.filter(c => c.kind === 'research').slice(0, MAX_RESEARCH);
   if (researchCards.length) {
     const ov = ((enhanced || {}).brief || {}).overview || {};
-    const r = await askJSON(env, {
-      system: '你在给一条「要做的研究」写预研究一页。不要联网，只基于给你的会议内容和常识，写清三件事：'
-        + '这个研究会覆盖什么、打算用哪些源、预计能给出什么结论。每项两三句，别写空话。'
-        + '输出 {"items":[{"i":0,"scope":"...","sources":["..."],"expected":"..."}]}',
+    const q = clip(researchCards.map(c => c.text).join(' '), 200);
+    const r = await askJSONWithTools(env, {
+      system: '你在给一条「要做的研究」写预研究一页。先看引擎替你查回来的本机资料，不够再用工具查，别用你自带的工具、也别联网。'
+        + '写清三件事：这个研究会覆盖什么、打算用哪些源、预计能给出什么结论。每项两三句，别写空话。'
+        + '用到哪条资料，就把它的 ref 原样抄进 refs。'
+        + '输出 {"items":[{"i":0,"scope":"...","sources":["..."],"expected":"...","refs":["..."]}]}',
       user: '本场结论：' + JSON.stringify(ov.conclusions || []) + '\n本场议题：' + JSON.stringify((ov.topics || []).map(t => t.title))
         + '\n要预研究的事项：' + JSON.stringify(researchCards.map(c => ({ i: out.cards.indexOf(c), text: c.text }))),
-      maxTokens: 2000, dataDir, log,
+      maxTokens: 2500, dataDir, log, noFallback: true, sessionId: String(sessionId),
+      tools: RESEARCH_TOOLS, maxRounds: 2,
+      preFetch: [
+        { name: 'meetings.search', args: { query: q, limit: 6 } },
+        { name: 'memory.search', args: { query: q, limit: 6 } },
+        { name: 'project.context', args: { query: q, limit: 4 } },
+      ],
     });
     const items = new Map();
     if (r.ok && Array.isArray(r.data.items)) for (const it of r.data.items) { const i = Number(it && it.i); if (Number.isInteger(i)) items.set(i, it); }
     else warnings.push('预研究这次没跑出来（' + (r.error || '未知') + '）');
+    const byRef = new Map((r.sources || []).map(s => [s.ref, s]));
     for (const c of researchCards) {
       const it = items.get(out.cards.indexOf(c));
-      c.draft = it ? { scope: clip(it.scope, 600), sources: (Array.isArray(it.sources) ? it.sources : []).map(x => clip(x, 120)).filter(Boolean).slice(0, 8), expected: clip(it.expected, 600) } : null;
+      if (!it) { c.draft = null; continue; }
+      // 依据：模型点名的排前面，其余按引擎查到的顺序补齐，最多 6 条。没查到就不出这一块。
+      const refs = [];
+      for (const ref of (Array.isArray(it.refs) ? it.refs : [])) { const s = byRef.get(String(ref)); if (s && !refs.some(x => x.ref === s.ref)) refs.push(s); }
+      for (const s of (r.sources || [])) { if (refs.length >= 6) break; if (!refs.some(x => x.ref === s.ref)) refs.push(s); }
+      c.draft = { scope: clip(it.scope, 600), sources: (Array.isArray(it.sources) ? it.sources : []).map(x => clip(x, 120)).filter(Boolean).slice(0, 8),
+        expected: clip(it.expected, 600), refs: refs.slice(0, 6) };
     }
     for (const c of out.cards.filter(x => x.kind === 'research').slice(MAX_RESEARCH))
       c.researchSkipped = '每场只自动跑 3 条预研究，这条没跑';
@@ -356,8 +394,8 @@ function ensure(opts) {
 function ensureBackground(opts) { if (read(opts.dir, opts.sessionId)) return false; ensure(opts); return true; }
 
 // ===== 动作 =====
-// dismiss / restore / claim / save-draft 都不外发；send 是唯一会碰 lark-cli 的口。
-async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log = () => {}, hub = null, execImpl = execFile }) {
+// dismiss / restore / claim / save-draft 都不外发；send 是唯一会调写类工具的口。
+async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log = () => {}, hub = null, execImpl, dataDir }) {
   const file = fileOf(dir, sessionId), data = readJSON(file);
   if (!data) { const e = Error('这场会还没有处理台数据'); e.code = 404; throw e; }
   const card = (data.cards || []).find(c => c.id === id);
@@ -377,7 +415,7 @@ async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log 
     const d = sanitizeDraft(card.kind, draft, null);
     if (!['meeting', 'delegate'].includes(card.kind)) { const e = Error('这类卡不外发'); e.code = 400; throw e; }
     if (!d) { const e = Error('草稿是空的，没有可发的内容'); e.code = 400; throw e; }
-    const r = await send(card.kind, d, env, execImpl, log);
+    const r = await send(card.kind, d, env, execImpl, log, dataDir, sessionId);
     if (!r.ok) { const e = Error(r.error || '没发出去'); e.code = 400; throw e; }
     card.draft = d; card.state = 'sent'; card.sentAt = now();
     card.sentRef = { type: card.kind === 'meeting' ? 'calendar' : 'task', url: r.url || '', id: r.id || '' };
@@ -404,7 +442,12 @@ function sanitizeDraft(kind, draft, fallback) {
     due: /^\d{4}-\d{2}-\d{2}$/.test(String(draft.due || '')) ? String(draft.due) : '',
     dueDefault: !!draft.dueDefault, description: clip(draft.description, 2000), links: arr(draft.links, 6, 400),
   };
-  if (kind === 'research') return { scope: clip(draft.scope, 1500), sources: arr(draft.sources, 10, 200), expected: clip(draft.expected, 1500) };
+  if (kind === 'research') return { scope: clip(draft.scope, 1500), sources: arr(draft.sources, 10, 200), expected: clip(draft.expected, 1500),
+    // 依据：只留登记表给的那几个字段，长度都夹住；页面改草稿时原样带回来，不丢。
+    refs: (Array.isArray(draft.refs) ? draft.refs : []).slice(0, 8).map(x => ({
+      ref: clip(x && x.ref, 300), title: clip(x && x.title, 200), url: clip(x && x.url, 400),
+      source: clip(x && x.source, 60), at: clip(x && x.at, 40), meetingId: clip(x && x.meetingId, 80),
+    })).filter(x => x.ref) };
   return fallback;
 }
 
@@ -424,78 +467,35 @@ async function claimToHub(hub, card, sessionId) {
   }
 }
 
-// ===== 外发：整个模块只有这里碰 lark-cli =====
-function runCli(execImpl, args, log) {
-  const cli = process.env.THT_LARK_CLI || 'lark-cli';
-  return new Promise(resolve => {
-    execImpl(cli, args, { timeout: 60000, maxBuffer: 4e6 }, (err, out, errOut) => {
-      if (err) return resolve({ ok: false, error: String((errOut || err.message || '').toString()).slice(0, 200) || 'lark-cli 没跑起来' });
-      let j = null; try { j = JSON.parse(String(out).trim()); } catch (e) {}
-      if (!j) return resolve({ ok: false, error: 'lark-cli 返回的不是 JSON' });
-      if (j.ok === false || j.error) return resolve({ ok: false, error: clip((j.error && (j.error.message || j.error)) || '飞书拒绝了这次创建', 200) });
-      resolve({ ok: true, json: j });
-    });
-    if (log) log('lark-cli ' + args.slice(0, 2).join(' '));
-  });
-}
-const dig = (o, ...ks) => { for (const k of ks) { const v = k.split('.').reduce((x, p) => (x == null ? x : x[p]), o); if (typeof v === 'string' && v) return v; } return ''; };
-
-async function send(kind, d, env, execImpl, log) {
+// ===== 外发：整个模块只有这里会带 confirmedByUser 去调写类工具 =====
+// 命令行怎么拼、返回里哪个字段是链接，都在 app/tools/lark.js。这里只负责「把他改过的那份草稿交出去」。
+async function send(kind, d, env, execImpl, log, dataDir, sessionId) {
+  const ctx = { env, dataDir, execImpl, log, caller: 'ui', sessionId, confirmedByUser: true };
   if (kind === 'meeting') {
     const slot = d.slots[Math.min(Math.max(d.pick || 0, 0), Math.max(d.slots.length - 1, 0))];
     if (!slot) return { ok: false, error: '草稿里没有时间，先选一个时间再发' };
     if (!d.title) return { ok: false, error: '草稿里没有标题' };
-    const ids = await resolveIds(d.attendees, env, execImpl, log);
-    const desc = [d.note, d.agenda.length ? '议程：\n' + d.agenda.map((x, i) => (i + 1) + '. ' + x).join('\n') : '',
-      ids.missing.length ? '（还没解析到飞书账号的人：' + ids.missing.join('、') + '）' : ''].filter(Boolean).join('\n\n');
-    const args = ['calendar', '+create', '--as', 'user', '--summary', d.title, '--start', slot.start, '--end', slot.end, '--format', 'json'];
-    if (desc) args.push('--description', desc);
-    if (ids.ids.length) args.push('--attendee-ids', ids.ids.join(','));
-    const r = await runCli(execImpl, args, log);
-    if (!r.ok) return r;
-    return { ok: true, url: dig(r.json, 'data.event.app_link', 'data.event.url', 'data.app_link', 'data.url'), id: dig(r.json, 'data.event.event_id', 'data.event_id') };
+    const r = await tools.call('lark.calendar.create', { title: d.title, start: slot.start, end: slot.end,
+      note: d.note || '', agenda: d.agenda || [], attendees: d.attendees || [] }, ctx);
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, url: (r.data || {}).url || '', id: (r.data || {}).id || '' };
   }
   // delegate
   if (!d.description && !d.assignee) return { ok: false, error: '草稿是空的' };
-  const summary = d.description.split('\n')[0].slice(0, 120) || d.assignee;
-  const args = ['task', '+create', '--as', 'user', '--summary', summary, '--format', 'json'];
-  const body = [d.description, d.links.length ? '相关链接：\n' + d.links.join('\n') : ''].filter(Boolean).join('\n\n');
-  if (body) args.push('--description', body);
-  if (d.due) args.push('--due', 'date:' + d.due);
-  let assigneeId = d.assigneeId, miss = '';
-  if (!assigneeId && d.assignee) { const got = await resolveIds([d.assignee], env, execImpl, log); assigneeId = got.ids[0] || ''; }
-  // 解析不到账号就不硬派：任务照建，但把人名写进说明，并在卡片上说清「没派到人」，不让它悄悄丢。
-  if (assigneeId) args.push('--assignee', assigneeId);
-  else if (d.assignee) {
-    miss = d.assignee;
-    const add = '（没解析到 ' + miss + ' 的飞书账号，这条先挂在我名下）', i = args.indexOf('--description');
-    if (i >= 0) args[i + 1] += '\n\n' + add; else args.push('--description', add);
-  }
-  const r = await runCli(execImpl, args, log);
-  if (!r.ok) return r;
-  return { ok: true, url: dig(r.json, 'data.task.url', 'data.url'), id: dig(r.json, 'data.task.guid', 'data.task.task_id', 'data.guid'),
-    note: miss ? '没解析到 ' + miss + ' 的飞书账号，任务建了但没派到人' : '' };
+  const r = await tools.call('lark.task.create', { description: d.description || '', assignee: d.assignee || '',
+    assigneeId: d.assigneeId || '', due: d.due || '', links: d.links || [] }, ctx);
+  if (!r.ok) return { ok: false, error: r.error };
+  return { ok: true, url: (r.data || {}).url || '', id: (r.data || {}).id || '', note: (r.data || {}).note || '' };
 }
-// 名字 → open_id。解析不到的原样回给调用方，写进说明里，不硬发。
-async function resolveIds(names, env, execImpl, log) {
+// 名字 → open_id。「重名不猜」那套规则现在只有一份，在工具登记表的 people.lookup 里。
+// 这个包装留着是因为别处（测试、老调用）还按这个签名用。
+async function resolveIds(names, env, execImpl, log, dataDir) {
   const list = (names || []).filter(Boolean);
   if (!list.length) return { ids: [], missing: [] };
-  const r = await runCli(execImpl, ['contact', '+search-user', '--queries', list.join(','), '--as', 'user', '--exclude-external-users', '--format', 'json'], log);
-  if (!r.ok) return { ids: [], missing: list };
-  // 真实返回是一个扁平的 users[]：{open_id, localized_name, matched_query}（2026-09-22 实测）。
-  const users = [];
-  const walk = v => { if (!v || typeof v !== 'object') return; if (typeof v.open_id === 'string' && v.open_id) users.push({ id: v.open_id, name: String(v.localized_name || v.name || v.en_name || ''), matched: String(v.matched_query || '') }); for (const x of Object.values(v)) walk(x); };
-  walk(r.json);
-  const ids = [], missing = [];
-  for (const n of list) {
-    // 名字全等的那一个；没有全等的，这个关键词只搜出一个人才认。搜「Calvin」出来两个 Calvin 就不猜——
-    // 邀请发错人是真外发，宁可写进「还没解析到账号的人」让他自己补。
-    const exact = users.filter(u => norm(u.name) === norm(n));
-    const byQuery = users.filter(u => norm(u.matched) === norm(n));
-    const hit = exact.length === 1 ? exact[0] : (!exact.length && byQuery.length === 1 ? byQuery[0] : null);
-    if (hit && hit.id) { if (!ids.includes(hit.id)) ids.push(hit.id); } else missing.push(n);
-  }
-  return { ids, missing };
+  const r = await tools.call('people.lookup', { names: list, withIds: true },
+    { env, dataDir, execImpl, log, caller: 'ui' });
+  if (!r.ok || !r.data) return { ids: [], missing: list };
+  return { ids: r.data.ids || [], missing: r.data.missing || [] };
 }
 
 // ===== 回流：会前那一刻带上「上次会后已发出的事」 =====

@@ -352,8 +352,24 @@ function draftHtml(c){
   if(!d.scope&&!d.expected)return '<p class="bf-note">'+T('预研究这次没跑出来。','The pre-research did not run this time.')+'</p>';
   return '<div class="bf-pre"><b>'+T('会覆盖什么','Scope')+'</b><p>'+esc(d.scope||'')+'</p>'
     +((d.sources||[]).length?'<b>'+T('用哪些源','Sources')+'</b><ul>'+d.sources.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ul>':'')
-    +'<b>'+T('预计给出什么结论','Expected conclusion')+'</b><p>'+esc(d.expected||'')+'</p></div>';
+    +'<b>'+T('预计给出什么结论','Expected conclusion')+'</b><p>'+esc(d.expected||'')+'</p>'
+    +refsHtml(d.refs)+'</div>';
 }
+// 依据：这份草稿是引擎真去查了哪几条资料才写出来的。会议点回那一场，飞书文档点开原文，
+// 本机文件只给路径（浏览器打不开本机盘，给了也是死链）。没有依据就不出现这一段，不写「无」。
+function refsHtml(refs){
+  const list=(refs||[]).filter(r=>r&&r.ref);
+  if(!list.length)return '';
+  return '<b>'+T('依据','What this is based on')+'</b><ul class="bf-refs">'+list.map(r=>{
+    const label=esc(r.title||r.ref);
+    const where=esc(SRC_LABEL(r.source)+(r.at?' · '+String(r.at).slice(0,10):''));
+    let body=label;
+    if(r.meetingId)body='<a href="archive.html?id='+encodeURIComponent(r.meetingId)+'">'+label+'</a>';
+    else if(/^https?:\/\//.test(String(r.url||'')))body='<a href="'+esc(r.url)+'" target="_blank" rel="noopener">'+label+'</a>';
+    return '<li>'+body+(where?' <em class="bf-note">'+where+'</em>':'')+'</li>';
+  }).join('')+'</ul>';
+}
+const SRC_LABEL=s=>({local:T('本机','Local'),lark:T('飞书','Feishu'),slack:'Slack',notion:'Notion'}[String(s||'')]||String(s||''));
 function meetingForm(d){
   const slots=d.slots||[];
   return '<label class="bf-f"><span>'+T('标题','Title')+'</span><input type="text" data-f="title" value="'+esc(d.title||'')+'"></label>'
