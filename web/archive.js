@@ -45,6 +45,7 @@ function render(s){
   mountHead(s);
   $('#src-chip').hidden=false;$('#src-chip').textContent=source==='mac'?'来源：Mac 归档'+(s.archiveNote?'（'+s.archiveNote+'）':''):'来源：本机记录（Mac 未同步）';
   renderBrief(s);
+  paintSpeakers();
   // 会后收敛：默认只显示收敛过的那十几条，原始的几百条折在「看全部」后面。
   // 会中每 40 秒一轮、只看眼前一小段，所以宁可多记；这里才是该做取舍的地方。
   const cond = s.condensed && !showRaw ? s.condensed : null;
@@ -69,7 +70,9 @@ function render(s){
 // ---- 回看页新版（REQ-004）：页面只渲染结构化数据，不出现 Markdown 原始标记 ----
 const COLORS=['#202124','#c8102e','#1f5fbf','#1e7e34','#b26a00','#6a3fb5','#00838f','#8d6e63'];
 const mmss=sec=>{sec=Math.max(0,Math.round(sec||0));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0');};
-function spkMap(s){const m={...(s.names||{})};const b=s.brief||{};(b.questions||[]).forEach(q=>{const a=(b.answers||{})[q.id];if(!a)return;const v=(a.text||'').trim()||q.options[a.choice];(q.affects||[]).forEach(f=>{const k=/^speaker:(.+)$/.exec(f);if(k&&v)m[k[1].replace(/^S/i,'')]=v;});});return m;}
+// 名字只存一处：names 映射。以前这里还从「需要你定一下」的答案里二次推导，
+// 于是认人清单把一个名字清掉之后，旧答案又会把它顶回来。现在认人只走 /speaker-confirm，答案不再参与显示。
+function spkMap(s){return {...(s.names||{})};}
 function nm(text,map){let t=esc(text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),()=>esc(map[k]));});return t;}
 const tbtn=sec=>sec?'<button type="button" class="bf-t" data-sec="'+Number(sec)+'">'+mmss(sec)+'</button>':'';
 function mdLite(src){ // 旧会议只有 Markdown 长文时的兜底渲染
@@ -109,13 +112,14 @@ function renderBrief(s){
     +sec('和项目目标的关系',r.alignment.map(a=>'<div class="bf-item"><span class="bf-tag '+(a.status==='推进'?'ok':a.status==='偏离'?'bad':'')+'">'+esc(a.status)+'</span><b>'+esc(a.goal)+'</b><div>'+nm(a.note,map)+'</div></div>'))
     +sec('建议怎么做',r.advice.map((a,i)=>'<div class="bf-item"><span class="bf-tag">'+(i+1)+'</span>'+nm(a,map)+'</div>'))
     +sec('我核过的',r.checked.map(c=>'<div class="bf-item"><span class="bf-tag '+(c.result==='已核实'?'ok':c.result==='矛盾'?'bad':'')+'">'+esc(c.result)+'</span>'+nm(c.claim,map)+(c.note?'<div class="bf-src">'+nm(c.note,map)+'</div>':'')+'</div>')));
-  const qs=b.questions||[];ask.hidden=!qs.length;
+  // 问「S2 是谁」的题不在这里出现了：认人只有上面那一个入口（#spk-box），两处都问会互相顶。
+  const qs=(b.questions||[]).filter(q=>!(q.affects||[]).some(f=>/^speaker:/i.test(f)));ask.hidden=!qs.length;
   if(qs.length){const ans=b.answers||{};
     const left=qs.filter(q=>!ans[q.id]).length;
     ask.innerHTML='<h2>'+(left?'需要你定一下 · 还剩 '+left+' 题':'需要你定的 '+qs.length+' 题都已确定')+'</h2>'+qs.map((q,i)=>{const a=ans[q.id];
       // 答过的收成一行：✓ 题目 → 你的答案，要改再点开
       if(a&&!askEditing.has(q.id)){const v=(a.text||'').trim();return '<div class="bf-qdone" data-q="'+esc(q.id)+'"><span class="bf-tag ok">✓ 已确定</span><span class="bf-qd-ask">'+esc(q.ask)+'</span><b>'+esc(q.options[a.choice]||'')+'</b>'+(v?'<span class="bf-src">补充：'+esc(v)+'</span>':'')+'<button type="button" class="bf-t" data-edit="'+esc(q.id)+'">改</button></div>';}
-      const cur=a?a.choice:q.recommend;return '<div class="bf-qrow" data-q="'+esc(q.id)+'"><b>'+(i+1)+'　'+esc(q.ask)+'</b>'+q.options.map((o,k)=>'<button type="button" class="bf-opt'+(k===cur?' on':'')+'" data-k="'+k+'" title="'+(k===q.recommend?esc(q.why||'推荐'):'')+'">'+esc(o)+(k===q.recommend?' · 推荐':'')+'</button>').join('')+'<input type="text" placeholder="补一句（可选）" value="'+esc(a&&a.text||'')+'">'+spkProof(s,q)+'</div>';}).join('');
+      const cur=a?a.choice:q.recommend;return '<div class="bf-qrow" data-q="'+esc(q.id)+'"><b>'+(i+1)+'　'+esc(q.ask)+'</b>'+q.options.map((o,k)=>'<button type="button" class="bf-opt'+(k===cur?' on':'')+'" data-k="'+k+'" title="'+(k===q.recommend?esc(q.why||'推荐'):'')+'">'+esc(o)+(k===q.recommend?' · 推荐':'')+'</button>').join('')+'<input type="text" placeholder="补一句（可选）" value="'+esc(a&&a.text||'')+'"></div>';}).join('');
     ask.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>{askEditing.add(el.dataset.edit);render(record);});
     ask.querySelectorAll('.bf-qrow').forEach(row=>{const qid=row.dataset.q;const send=(choice,text)=>saveAnswer(qid,choice,text);
       row.querySelectorAll('.bf-opt').forEach(o=>o.onclick=()=>send(Number(o.dataset.k),row.querySelector('input').value));
@@ -123,13 +127,71 @@ function renderBrief(s){
   }
   document.querySelectorAll('#bf-grid [data-sec],#ask-box [data-sec]').forEach(el=>el.onclick=()=>jumpTo(Number(el.dataset.sec)));
 }
-// 问「说话人 N 是谁」时，把这个人说得最长的几句原话摆出来，点时间能回听——不给证据这题没法答
-function spkProof(s,q){const k=(q.affects||[]).map(f=>/^speaker:S?(\w{1,12})$/i.exec(f)).filter(Boolean).map(m=>m[1])[0];if(!k)return '';
-  const start=ts(s.start),rows=(s.transcript||[]).filter(r=>String(r.speaker||r.spk||r.who||'')===k&&(r.text||'').length>=12);if(!rows.length)return '';
-  const all=(s.transcript||[]).filter(r=>String(r.speaker||r.spk||r.who||'')===k).length;
-  const pick=[...rows].sort((a,b)=>b.text.length-a.text.length).slice(0,4).sort((a,b)=>Number(a.at||0)-Number(b.at||0));
-  const sec=r=>{const at=Number(r.at||0);return at>1e11?Math.round((at-start)/1000):at;};
-  return '<div class="bf-proof"><span class="bf-src">说话人 '+esc(k)+' 全场 '+all+' 句，说得最长的几句：</span>'+pick.map(r=>'<div class="bf-pq">「'+esc(r.text.length>90?r.text.slice(0,90)+'…':r.text)+'」<button type="button" class="bf-t" data-sec="'+sec(r)+'">'+mmss(sec(r))+'</button></div>').join('')+'</div>';}
+// ===== 会后一屏认人 =====
+// 谁还没名字、他说过哪几句、候选人是谁，都由 /meeting-speakers 算好。这里只负责：听一段、点一下、当场全页换名。
+// 认人只有这一个入口——「需要你定一下」里问说话人的题已经隐藏（见 renderBrief）。
+let spkRows=null,spkOpen=false,spkNote='',spkNoteBad=false,spkNoteFor='',spkAudio=null,spkPlaying='';
+const spkLabel=k=>k==='me'?'我':k==='them'?'对方':'S'+k;
+async function loadSpeakers(){
+  if(source!=='mac')return;
+  try{const r=await fetch('/asr-relay/meeting-speakers?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(settings.relayToken||''),{cache:'no-store',signal:AbortSignal.timeout(8000)});
+      const j=await r.json();if(j.ok)spkRows=j.speakers;}catch(e){spkRows=null;}
+  paintSpeakers();
+}
+function paintSpeakers(){
+  const box=$('#spk-box');if(!box)return;
+  if(!spkRows||!spkRows.length){box.hidden=true;return;}
+  box.hidden=false;
+  const left=spkRows.filter(r=>!r.name).length;
+  // 全认完就收成一行——这件事做完了，不该继续占着智能总结上面的位置
+  if(!left&&!spkOpen){
+    box.innerHTML='<div class="spk-done"><b>已认 '+spkRows.length+' 人</b><span>'+esc(spkRows.map(r=>spkLabel(r.spk)+'＝'+r.name).join('，'))+'</span><button type="button" id="spk-edit">改</button>'+spkState()+'</div>';
+    $('#spk-edit').onclick=()=>{spkOpen=true;spkNote='';spkNoteFor='';paintSpeakers();};
+    return;
+  }
+  box.innerHTML='<h2>这场会里的人</h2><p class="spk-hint">'+(left?'还有 '+left+' 个人没名字。听一句，点个名字，逐字稿、总结、待办里的编号当场全换过来。':'都认完了，点名字可以改。')+'</p>'
+    +spkRows.map(r=>'<div class="spk-row" data-spk="'+esc(r.spk)+'"><span class="spk-who">'+esc(spkLabel(r.spk))+'</span><span class="spk-lines">'+r.lines+' 句</span>'
+      +(r.name?'<span class="spk-name">'+esc(r.name)+'</span>':'')
+      +'<div class="spk-samples">'+(r.samples.length
+        ? r.samples.map(x=>'<button type="button" class="spk-clip" data-clip="'+esc(r.spk)+'|'+x.start+'|'+x.dur+'"><span class="t">'+(hasAudio?'▶ ':'')+mmss(x.start)+'</span><span class="q">'+esc(x.text)+'</span></button>').join('')
+        : '<span class="spk-lines">这个编号只有零碎的语气词，没有整句可听</span>')+'</div>'
+      +'<div class="spk-acts">'+r.candidates.map(c=>'<button type="button" data-pick="'+esc(c)+'">'+esc(c)+'</button>').join('')
+      +'<input type="text" placeholder="或者自己填，回车保存" value="'+esc(r.name||'')+'">'
+      +'<button type="button" class="self" data-pick="本人">是本人</button>'
+      +'<span class="spk-state'+(spkNoteFor===r.spk&&spkNoteBad?' bad':'')+'">'+(spkNoteFor===r.spk?esc(spkNote):'')+'</span></div></div>').join('');
+  box.querySelectorAll('.spk-row').forEach(row=>{const spk=row.dataset.spk;
+    row.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>saveSpeaker(spk,b.dataset.pick,row));
+    const input=row.querySelector('input');
+    input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();saveSpeaker(spk,input.value,row);}};
+  });
+  box.querySelectorAll('[data-clip]').forEach(b=>b.onclick=()=>playClip(b));
+}
+function spkState(){return spkNote?'<span class="spk-state'+(spkNoteBad?' bad':'')+'">'+esc(spkNote)+'</span>':'';}
+// 试听：只取那一段的 WAV（服务端按 start/dur 切），再点一次就停。同时只播一段。
+function playClip(btn){
+  if(!hasAudio)return;
+  const key=btn.dataset.clip,[,start,dur]=key.split('|');
+  if(!spkAudio){spkAudio=new Audio();spkAudio.onended=()=>{spkPlaying='';paintPlaying();};}
+  if(spkPlaying===key){spkAudio.pause();spkPlaying='';return paintPlaying();}
+  spkAudio.src=audioUrl()+'&start='+encodeURIComponent(start)+'&dur='+encodeURIComponent(dur);
+  spkPlaying=key;paintPlaying();
+  spkAudio.play().catch(()=>{spkPlaying='';paintPlaying();});
+}
+function paintPlaying(){document.querySelectorAll('[data-clip]').forEach(b=>{const t=b.querySelector('.t');if(t)t.textContent=(b.dataset.clip===spkPlaying?'⏸ ':'▶ ')+mmss(Number(b.dataset.clip.split('|')[1]));});}
+async function saveSpeaker(spk,name,row){
+  spkNoteFor=spk;
+  const state=row.querySelector('.spk-state');if(state){state.textContent='保存中…';state.classList.remove('bad');}
+  try{
+    const r=await fetch('/asr-relay/speaker-confirm?token='+encodeURIComponent(settings.relayToken||''),
+      {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,names:{[spk]:String(name||'').trim()}}),signal:AbortSignal.timeout(20000)});
+    const j=await r.json();
+    if(!j.ok)throw Error(j.error||'没存上');
+    spkRows=j.speakers;record.names=j.names;
+    spkNote=String(name||'').trim()?'已保存':'已清掉这个名字';spkNoteBad=false;
+    if(!spkRows.filter(x=>!x.name).length)spkOpen=false;   // 认完了就收起来，别让它一直占着位置
+    render(record);                                        // 全页的 S 编号当场换成人名
+  }catch(e){spkNote='没存上：'+(e.message||e);spkNoteBad=true;paintSpeakers();}
+}
 function jumpTo(sec){seekTo(sec);const box=$('#tr-box');box.open=true;const rows=[...document.querySelectorAll('#transcript [data-sec]')];let hit=rows[0];rows.forEach(r=>{if(Number(r.dataset.sec)<=sec+1)hit=r;});if(hit){hit.scrollIntoView({block:'center',behavior:'smooth'});const p=hit.closest('p');if(p){p.style.background='#fff8e1';setTimeout(()=>p.style.background='',2500);}}}
 const askEditing=new Set();
 async function saveAnswer(qid,choice,text){
@@ -230,7 +292,7 @@ function mountPlayer(){
 
 (async()=>{
   if(!id){$('#title').textContent='缺少会议编号';return;}
-  try{const s=await fromMac();source='mac';await probeAudio();render(s);}
+  try{const s=await fromMac();source='mac';await probeAudio();render(s);loadSpeakers();}
   catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
 })();
 

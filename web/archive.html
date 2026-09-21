@@ -117,7 +117,30 @@ time.play{cursor:pointer}
 .bf-opt.on{background:var(--text);color:#fff;border-color:var(--text)}
 .bf-qrow input{border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-size:13px;min-width:140px}
 .bf-qdone{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0;color:var(--muted);font-size:13px}.bf-qdone b{color:var(--text);font-weight:500}.bf-qdone b:before{content:'→ ';color:var(--faint)}
-.bf-proof{flex-basis:100%;border-left:2px solid var(--line);padding:2px 0 2px 12px;margin:2px 0 6px 22px}.bf-pq{font-size:13px;color:var(--muted);margin:3px 0}
+.spk-box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:14px}
+.spk-box[hidden]{display:none}
+.spk-box h2{font:11px var(--mono);letter-spacing:1.2px;color:var(--muted);margin:0 0 4px;display:flex;align-items:center;gap:8px}
+.spk-hint{color:var(--muted);font-size:12.5px;margin:0 0 8px}
+.spk-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 0;border-top:1px solid #f0f0f2}
+.spk-row:first-of-type{border-top:0}
+.spk-who{font:12px var(--mono);background:var(--panel-2);border-radius:6px;padding:2px 8px}
+.spk-lines{color:var(--faint);font-size:12px}
+.spk-name{font-weight:500}
+.spk-samples{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin:2px 0 2px 2px}
+.spk-clip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:4px 12px;font:inherit;font-size:12.5px;cursor:pointer;text-align:left;max-width:100%}
+.spk-clip:hover{border-color:var(--live)}
+.spk-clip .t{font:11px var(--mono);color:var(--muted);flex:none}
+.spk-clip .q{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spk-acts{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.spk-acts button{border:1px solid var(--line);background:#fff;color:var(--text);border-radius:16px;padding:3px 12px;font:inherit;font-size:13px;cursor:pointer}
+.spk-acts button:hover{border-color:var(--live)}
+.spk-acts button.self{color:var(--muted)}
+.spk-acts input{border:1px solid var(--line);border-radius:8px;padding:4px 8px;font:inherit;font-size:13px;min-width:150px}
+.spk-state{font-size:12px;color:var(--muted)}
+.spk-state.bad{color:#b3261e}
+.spk-done{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.spk-done b{color:var(--text);font-weight:500}
+.spk-done button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:3px 12px;font:inherit;font-size:12px;cursor:pointer}
 .bf-tr summary{list-style:none;cursor:pointer}.bf-tr summary::-webkit-details-marker{display:none}
 .bf-tr summary h2:after{content:"展开";margin-left:auto;font-size:11px}.bf-tr[open] summary h2:after{content:"收起"}
 .md h1,.md h2,.md h3{font-size:14px;margin:14px 0 6px;text-transform:none;letter-spacing:0;color:var(--text);border:0;padding:0;font-family:inherit;display:block}
@@ -127,6 +150,7 @@ time.play{cursor:pointer}
 <div class="wrap">
 <div class="meta" id="meta"></div>
 <div class="player-box" id="player-box" hidden></div>
+<section id="spk-box" class="spk-box" hidden></section>
 <div id="ask-box" class="bf-ask" hidden></div>
 <div class="bf-grid" id="bf-grid" hidden>
   <section class="pane bf-sum"><h2>智能总结</h2><div class="bf-body" id="bf-sum"></div></section>
@@ -154,4 +178,4 @@ time.play{cursor:pointer}
     <div class="rv-done" id="rv-done" hidden></div>
   </div>
 </div>
-<script src="archive.js?v=6"></script></body></html>
+<script src="archive.js?v=7"></script></body></html>

@@ -34,7 +34,12 @@ const mine=w=>!w.owner||/自己|^我$|待核实|未指定/i.test(w.owner);
 const editProjectOptions=v=>options(db.knowledgeNodes.map(n=>[n.id,path(n.id).map(n=>n.title).join(' / ')]),v);
 const rootOf=id=>path(id)[0]?.id||id;
 const projectOptions=v=>options([['','全部项目'],...db.knowledgeNodes.filter(n=>!n.parentId).map(n=>[n.id,n.title])],v);
-function itemRow(w){return `<div class="task-row"><input type="checkbox" aria-label="完成：${esc(w.title)}" data-check="${w.id}" ${w.status==='done'?'checked':''}><div class="row-main"><button class="row-title ${w.status==='done'?'completed':''}" data-work="${w.id}">${esc(w.title)}</button><div class="meta">${esc(nodeName(rootOf(w.nodeId)))}${w.status!=='todo'?' · '+esc(labels[w.status]||w.status):''}${w.due?' · '+esc(w.due):''}${taskScope==='all'&&w.owner?' · '+esc(w.owner):''}</div></div></div>`;}
+// 会议来的待办里写的是「S2 负责…」。会后认人把这场的编号→人名存在它那份 source 上；
+// 这里只在显示时替换，存的仍是原话（认错了改回来，待办正文不会被改坏）。
+function applySpeakerNames(text,map){let t=String(text??'');for(const k of Object.keys(map||{})){const v=map[k];if(!v||!/^[A-Za-z0-9_]{1,12}$/.test(k))continue;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),()=>v);}return t;}
+const speakerMapFor=w=>Object.assign({},...(w.sourceIds||[]).map(id=>db.sources.find(s=>s.id===id)?.speakerNames||{}));
+function itemRow(w){const map=speakerMapFor(w),title=applySpeakerNames(w.title,map),owner=applySpeakerNames(w.owner,map);
+ return `<div class="task-row"><input type="checkbox" aria-label="完成：${esc(title)}" data-check="${w.id}" ${w.status==='done'?'checked':''}><div class="row-main"><button class="row-title ${w.status==='done'?'completed':''}" data-work="${w.id}">${esc(title)}</button><div class="meta">${esc(nodeName(rootOf(w.nodeId)))}${w.status!=='todo'?' · '+esc(labels[w.status]||w.status):''}${w.due?' · '+esc(w.due):''}${taskScope==='all'&&owner?' · '+esc(owner):''}</div></div></div>`;}
 const list=(items,fn,empty='这里暂时没有内容。')=>items.length?`<div class="listbox">${items.map(fn).join('')}</div>`:`<div class="blank">${empty}</div>`;
 function render(){if(!db?.workItems)return;if(view!=='graph'&&node)node=rootOf(node);document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-current',String(b.dataset.view===view)));
  const titles={tasks:['待办','记下下一步，完成一件，勾掉一件。'],graph:['项目','每个项目的进展和资料，放在一起。'],sources:['资料','会议纪要、长期文档，都从这里找。']};const title=titles[view]||titles.tasks;
