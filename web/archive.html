@@ -137,7 +137,8 @@ time.play{cursor:pointer}
 .bf-draft{border-top:1px solid #f0f0f2;margin-top:10px;padding-top:10px;display:grid;gap:8px}
 .bf-f{display:grid;gap:4px;font-size:13px}
 .bf-f>span{font:11px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--muted)}
-.bf-f input,.bf-f textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;background:#fff;color:var(--text)}
+.bf-f input:not([type=radio]),.bf-f textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit;font-size:13px;width:100%;box-sizing:border-box;background:#fff;color:var(--text)}
+.bf-slots input[type=radio]{width:auto;flex:none;margin:0}
 .bf-f textarea{resize:vertical}
 .bf-f em{font-style:normal}
 .bf-slots{display:grid;gap:4px}.bf-slots label{display:flex;gap:6px;align-items:center;font-size:13px}

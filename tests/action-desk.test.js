@@ -144,9 +144,15 @@ test('重新生成：已打叉 / 已发出 / 已认领的状态按文本对回�
   const after = out.cards.find(c => c.id === sent);
   assert.equal(after.state, 'sent');
   assert.equal(after.sentRef.url, 'https://example.invalid/e/1');
-  // 撤销回来 = 回到 open，页面上卡片重新出现
+  // 撤销回来 = 回到打叉之前那一档，页面上卡片重新出现
   await actions.apply({ dir, sessionId: ENHANCED.id, cardId: dropped, action: 'restore', env });
   assert.equal(actions.read(dir, ENHANCED.id).cards.find(c => c.id === dropped).state, 'open');
+  // 已发出的卡被打叉再撤销，要回到「已发出」，不能变回可以再发一次
+  await actions.apply({ dir, sessionId: ENHANCED.id, cardId: sent, action: 'dismiss', env });
+  await actions.apply({ dir, sessionId: ENHANCED.id, cardId: sent, action: 'restore', env });
+  const back = actions.read(dir, ENHANCED.id).cards.find(c => c.id === sent);
+  assert.equal(back.state, 'sent');
+  assert.equal(back.sentRef.url, 'https://example.invalid/e/1');
 });
 
 test('风险提示：没配事实源整块不跑；配了但没有硬冲突时 risks 为空', async () => {

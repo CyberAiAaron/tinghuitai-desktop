@@ -363,8 +363,9 @@ async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log 
   const card = (data.cards || []).find(c => c.id === id);
   if (!card) { const e = Error('找不到这张卡'); e.code = 404; throw e; }
 
-  if (action === 'dismiss') { card.state = 'dismissed'; card.dismissedAt = now(); }
-  else if (action === 'restore') { card.state = 'open'; delete card.dismissedAt; }
+  // 撤销要退回打叉之前那一档。已发出的卡撤销回「未发」会让人再发一遍，那是真外发，不能靠人记得。
+  if (action === 'dismiss') { if (card.state !== 'dismissed') card.prevState = card.state; card.state = 'dismissed'; card.dismissedAt = now(); }
+  else if (action === 'restore') { card.state = STATES.includes(card.prevState) && card.prevState !== 'dismissed' ? card.prevState : 'open'; delete card.prevState; delete card.dismissedAt; }
   else if (action === 'save-draft') { card.draft = sanitizeDraft(card.kind, draft, card.draft); card.draftEditedAt = now(); }
   else if (action === 'claim') {
     card.state = 'claimed'; card.claimedAt = now();
