@@ -1109,6 +1109,18 @@ async function handleRequest(req, res) {
     // tailscaled 一起重启 → 正在跑的请求当场被杀。一小时内重启 5 次，5 次都能对上探活失败那一行。
     // 会中的模型调用绝不跨进程：那台服务的存活由一个 8 秒探针说了算，不能交给它做长活。
     if (up && LOCAL_ONLY_HUB.has(sub)) up = '';
+    // X1（2026-09-22）：鉴权必须发生在反代之前。此前是「先代理，代理时还把客户端口令换成上游口令」，
+    // 等于任何网页对 127.0.0.1:<端口>/hub/* 发一个简单 POST 就能拿上游全权改工作台（批量忽略、注入假待办 / 假会议）。
+    // 现在：没有合法口令（也不是本机同源）直接 401，一个字节都不往上游发。
+    if (!authed) { res.writeHead(401, {'Content-Type':'application/json','Cache-Control':'no-store'}); res.end(JSON.stringify({error:'请输入听会台中转口令'})); return; }
+    // 同源校验也提到代理之前：work-hub.route 里有这条（origin.host 必须等于 host），但走代理时它根本不会执行，
+    // 跨站页面的写请求会被「洗」成一条看起来同源的上游请求。放在这里 = 代理和本地两条路过同一道闸。
+    // 不把原始 Origin 原样透传给上游：上游拿它自己的 Host（3101）去比，每一条合法的代理 POST 都会被它 403。
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
+      let sameOrigin = false;
+      try { sameOrigin = new URL(req.headers.origin).host === String(req.headers.host || ''); } catch (e) { sameOrigin = false; }
+      if (!sameOrigin) { res.writeHead(403, {'Content-Type':'application/json','Cache-Control':'no-store'}); res.end(JSON.stringify({error:'origin mismatch'})); return; }
+    }
     if (up) { if (await proxyHub(req,res,u,up)) return; }   // 上游连不上就退回本地，工作台不至于打不开
     await workHub.route(req,res,u,authed); return;
   }
@@ -1148,13 +1160,17 @@ async function handleRequest(req, res) {
     require('./updater').check().then(r=>{res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(r&&{ok:r.ok,current:r.current,latest:r.latest,hasUpdate:r.hasUpdate,notes:r.notes,released:r.released,error:r.error,prev:require('./updater').prevVersion(),prevInfo:require('./updater').prevInfo()}));})
       .catch(e=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     return;}
+  // X4（2026-09-22）：换程序文件必须在本机当面点。原来只认 token——手机口令、被转发的带 token 链接，
+  // 都能远程触发一次「下载并覆盖整个 app 目录」。更新与回退都归到这条。
   if(req.method==='POST'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    if(!isLocalReq(req)){res.writeHead(403,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'更新只能在这台电脑上操作：'+localReqReason(req)}));}
     if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再更新'}));}
     require('./updater').apply(m=>log('update: '+m),()=>![...SESSIONS.values()].some(s=>!s.finalized)).then(r=>{log('update done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r,restarting:true}));relaunchAfterUpdate();})
       .catch(e=>{log('update fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     return;}
   // 回到上一版：更新前留的那份原样搬回来
   if(req.method==='POST'&&p.endsWith('/update-rollback')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    if(!isLocalReq(req)){res.writeHead(403,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'回退只能在这台电脑上操作：'+localReqReason(req)}));}
     if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再回退'}));}
     require('./updater').rollback(m=>log('rollback: '+m)).then(r=>{log('rollback done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r,restarting:true}));relaunchAfterUpdate();})
       .catch(e=>{log('rollback fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
