@@ -42,3 +42,48 @@ test('目录读不出来时只是不清，不抛错把存盘带崩', ()=>{
  hub.dir=path.join(os.tmpdir(),'tht-这个目录不存在-'+Date.now());
  assert.deepEqual(hub.pruneBackups(),[]);
 });
+
+// —— D1 的本机这一半：syncDisk 每 5 分钟跑一次，没变化时不该把 12MB 重写一遍 ——
+const putSession=(root,id,text)=>{const dir=path.join(root,'pending');fs.mkdirSync(dir,{recursive:true});
+ fs.writeFileSync(path.join(dir,'sess-'+id+'.json'),JSON.stringify({id,title:'会 '+id,start:'2026-09-22T01:00:00.000Z',summary:'',transcript:[{t:'00:01',speaker:'S0',text}]}));};
+
+test('第一次同步有新会议，照常落盘', ()=>{
+ const {root,hub}=fresh();
+ putSession(root,'a','第一句');
+ const r=hub.syncDisk();
+ assert.equal(r.changed,true);
+ assert.ok(fs.existsSync(path.join(hub.dir,'work-hub.json')));
+ assert.equal(hub.data.sources.length,1);
+});
+
+test('磁盘上什么都没变时，一个字节都不重写', ()=>{
+ const {root,hub}=fresh();
+ putSession(root,'a','第一句');
+ hub.syncDisk();
+ const file=path.join(hub.dir,'work-hub.json'), before=fs.readFileSync(file);
+ const r=hub.syncDisk();
+ assert.equal(r.changed,false);
+ assert.deepEqual(fs.readFileSync(file),before,'没变化就不该重写正本');
+ assert.ok(hub.data.sync.disk.at,'同步时间戳仍然在内存里更新，下次真有变化时一起写下去');
+});
+
+test('会议内容真的变了，还是要落盘', ()=>{
+ const {root,hub}=fresh();
+ putSession(root,'a','第一句');
+ hub.syncDisk();
+ const file=path.join(hub.dir,'work-hub.json'), before=fs.readFileSync(file);
+ putSession(root,'a','第一句 加了一段');
+ const r=hub.syncDisk();
+ assert.equal(r.changed,true);
+ assert.notDeepEqual(fs.readFileSync(file),before);
+ assert.ok(/加了一段/.test(hub.data.sources[0].body));
+});
+
+test('新会议进来也算变化', ()=>{
+ const {root,hub}=fresh();
+ putSession(root,'a','第一句');
+ hub.syncDisk();
+ putSession(root,'b','另一场');
+ assert.equal(hub.syncDisk().changed,true);
+ assert.equal(hub.data.sources.length,2);
+});

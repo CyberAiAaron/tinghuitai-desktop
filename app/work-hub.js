@@ -123,7 +123,9 @@ class Hub{
    try{fs.rmSync(path.join(this.dir,name));removed.push(name);}catch{}}
   return removed;}
  event(type,id,note){this.data.events.push({id:crypto.randomUUID(),at:now(),type,target:id,note});if(this.data.events.length>1000){const archived=this.data.events.slice(0,-500),text=JSON.stringify(archived),file=path.join(this.dir,'events-'+hash(text)+'.json');if(!fs.existsSync(file)){const tmp=file+'.tmp',fd=fs.openSync(tmp,'w',0o600);try{fs.writeFileSync(fd,text);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,file);}this.data.events=this.data.events.slice(-500);}}
- source(input){const key=input.key||(canonical(input.url)||'manual:'+crypto.randomUUID());let s=this.data.sources.find(x=>x.key===key);
+ // D1：syncDisk 靠这个数判断「这一轮到底有没有东西真的变了」。source / task 是库里所有写入的必经之路，
+ // 走到这里就一定会改到记录（新建，或者 revision++ / updated），所以在这里记一笔最靠得住。
+ source(input){this.dirty=(this.dirty||0)+1;const key=input.key||(canonical(input.url)||'manual:'+crypto.randomUUID());let s=this.data.sources.find(x=>x.key===key);
   // 新归一让 Google / Notion 链接算出新 key，老库里存的是旧 key：按新 key 没找到就再按旧 key 找一次，
   // 找到就把 key 换成新的（id 是建记录时定的，不跟着变，所以待办和工作项的指向不受影响）。
   // 两条都对不上时再扫一遍老记录，把它们的 url 按新规则算一次：链接多带一个 ?pvs=4 之类的参数，
@@ -133,7 +135,7 @@ class Hub{
    if(!s&&!key.startsWith('manual:'))s=this.data.sources.find(x=>(x.url||x.key)&&canonical(x.url||x.key)===key);
    if(s)s.key=key;}
   const incoming={...input};delete incoming.key;if(!s){s={id:'s-'+hash(key),key,reviewed:false,projectId:'',notes:'',revision:1,...incoming,created:now()};this.data.sources.push(s);}else{if(s.fingerprint&&input.fingerprint&&s.fingerprint!==input.fingerprint)s.changed=true;for(const [k,v]of Object.entries(incoming))if(!(k==='body'&&!v)&&!['notes','projectId','reviewed','id'].includes(k)&&!(k==='title'&&s.titleEdited))s[k]=v;s.revision++;}s.updated=now();return s;}
- task(input,sourceId){const key=input.key||'task:'+hash((sourceId||'')+'|'+norm(input.text));let t=this.data.tasks.find(x=>x.key===key)||(!input.key?this.data.tasks.find(x=>norm(x.text)===norm(input.text)&&norm(x.owner)===norm(input.owner)):null);
+ task(input,sourceId){this.dirty=(this.dirty||0)+1;const key=input.key||'task:'+hash((sourceId||'')+'|'+norm(input.text));let t=this.data.tasks.find(x=>x.key===key)||(!input.key?this.data.tasks.find(x=>norm(x.text)===norm(input.text)&&norm(x.owner)===norm(input.owner)):null);
   // 会中分诊给的段号和时间戳一路带到待办上：09-21 之前这里把它们丢了，于是待办回不到原句。
   const refs={};
   if(Array.isArray(input.sourceRefs)&&input.sourceRefs.length)refs.sourceRefs=input.sourceRefs.slice(0,20);
@@ -172,8 +174,13 @@ class Hub{
    if(s.title!==before){s.revision++;s.updated=now();changed++;}}   // 没变就不动 revision，免得别的端以为有更新
   if(changed)this.save();
   return {checked:list.length,fixed};}
- syncDisk(){let count=0;const pending=path.join(this.root,'pending');if(fs.existsSync(pending)){const map=new Map();for(const f of fs.readdirSync(pending)){if(!/^(sess|offline)-.*\.json(\.done)?$/.test(f))continue;try{const p=path.join(pending,f),s=JSON.parse(fs.readFileSync(p));const rank=(s.transcript?.length||0)+(s.summary?.length||0);if(!map.has(s.id)||map.get(s.id).rank<rank)map.set(s.id,{s,rank});}catch{count++;}}for(const {s}of map.values())this.ingestSession(s);}
- const dirs=['录音归档'];for(const name of dirs){const dir=path.join(this.root,name);if(!fs.existsSync(dir))continue;for(const f of fs.readdirSync(dir)){if(!f.endsWith('.md')||/^(_test|\.)/.test(f))continue;try{this.ingestMarkdown(path.join(dir,f));}catch{count++;}}} this.data.sync.disk={at:now(),status:count?'partial':'ok',errors:count};this.organize();this.save();}
+ syncDisk(){let count=0;this.dirty=0;const pending=path.join(this.root,'pending');if(fs.existsSync(pending)){const map=new Map();for(const f of fs.readdirSync(pending)){if(!/^(sess|offline)-.*\.json(\.done)?$/.test(f))continue;try{const p=path.join(pending,f),s=JSON.parse(fs.readFileSync(p));const rank=(s.transcript?.length||0)+(s.summary?.length||0);if(!map.has(s.id)||map.get(s.id).rank<rank)map.set(s.id,{s,rank});}catch{count++;}}for(const {s}of map.values())this.ingestSession(s);}
+ const dirs=['录音归档'];for(const name of dirs){const dir=path.join(this.root,name);if(!fs.existsSync(dir))continue;for(const f of fs.readdirSync(dir)){if(!f.endsWith('.md')||/^(_test|\.)/.test(f))continue;try{this.ingestMarkdown(path.join(dir,f));}catch{count++;}}} this.data.sync.disk={at:now(),status:count?'partial':'ok',errors:count};this.organize();
+ // D1：这个方法每 5 分钟被定时器叫一次，读完 98 份会议后无条件重写 12MB（正本 + previous 两遍，
+ // 全是同步 IO，会中就是在卡事件循环）。绝大多数轮次每一份的 fingerprint 都没变、ingest 全部提前返回，
+ // 这时只更新内存里的 sync.disk 时间戳，不落盘；下一次真有变化的 save 会把它一起写下去。
+ if(this.dirty)this.save();
+ return {changed:!!this.dirty,errors:count};}
  async fetchSource(id){const s=this.data.sources.find(x=>x.id===id);if(!s?.url)throw Error('没有可读取的原文链接');const u=new URL(s.url);if(!/(^|\.)(larksuite\.com|feishu\.cn|doubao\.com)$/.test(u.hostname)||!/^\/(docx|wiki)\/[a-zA-Z0-9]+$/.test(u.pathname))throw Error('此来源暂不支持直接读取，请打开原文或粘贴内容');const content=await new Promise((resolve,reject)=>execFile('lark-cli',['docs','+fetch','--doc',s.url,'--as','user','--doc-format','markdown'],{timeout:60000,maxBuffer:8e6},(err,out)=>{if(err)return reject(Error('原文读取失败，请检查飞书权限或稍后重试'));try{const j=parseJSON(out);if(!j.ok||typeof j.data?.document?.content!=='string')throw Error('原文读取失败');resolve(j.data.document.content);}catch(e){reject(e);}}));if(s.body&&hash(s.body)!==hash(content))s.changed=true;s.body=content;s.bodyFingerprint=hash(content);s.fetchedAt=now();s.snapshotDate=s.fetchedAt.slice(0,10);s.revision++;s.updated=now();this.event('fetch',s.id,'读取在线原文');this.save();return s;}
  async syncKnowledge(){}
  async syncIndex(){this.data.sync.index={at:now(),status:'local'};this.save();}
