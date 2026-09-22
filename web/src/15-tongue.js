@@ -160,9 +160,9 @@
     let n=0;
     for(const x of (incoming||[])){
       if(!x||!x.claim) continue;
-      const row={id:x.id, sourceRefs:x.sourceRefs, at:x.at||at||Date.now(), claim:x.claim, kind:x.kind||'insight', source:x.source||'', why:x.why||x.note||'', refs:Array.isArray(x.refs)?x.refs:[], verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||x.why||'', label:x.label, evidence:x.evidence};
+      const row={id:x.id, sourceRefs:x.sourceRefs, at:x.at||at||Date.now(), claim:x.claim, kind:x.kind||'insight', source:x.source||'', why:x.why||x.note||'', refs:Array.isArray(x.refs)?x.refs:[], verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||x.why||'', label:x.label, evidence:x.evidence, type:['conflict','recheck','answer'].includes(x.type)?x.type:'answer', action:(x.action&&typeof x.action==='object'&&typeof x.action.do==='string')?{do:x.action.do,args:x.action.args||{}}:{do:'none',args:{}}};
       const i=list.findIndex(o=>o&&sameInsight(o.claim,x.claim));
-      if(i>=0){ const old=list[i]; if(old.rating) row.rating=old.rating; if(old.comment) row.comment=old.comment; list[i]=row; }
+      if(i>=0){ const old=list[i]; if(old.rating) row.rating=old.rating; if(old.comment) row.comment=old.comment; if(old.actionState) row.actionState=old.actionState; list[i]=row; }
       else list.push(row);
       n++;
     }

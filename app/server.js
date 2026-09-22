@@ -104,6 +104,7 @@ function localReqReason(req) {
 }
 function loadEnv() { return settings.load(); }
 const jevGate = require('./jev-gate');   // 逐句门卫：命中才立刻分诊（主动智能 F1）
+const pushWhitelist = require('./push-whitelist');   // 会中飞书提醒白名单（THT-R4）：点名本人 / 冲突类 / 本人带截止承诺才推，MEETING_PUSH 默认 off
 const JEV_TOTALS = { calls: 0, hits: 0, failures: 0 };   // 进程级累计，给 /health；每场自己的在 session.jev.stats
 
 function readTriagePrompt() { try { const s = fs.readFileSync(INDEX_HTML, 'utf8'); const m = s.match(/const\s+TRIAGE\s*=\s*([`"'])([\s\S]*?)\1/); return m ? m[2] : ''; } catch (e) { return ''; } }
@@ -289,6 +290,8 @@ class Session {
     this.jev = new jevGate.Gate({ env, dataDir: DATA, sessionId: this.id, log, onTrigger: () => this.runTriage({ gate: true }) });
     if (this.jev.requested && !this.jev.available) log('JEV_GATE=on 但没有 JEV_API_KEY，门卫不启用 ' + this.id);
     this.triageTimer = setInterval(() => this.runTriage(), this.jev.enabled ? 60000 : 25000);
+    // 会中提醒白名单（app/push-whitelist.js）：分诊结果先过它，命中才 larkPush；默认 off = 零推送，分诊不受影响。
+    this.pushGate = new pushWhitelist.Gate(env, { log });
     // 开场检索用的是会议标题和参会人，会开到一半议题往往已经变了。
     // 每 4 分钟按最近说过的话重新检索一次，让调出来的旧决定跟得上当前话题。
     this.memoryTimer = setInterval(() => this.refreshMemory(), 240000);
@@ -834,7 +837,7 @@ class Session {
         : '\n\n【输出语言】所有 text/claim/note 一律中文。';
       // 之前这一段写成了独立表达式（分号后 + '…'），依据要求从没进过 prompt（2026-09-17 修）
       const sys = langHead + this.buildBriefBlock() + (this.triagePrompt || '你是会议实时助手，从转写提取 highlights/todos/factchecks，只输出 JSON。')
-        + '\n【洞察门槛】insights 每条必须带 source（引用【本场背景】/ 项目记忆里的具体文档名、决策编号、会议日期或数字）和 why（省了本人哪一步）；缺任一项的不要输出；不给建议、不纠听写、不写「无法核实 / 需确认」；每轮 ≤2 条，没有就 []。'
+        + '\n【洞察门槛】insights 每条必须带 type（conflict / recheck / answer 之一）、source（引用【本场背景】/ 决策板 / 项目记忆里的具体文档名、决策编号、会议日期或数字）和 why（省了本人哪一步）；conflict 还必须带 evidence（会上原话）和 refs，recheck 必须带 evidence；缺任一项的不要输出；不给建议、不纠听写、不写「无法核实 / 需确认」；每轮 ≤2 条，没有就 []。'
         + langTail;
       const fbLines = (this.viewFeedback || []).slice(-12).map(x => `- [${x.rating}] ${x.kind || ''}：${x.claim}${x.comment ? '（他说：' + x.comment + '）' : ''}`).join('\n');
       const fbBlock = fbLines ? `\n\n【他对你之前看法的反馈（useless 的这类少给，useful/adopt 的这类多给，comment 是他的原话）】\n${fbLines}` : '';
@@ -864,13 +867,24 @@ class Session {
         // 0.6.14 起模型输出 insights（洞察）；旧模型 / 回看旧场次仍可能是 factchecks，两路都收，统一存进 this.factchecks（存储字段名不改，日志 / 快照 / 回看全兼容）
         if (Array.isArray(j.insights)) { const before = j.insights.length; const ictx = { brief: this.brief, names: [...this.attendeeNames(), ...this.rosterNames()] }; j.factchecks = j.insights.map(f => normalizeInsight(f, ictx)).filter(Boolean).slice(0, 2); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} insights without concrete source/why`); }
         else if (Array.isArray(j.factchecks)) { const hay = viewNorm(recent); const before = j.factchecks.length; j.factchecks = j.factchecks.filter(f => !viewIsJunk(f)).filter(f => { normalizeView(f); return viewGrounded(f, hay); }); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} views without verbatim evidence`); }
-        const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage${gate ? '(jev)' : ''} ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`); }
+        const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage${gate ? '(jev)' : ''} ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`);
+        try { const hit = this.pushGate ? this.pushGate.consider(fb) : []; if (hit.length) this.larkPush(hit); } catch (e) { log('push whitelist exc ' + e.message); } }
     } catch (e) { log('triage exc ' + e.message); }
     this.triaging = false;
     try { if (recentForDeep && this.hitsTrigger(recentForDeep)) this.runDeepPass(recentForDeep, segIdsForDeep, epochForDeep); } catch (e) {}
   }
-  // S7（2026-09-22）：桌面版不推飞书会中提醒。原来这里有一个 maybePush → larkPush 的空调用链，
-  // larkPush 是空函数、日志却写「push N」，像发了其实没发。两个服务并成一个后，会中提醒在 runTriage 末尾接入。
+  // 会中飞书提醒（THT-R4，2026-09-22 接入）：只有 pushGate 放行的条目才到这里（点名本人 / 冲突类 / 本人带截止承诺，节流 + 去重，MEETING_PUSH 默认 off）。
+  // 发给 MEETING_PUSH_TO（open_id），没配就发归档 owner（THT_ARCHIVE_OWNER_ID）；两者都没有 → 只记日志不发。命令行不在 / 挂死 / 非零退出都不能拖住会：不 await 结果，12s 超时。
+  // 以前这里是 maybePush → larkPush 空调用链、日志却写「push N」，像发了其实没发（S7 注）；现在没发就写「push skipped」。
+  larkPush(items) {
+    const to = String(this.env.MEETING_PUSH_TO || this.env.THT_ARCHIVE_OWNER_ID || '').trim();
+    const text = pushWhitelist.formatMessage(this.title || '', items);
+    if (!to) { log(`push skipped（没配 MEETING_PUSH_TO / THT_ARCHIVE_OWNER_ID）${items.length} 条 ${this.id}`); return; }
+    // 命令行只在工具层拼（app/tools/lark-cli.js）；不 await，结果只进日志
+    require('./tools/lark-cli').runCli(['im', '+messages-send', '--user-id', to, '--markdown', text, '--as', 'user'], { timeout: 12000, log })
+      .then(r => log(r.ok ? `push sent ${items.length} 条（${items.map(x => x.reason).join(',')}） ${this.id}` : `push failed ${items.length} 条 ${this.id}: ${r.error}`))
+      .catch(e => log('push exc ' + e.message));
+  }
   endVolc() { if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN) { try { this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, NEG_WITH_SEQ, Buffer.alloc(0), -this.seq, false)); } catch (e) {} setTimeout(() => { try { this.volcWs.close(); } catch (e) {} }, 1200); } }
   // R2（2026-09-22）：旧连接的 close 事件可能晚于新连接的 start 到达（手机切网、页面刷新都会这样）。
   // 那时这场其实已经有一条新的说话人连接在跑了，却还是被装上 10 分钟收尾定时器；

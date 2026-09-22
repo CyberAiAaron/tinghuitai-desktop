@@ -54,7 +54,7 @@ test('三项齐全才留；缺任一项、非对象、空 ctx 下只有编号 / 
   assert.equal(ok({ claim: 'x', source: 'D1', why: '' }), null);
   assert.equal(ok({ claim: '', source: 'D1', why: '省一次' }), null);
   const r = ok({ claim: 'CDCP 原定 09-22 已延期', source: '决策板 D1', why: '省一次查找', refs: ['D1', 1] }, { brief: '', names: [] });
-  assert.deepEqual(r, { kind: 'insight', claim: 'CDCP 原定 09-22 已延期', source: '决策板 D1', why: '省一次查找', refs: ['D1', '1'], note: '省一次查找', verdict: 'true' });
+  assert.deepEqual(r, { kind: 'insight', type: 'answer', claim: 'CDCP 原定 09-22 已延期', source: '决策板 D1', why: '省一次查找', refs: ['D1', '1'], evidence: '', action: { do: 'none', args: {} }, note: '省一次查找', verdict: 'true' });
   assert.equal(ok({ claim: 'CDCP 原定 09-22 已延期', source: '产品需求总纲', why: '省一次查找' }, { brief: '', names: [] }), null, '背景为空时文档名对不上');
 });
 
@@ -63,4 +63,47 @@ test('briefTerms：抽书名号 / 引号里的整段和 ≥3 字片段，不带�
   assert.ok(t.includes('产品需求总纲') && t.includes('定位屋0910') && t.includes('Nothing') && t.includes('26191'));
   assert.ok(!t.some(x => /[《》「」，。]/.test(x)));
   assert.deepEqual(briefTerms(''), []);
+});
+
+// ——— 主动智能批 2：三类 type（需求单 §5.2 / F2）———
+const base = { source: '决策板 D1（2026-09-21）', why: '省一次翻决策板', refs: ['D1'], evidence: 'CDCP 就是 22 号评审' };
+test('conflict 正例：type + evidence + source + refs 齐 → 留，claim 放宽到 60 字，action 定为 open_source', () => {
+  const r = ok({ type: 'conflict', claim: '会上说 CDCP 09-22；决策板 D1（2026-09-21）记的是延期、新日期未定', ...base, action: { do: 'open_source', args: {} } }, { brief: '', names: [] });
+  assert.ok(r); assert.equal(r.type, 'conflict'); assert.deepEqual(r.action, { do: 'open_source', args: {} }); assert.equal(r.evidence, 'CDCP 就是 22 号评审');
+  assert.ok([...r.claim].length > 30 && [...r.claim].length <= 60, 'conflict 的 claim 不按 30 截：' + [...r.claim].length);
+  const r2 = ok({ type: 'conflict', claim: '会上说流失率 4.1%；决策板 D3（09-17）记的是 6.3%', source: '决策板 D3 2026-09-17', refs: ['D3'], evidence: '流失率是 4.1%', why: '不用会后再核', action: { do: 'set_date' } }, { brief: '', names: [] });
+  assert.ok(r2); assert.equal(r2.action.do, 'open_source', 'action.do 写错按 type 改回');
+  const r3 = ok({ type: 'conflict', claim: 'x'.repeat(70), ...base, evidence: '原'.repeat(50) }, { brief: '', names: [] });
+  assert.equal([...r3.claim].length, 60); assert.equal([...r3.evidence].length, 40, 'evidence 截到 40');
+});
+test('conflict 反例：缺 evidence / 缺 refs / source 没出处 / type 不在三类里 → 整条丢', () => {
+  assert.equal(ok({ type: 'conflict', claim: '会上说 A，记录 B', ...base, evidence: '' }, { brief: '', names: [] }), null, '缺 evidence');
+  assert.equal(ok({ type: 'conflict', claim: '会上说 A，记录 B', ...base, refs: [] }, { brief: '', names: [] }), null, '缺 refs');
+  assert.equal(ok({ type: 'conflict', claim: '会上说 A，记录 B', ...base, refs: ['', null] }, { brief: '', names: [] }), null, 'refs 全空等于缺');
+  assert.equal(ok({ type: 'conflict', claim: '会上说 A，记录 B', ...base, source: '项目记忆' }, { brief: '', names: [] }), null, 'source 没具体出处');
+  assert.equal(ok({ type: 'warning', claim: '会上说 A，记录 B', ...base }, { brief: '', names: [] }), null, 'type 不在三类');
+  assert.equal(ok({ type: 'conflict', claim: '建议核对 CDCP 日期', ...base }, { brief: '', names: [] }), null, '禁词「建议」');
+});
+test('recheck 正例：source（承诺回查 + 会名日期）+ evidence 齐 → 留，action 定为 set_date', () => {
+  const r = ok({ type: 'recheck', claim: '这件事 09-12《硬件例会》已承诺过，记录里没看到落地', source: '承诺回查 硬件例会 2026-09-12', evidence: '供应商那个 demo 我下周再去要', why: '当时是 S1 承诺的，省他翻一遍记录' }, { brief: '', names: [] });
+  assert.ok(r); assert.equal(r.type, 'recheck'); assert.deepEqual(r.action, { do: 'set_date', args: {} }); assert.deepEqual(r.refs, []);
+  const r2 = ok({ type: 'recheck', claim: '这件事 09-08、09-15《周会》已承诺过两次，记录里没看到落地', source: '承诺回查《周会》09-08 / 09-15', evidence: '这个我回头弄', why: '省他翻两场记录', action: { do: 'none', args: { owner: 'Cary' } } }, { brief: '', names: [] });
+  assert.ok(r2); assert.deepEqual(r2.action, { do: 'set_date', args: { owner: 'Cary' } }, 'do 改回 set_date，args 原样留');
+});
+test('recheck 反例：缺 evidence / source 没日期没会名 / why 空话 → 整条丢', () => {
+  assert.equal(ok({ type: 'recheck', claim: '这件事已承诺过', source: '承诺回查 硬件例会 2026-09-12', evidence: '', why: '省他翻记录' }, { brief: '', names: [] }), null, '缺 evidence');
+  assert.equal(ok({ type: 'recheck', claim: '这件事已承诺过', source: '承诺回查', evidence: '我回头弄', why: '省他翻记录' }, { brief: '', names: [] }), null, 'source 没日期没会名');
+  assert.equal(ok({ type: 'recheck', claim: '这件事已承诺过', source: '承诺回查 硬件例会 2026-09-12', evidence: '我回头弄', why: '值得注意' }, { brief: '', names: [] }), null, 'why 空话');
+});
+test('answer 正例：现状不变（claim ≤30、source、why），缺 type 按 answer，action 定为 none，evidence 可空', () => {
+  const r = ok({ type: 'answer', claim: 'D5 口径以 Cary 成本模型为准', source: '决策板 D5', why: '省一次查找' }, { brief: '', names: [] });
+  assert.ok(r); assert.equal(r.type, 'answer'); assert.deepEqual(r.action, { do: 'none', args: {} }); assert.equal(r.evidence, '');
+  const r2 = ok({ claim: 'D5 口径以 Cary 成本模型为准', source: '决策板 D5', why: '省一次查找', action: { do: 'open_source' } }, { brief: '', names: [] });
+  assert.equal(r2.type, 'answer'); assert.equal(r2.action.do, 'none', '答案类没有按钮');
+  assert.equal([...ok({ type: 'answer', claim: '一'.repeat(45), source: '决策板 D5', why: '省一次查找' }, { brief: '', names: [] }).claim].length, 30);
+});
+test('answer 反例：source 没出处 / why 空话 / claim 含禁词 → 丢（沿用旧门槛）', () => {
+  assert.equal(ok({ type: 'answer', claim: 'D5 口径以 Cary 成本模型为准', source: '项目记忆', why: '省一次查找' }, { brief: '', names: [] }), null);
+  assert.equal(ok({ type: 'answer', claim: 'D5 口径以 Cary 成本模型为准', source: '决策板 D5', why: '有帮助' }, { brief: '', names: [] }), null);
+  assert.equal(ok({ type: 'answer', claim: '这条待核实', source: '决策板 D5', why: '省一次查找' }, { brief: '', names: [] }), null);
 });

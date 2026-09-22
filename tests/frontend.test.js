@@ -498,10 +498,10 @@ test('insights merge: overlapping phrase but different claims are NOT merged (no
  assert.equal(list.length,2,'短句只是长句里的一个片段，不能把长句吞掉');assert.equal(list[0].id,'a');assert.equal(list[1].id,'d');
  c.mergeInsights(list,[{id:'e',claim:'D1 Pin 与手机绑定还没定，卡着 D2',source:'决策板 D1',why:'省一轮讨论',at:5},{id:'f',claim:'D1 Pin 与手机绑定还没定（理由见 09-05 推演）',source:'09-05 推演',why:'省一次查找',at:6}],9);
  assert.equal(list.length,3,'去标点后前 12 字「D1Pin与手机绑定还没」相同 → 合并成一条');assert.equal(list[2].id,'f');});
-test('views pane shows latest 8 flat, folds earlier ones, no kind tag or rating buttons, has a thread input',()=>{const c=viewsCtx();const cks=Array.from({length:11},(_,i)=>({id:'i'+i,claim:'洞察 '+i,source:'S'+i,why:'W'+i,at:i+1}));const html=c.viewListHtml(cks,true);
+test('views pane shows latest 8 flat, folds earlier ones, type badge but no rating buttons, has a thread input',()=>{const c=viewsCtx();const cks=Array.from({length:11},(_,i)=>({id:'i'+i,claim:'洞察 '+i,source:'S'+i,why:'W'+i,at:i+1}));const html=c.viewListHtml(cks,true);
  assert.ok(html.startsWith('<details class="ck-older"><summary>更早 3 条</summary>'));assert.equal((html.match(/class="card ck/g)||[]).length,11);
  const fold=html.slice(0,html.indexOf('</details>'));assert.ok(fold.includes('洞察 0')&&fold.includes('洞察 2')&&!fold.includes('洞察 3'));
- assert.ok(!html.includes('data-fb=')&&!html.includes('class="kind"'));assert.ok(html.includes('<div class="thread" data-card-id="i10" data-card-kind="insight"'),'每张看法卡下面有对话框');assert.ok(html.includes('class="th-in"')&&!/<label/.test(html),'对话框只是一个输入框，没有标签');assert.ok(html.includes('<div class="v src">S10 · W10</div>'));
+ assert.ok(!html.includes('data-fb='));assert.equal((html.match(/<span class="kind">递答案<\/span>/g)||[]).length,11,'没有 type 的旧卡按 answer 显示徽标');assert.ok(!html.includes('insight-act'),'answer 没有按钮');assert.ok(html.includes('<div class="thread" data-card-id="i10" data-card-kind="insight"'),'每张看法卡下面有对话框');assert.ok(html.includes('class="th-in"')&&!/<label/.test(html),'对话框只是一个输入框，没有标签');assert.ok(html.includes('<div class="v src">S10 · W10</div>'));
  assert.ok(!c.viewListHtml(cks.slice(0,8),true).includes('ck-older'));});
 test('my-todos bar filters owner=self or ownerless-with-how, latest 5 then folds',()=>{const c=viewsCtx();const todos=[{text:'T1',owner:'本人',at:1},{text:'T2',owner:'Cary',at:2},{text:'T3',owner:'',how:'先发邮件',at:3},{text:'T4',owner:'',at:4},{text:'T5',owner:'我',at:5},{text:'T6',owner:'Me',at:6},{text:'T7',owner:'本人',at:7},{text:'T8',owner:'本人',at:8},{text:'T9',owner:'本人',done:true,at:9}];
  const html=c.myTodosHtml(todos);assert.ok(!html.includes('>T2<')&&!html.includes('>T4<')&&!html.includes('>T9<'));assert.equal((html.match(/class="my-todo"/g)||[]).length,6);
@@ -509,3 +509,16 @@ test('my-todos bar filters owner=self or ownerless-with-how, latest 5 then folds
 test('legacy session with factchecks and no insights still renders',()=>{const c=viewsCtx();const legacy=[{id:'f1',kind:'doubt',claim:'价格不是 599',note:'项目状态写的是 699',evidence:'我们定的 599',verdict:'false',at:1}];
  const html=c.viewListHtml(legacy,true);assert.ok(html.includes('价格不是 599'));assert.ok(html.includes('<div class="v src">项目状态写的是 699</div>'));assert.ok(!html.includes('data-fb='));
  const list=[];c.mergeInsights(list,legacy,5);assert.equal(list.length,1);assert.equal(list[0].why,'项目状态写的是 699');assert.equal(list[0].verdict,'false');});
+
+// 主动智能批 2：三类 type 徽标 + 按钮占位（disabled，批 3 接通）；原话行；沿用 .card.ck .kind 样式、不开新窗口
+test('insight card: type badge (对不上 / 空转 / 递答案), evidence line, disabled action button with the right label',()=>{const c=viewsCtx();
+ const html=c.viewListHtml([{id:'c1',type:'conflict',claim:'会上说 CDCP 09-22；决策板记延期未定',source:'决策板 D1',why:'省一次翻决策板',evidence:'CDCP 就是 22 号评审',action:{do:'open_source',args:{}},at:1},{id:'r1',type:'recheck',claim:'这件事 09-12《硬件例会》已承诺过，记录里没看到落地',source:'承诺回查 硬件例会 2026-09-12',why:'省他翻记录',evidence:'我下周再去要',action:{do:'set_date',args:{}},at:2},{id:'a1',type:'answer',claim:'D5 以 Cary 成本模型为准',source:'决策板 D5',why:'省一次查找',action:{do:'none',args:{}},at:3}],true);
+ assert.ok(html.includes('class="card ck kind-conflict')&&html.includes('<span class="kind">对不上</span>'));assert.ok(html.includes('class="card ck kind-recheck')&&html.includes('<span class="kind">空转</span>'));assert.ok(html.includes('class="card ck kind-answer')&&html.includes('<span class="kind">递答案</span>'));
+ assert.ok(html.includes('原话：「CDCP 就是 22 号评审」')&&html.includes('原话：「我下周再去要」'));
+ assert.ok(/<button class="btn sm insight-act" type="button" disabled data-do="open_source"[^>]*>核对并附文档<\/button>/.test(html),'conflict 按钮');
+ assert.ok(/<button class="btn sm insight-act" type="button" disabled data-do="set_date"[^>]*>定日期<\/button>/.test(html),'recheck 按钮');
+ assert.equal((html.match(/insight-act/g)||[]).length,2,'answer 没有按钮');assert.ok(!/window\.open|target="_blank"/.test(html),'不开新窗口');});
+test('insights merge keeps type / action / evidence and the actionState of the replaced card',()=>{const c=viewsCtx();const list=[{id:'a',claim:'会上说 CDCP 09-22；决策板记延期未定',type:'conflict',actionState:'done',at:1}];
+ c.mergeInsights(list,[{id:'b',claim:'会上说 CDCP 09-22；决策板记延期未定（补）',type:'conflict',evidence:'原话',action:{do:'open_source',args:{}},source:'决策板 D1',why:'省'},{id:'c',claim:'新的一条',type:'bogus',action:'open_source',source:'S',why:'W'}],5);
+ assert.equal(list.length,2);assert.equal(list[0].id,'b');assert.equal(list[0].type,'conflict');assert.equal(list[0].evidence,'原话');assert.deepEqual(JSON.parse(JSON.stringify(list[0].action)),{do:'open_source',args:{}});assert.equal(list[0].actionState,'done');
+ assert.equal(list[1].type,'answer','不认识的 type 按 answer');assert.deepEqual(JSON.parse(JSON.stringify(list[1].action)),{do:'none',args:{}});});
