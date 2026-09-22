@@ -52,3 +52,15 @@ test('撤销过的组合进 ignore 后不再改；ignore 文件原子写、读�
   assert.equal(nf.fix('星宇来了', t).text, '星宇来了');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('反例：别名指向名单外的词不生效（Codex 复审 major #2）', () => {
+  // 目标「李四」「Bob」都不在 ROSTER（全名 / 去姓的名 / 拉丁单词）里 → 不建规则；指向「Shawn Liu」整串全名的照收
+  const t = nf.buildTable(ROSTER, { aliases: { '张三': '李四', 'bobby': 'Bob', '小刘': 'Shawn Liu', '星宇': '新宇' }, ignore: [] });
+  assert.equal(t.exact.has('张三'), false);
+  assert.equal(t.exact.has('bobby'), false);
+  assert.equal(t.exact.get('小刘'), 'Shawn Liu');
+  assert.equal(t.exact.get('星宇'), '新宇');
+  const r = nf.fix('张三和 bobby 都不在名单里', t);
+  assert.equal(r.text, '张三和 bobby 都不在名单里');
+  assert.deepEqual(r.changes, []);
+});

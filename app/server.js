@@ -54,6 +54,7 @@ const contextPack = require('./context-pack');
 const nameFix = require('./name-fix');
 const NAME_ALIAS_FILE = path.join(DATA, 'state', 'name-aliases.json');   // 人手维护的人名别名 + 撤销过的组合，见 app/name-fix.js 文件头
 const CALENDAR_MATCH_DELAY_MS = (process.env.THT_TEST && Number(process.env.THT_CALENDAR_DELAY_MS) >= 0) ? Number(process.env.THT_CALENDAR_DELAY_MS) : 5000;   // 开场后几秒再对日历，≤30s 即可
+const CALENDAR_MATCH_TIMEOUT_MS = (process.env.THT_TEST && Number(process.env.THT_CALENDAR_TIMEOUT_MS) > 0) ? Number(process.env.THT_CALENDAR_TIMEOUT_MS) : 15000;   // 会中对日历的总超时；lark-cli 挂死也只等这么久
 // 记忆投影写到哪：默认 Aaron 的项目记忆区（Cowork 的 Chansey 空间），目录不存在就退回本机数据目录。
 // 定义在 app/context-pack.js（会中读 project-state.md 也要找同一个目录，两边不能各算各的）。
 const MEMORY_PROJECTION_DIR = contextPack.memoryProjectionDir(DATA);
@@ -455,12 +456,13 @@ class Session {
   sendConfig() {
     // 热词先用你纠正过的词（服务端词表，按最近命中排序），不够的再拿本场简报里的词补。
     // 词表读不出来时静默回落到原来的行为——热词只是锦上添花，绝不能让会开不成。
-    const HOTWORD_CAP = 15;                      // 火山当前接受的条数，验证过再谈扩容
+    // 三道闸（条数 / 单词长度 / 总字符）都在 app/hotwords.js，纯函数可测
+    const { mergeHotwords, HOTWORD_CAP } = require('./hotwords');
     let lex = [];
     try { lex = require('./memory').lexHotwords(require('./memory').open(DATA), HOTWORD_CAP); }
     catch (e) { log('热词：词表读取失败，回落到简报热词 ' + e.message); }
     const fromBrief = Array.isArray(this.startMsg.hotwords) ? this.startMsg.hotwords : [];
-    const merged = [...new Set([...lex, ...fromBrief, ...this.attendeeHotwords()].map(x => String(x || '').trim()).filter(Boolean))].slice(0, HOTWORD_CAP);
+    const merged = mergeHotwords([lex, fromBrief, this.attendeeHotwords()]);
     if (lex.length) log('热词：词表 ' + lex.length + ' 个 + 简报补位，共 ' + merged.length + ' 个 ' + this.id);
     const hw = merged.map(w => ({ word: w }));
     const req = { model_name: 'bigmodel', enable_nonstream: true, enable_itn: true, enable_punc: true, enable_ddc: false, show_utterances: true, enable_speaker_info: true, ssd_version: '200', end_window_size: 800, result_type: 'single', corpus: { context: JSON.stringify({ hotwords: hw }) } };
@@ -544,7 +546,12 @@ class Session {
   async matchCalendar(chosen) {
     if (this.finalized) return;
     const probe = { start: this.startTs, end: Date.now() + 30 * 60e3, calendar: chosen ? { chosen } : (this.calendar && this.calendar.chosen ? { chosen: this.calendar.chosen } : null) };   // 不带 id：会中不写 pending 文件，落盘走自己的 journal
-    await calendarMatch(probe);
+    // lark-cli 不存在 / 挂死 / 非零退出 / 吐非 JSON，任何一种都不能拖住会：整段包 try/catch，再套 15s 总超时（内部单次 execFile 是 12s）
+    try {
+      let timer;
+      await Promise.race([calendarMatch(probe), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('日历匹配超时（15s）')), CALENDAR_MATCH_TIMEOUT_MS); })]).finally(() => clearTimeout(timer));
+    } catch (e) { probe.calendar = { ...(probe.calendar || {}), event: null, reason: '日历匹配失败：' + (e && e.message || String(e)) }; }
+    if (this.finalized) return;
     const c = probe.calendar || {}, ev = c.event || null;
     this.calendar = { matchedAt: Date.now(), title: ev ? ev.title : '', eventId: ev ? ev.eventId : '', start: ev ? ev.start : '', end: ev ? ev.end : '',
       attendees: ev ? (ev.attendeeList || []).map(x => ({ name: x.name, open_id: x.open_id || '', declined: !!x.declined })) : [],
@@ -1245,8 +1252,8 @@ async function calendarMatch(sess) {
   if (!sess || !sess.start) return null;
   if (sess.calendar && sess.calendar.checkedAt) return sess.calendar.event || null;
   const cli = process.env.THT_LARK_CLI || 'lark-cli';
-  const run = (args, ms=25000) => new Promise(res => require('child_process').execFile(cli, args, { timeout: ms, maxBuffer: 4e6,
-    env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER:'1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER:'1' } }, (e, so) => res(e ? '' : String(so||''))));
+  const run = (args, ms=12000) => new Promise(res => { try { require('child_process').execFile(cli, args, { timeout: ms, maxBuffer: 4e6,
+    env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER:'1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER:'1' } }, (e, so) => res(e ? '' : String(so||''))); } catch (e) { res(''); } });
   const parse = t => { try { const i = t.indexOf('{'); return i >= 0 ? JSON.parse(t.slice(i)) : null; } catch (e) { return null; } };
   const s0 = typeof sess.start === 'number' ? sess.start : Date.parse(sess.start), e0 = (typeof sess.end === 'number' ? sess.end : Date.parse(sess.end)) || (s0 + 3600e3);
   const bj = t => new Date(t + 8*3600e3).toISOString().slice(0,10);

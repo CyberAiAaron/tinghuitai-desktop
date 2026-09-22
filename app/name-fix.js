@@ -40,8 +40,11 @@ function lev(a, b) {
 function buildTable(names, opts = {}) {
   const exact = new Map(), latin = [], seen = new Set();
   const nameSet = new Set();
+  // targetKeys：别名允许指向的目标（小写比对）= 名单全名（含「Shawn Liu」整串）+ 每个拉丁单词 + 中文去姓的名。名单外的目标一律不收——别名文件是人手维护的，写错一条不能变成全场替换规则
+  const targetKeys = new Set();
   for (const raw of Array.isArray(names) ? names : []) {
     const n = normName(raw); if (!n) continue;
+    targetKeys.add(n.toLowerCase()); targetKeys.add(n.replace(/\s/g, '').toLowerCase());
     if (isCjk(n)) {
       const full = n.replace(/\s/g, ''), len = chars(full).length;
       if (len < 2 || len > 6) continue;
@@ -57,9 +60,11 @@ function buildTable(names, opts = {}) {
     }
   }
   const aliases = opts.aliases && typeof opts.aliases === 'object' ? opts.aliases : {};
+  for (const n of nameSet) targetKeys.add(n.toLowerCase());
   for (const [w0, r0] of Object.entries(aliases)) {
     const w = normName(w0), r = normName(r0);
     if (!r || !w || w === r || chars(w).length < 2 || chars(w).length > 40) continue;
+    if (!targetKeys.has(r.toLowerCase())) continue;   // 目标不在参会人 / 团队名单（含去姓的名）里 → 跳过，不建规则
     exact.set(w, r);
   }
   const ignore = new Set((Array.isArray(opts.ignore) ? opts.ignore : []).map(String));
