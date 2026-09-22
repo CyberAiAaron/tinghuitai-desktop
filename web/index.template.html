@@ -92,7 +92,7 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 /* 横屏 / 桌面：三栏并排。纯 CSS 判定，不依赖任何 JS 事件 */
 @media (min-width:1100px){
   .tabs{display:none}
-  .main{grid-template-columns:1.25fr 1fr 1fr}
+  .main{grid-template-columns:0.62fr 1.19fr 1.19fr}
   .pane{display:flex}
 }
 
@@ -130,7 +130,9 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 
 /* 转写 */
 .tr{font-family:var(--mono);font-size:13.5px;line-height:1.6}
-.tr p{margin:0 0 8px;display:grid;grid-template-columns:52px auto 1fr;gap:8px;align-items:start}
+.tr p{margin:0 0 10px;display:block}
+.tr p>time,.tr p>.spk{display:inline-block;vertical-align:middle;margin-right:6px}
+.tr p>[data-fix="tr"],.tr p>.interim{display:block;margin-top:2px;text-align:left}
 .tr time{color:var(--faint);font-size:11px;padding-top:3px}
 .tr .interim{color:var(--muted);font-style:italic}
 .spk{font-family:var(--font);font-size:11px;font-weight:600;padding:1px 7px;border-radius:6px;border:1px solid var(--line);color:var(--muted);white-space:nowrap;max-width:88px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;margin-top:2px}

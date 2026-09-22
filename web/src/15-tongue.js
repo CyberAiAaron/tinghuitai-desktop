@@ -157,7 +157,7 @@
     const seenC = new Set(cur.factchecks.map(x=>x.claim));
     (m.highlights||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.highlights.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text}); n++; } });
     (m.todos||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.todos.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text, owner:x.owner||'', how:x.how||''}); n++; } });
-    (m.factchecks||[]).forEach(x=>{ if (x&&x.claim && !seenC.has(x.claim)) { seenC.add(x.claim); cur.factchecks.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, claim:x.claim, verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||''}); n++; } });
+    (m.factchecks||[]).forEach(x=>{ if (x&&x.claim && !seenC.has(x.claim)) { seenC.add(x.claim); cur.factchecks.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, claim:x.claim, verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||'', kind:x.kind, label:x.label, evidence:x.evidence}); n++; } });
     if (n) { persist(); render(); buzz(); }
   }
 
