@@ -180,8 +180,9 @@
         else if (m.type === 'condensed') applyCondensed(m);
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
+        else if (m.type === 'thread') applyThreadMsg(m);
         else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
-        else if (m.type === 'snapshot' && m.session) { cur.calendar = m.session.calendar || null; cur.nameFixCount = (m.session.nameFixes || []).length; persist(); renderCalendar(); }   // 续场 / 重连时把日历和纠名计数接回来
+        else if (m.type === 'snapshot' && m.session) { cur.calendar = m.session.calendar || null; if (m.session.threads && typeof m.session.threads === 'object') cur.threads = m.session.threads; cur.nameFixCount = (m.session.nameFixes || []).length; persist(); renderCalendar(); }   // 续场 / 重连时把日历和纠名计数接回来
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }
       // R1：中转 12 分钟收不到音频就自己把这场收尾，然后发这条。页面原来只记一笔就接着录——
       // 手机锁屏再解锁那种场合，后半场其实一个字都没进库，人却毫无察觉。服务端那边已经结束了，

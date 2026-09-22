@@ -489,15 +489,15 @@ test('卡片：取消发生在发出去之前，所以真的什么都没发',()=
  assert.equal(calls.length,0);
 });
 // ── 0.6.14 看法列减法（Aaron 09-22）：洞察去重、最新 8 条折叠、本人待办条、旧场次 factchecks 兼容 ──
-function viewsCtx(){const c={esc:s=>String(s).replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])),tt:t=>t||'',hms:()=>'10:20:00',ui:'zh',T:()=>'',Date};vm.createContext(c);vm.runInContext(code('  const insightNorm', '  function applyFeedback('),c);vm.runInContext(code('  const VIEW_SHOW', '  function viewItemOf('),c);return c;}
+function viewsCtx(){const c={esc:s=>String(s).replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])),tt:t=>t||'',hms:()=>'10:20:00',ui:'zh',T:()=>'',Date};vm.createContext(c);vm.runInContext(code('  const insightNorm', '  function applyFeedback('),c);vm.runInContext(code('  const VIEW_SHOW', '  function viewItemOf('),c);c.cur={id:'s1',threads:{}};vm.runInContext(code('  const threadDrafts', '  async function threadSend('),c);return c;}
 test('insights merge: same first-12-chars or containment replaces in place, keeps latest',()=>{const c=viewsCtx();const list=[{id:'a',claim:'CDCP 原定 09-22 已延期，新日期未定',source:'决策板',why:'省一次查找',at:1}];
  const n=c.mergeInsights(list,[{id:'b',claim:'CDCP 原定 09-22 已延期（新日期未定，见项目状态）',source:'project-state §8b',why:'免得再问一遍',at:2},{id:'c',claim:'PDT KO 2026-11-17 在 CDCP 之后',source:'决策板',why:'省一次查找',at:3}],9);
  assert.equal(n,2);assert.equal(list.length,2);assert.equal(list[0].id,'b');assert.equal(list[0].source,'project-state §8b');assert.equal(list[1].id,'c');
  c.mergeInsights(list,[{id:'d',claim:'新日期未定',source:'x',why:'y',at:4}],9);assert.equal(list.length,2);assert.equal(list[0].id,'d','shorter claim contained in existing one replaces it');});
-test('views pane shows latest 8 flat, folds earlier ones, no kind tag or rating buttons, keeps thread placeholder',()=>{const c=viewsCtx();const cks=Array.from({length:11},(_,i)=>({id:'i'+i,claim:'洞察 '+i,source:'S'+i,why:'W'+i,at:i+1}));const html=c.viewListHtml(cks,true);
+test('views pane shows latest 8 flat, folds earlier ones, no kind tag or rating buttons, has a thread input',()=>{const c=viewsCtx();const cks=Array.from({length:11},(_,i)=>({id:'i'+i,claim:'洞察 '+i,source:'S'+i,why:'W'+i,at:i+1}));const html=c.viewListHtml(cks,true);
  assert.ok(html.startsWith('<details class="ck-older"><summary>更早 3 条</summary>'));assert.equal((html.match(/class="card ck/g)||[]).length,11);
  const fold=html.slice(0,html.indexOf('</details>'));assert.ok(fold.includes('洞察 0')&&fold.includes('洞察 2')&&!fold.includes('洞察 3'));
- assert.ok(!html.includes('data-fb=')&&!html.includes('class="kind"'));assert.ok(html.includes('<div class="thread" data-card-id="i10"></div>'));assert.ok(html.includes('<div class="v src">S10 · W10</div>'));
+ assert.ok(!html.includes('data-fb=')&&!html.includes('class="kind"'));assert.ok(html.includes('<div class="thread" data-card-id="i10" data-card-kind="insight"'),'每张看法卡下面有对话框');assert.ok(html.includes('class="th-in"')&&!/<label/.test(html),'对话框只是一个输入框，没有标签');assert.ok(html.includes('<div class="v src">S10 · W10</div>'));
  assert.ok(!c.viewListHtml(cks.slice(0,8),true).includes('ck-older'));});
 test('my-todos bar filters owner=self or ownerless-with-how, latest 5 then folds',()=>{const c=viewsCtx();const todos=[{text:'T1',owner:'本人',at:1},{text:'T2',owner:'Cary',at:2},{text:'T3',owner:'',how:'先发邮件',at:3},{text:'T4',owner:'',at:4},{text:'T5',owner:'我',at:5},{text:'T6',owner:'Me',at:6},{text:'T7',owner:'本人',at:7},{text:'T8',owner:'本人',at:8},{text:'T9',owner:'本人',done:true,at:9}];
  const html=c.myTodosHtml(todos);assert.ok(!html.includes('>T2<')&&!html.includes('>T4<')&&!html.includes('>T9<'));assert.equal((html.match(/class="my-todo"/g)||[]).length,6);

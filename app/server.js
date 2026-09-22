@@ -244,11 +244,11 @@ class Session {
     this.clients = new Set();          // 所有 ws（说话人 + 观众）
     this.volcWs = null; this.seq = 1; this.queuedAudio=[]; this.queuedAudioBytes=0; this.hasKey = !!(env.VOLC_APP_KEY && env.VOLC_ACCESS_KEY);
     this.transcriptionGapSeconds=0;this.browserGapSeconds=0;
-    this.transcript = []; this.highlights = []; this.todos = []; this.factchecks = [];
+    this.transcript = []; this.highlights = []; this.todos = []; this.factchecks = []; this.threads = {};   // threads：每张卡下面的对话（app/card-thread.js）
     this.startTs = Date.now(); this.lastFinalTs = Date.now(); this.lastAudioTs = Date.now();
     this.journalPath=path.join(DATA,'state','live-sessions',this.id+'.json');
     const recovered=journal.read(this.journalPath);if(recovered?.complete)throw Error('本场已结束，请开始新会议');
-    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds','calendar','nameFixes'])if(recovered[k]!==undefined)this[k]=recovered[k];this.startTs=recovered.startTs||this.startTs;}
+    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds','calendar','nameFixes','threads'])if(recovered[k]!==undefined)this[k]=recovered[k];this.startTs=recovered.startTs||this.startTs;}
 
     try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
@@ -323,7 +323,7 @@ class Session {
     if(complete||force){this.journalWrite.stop();return this.writeJournal(complete);}
     this.journalWrite.call();return true;
   }
-  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
+  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,threads:this.threads||{},notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
   // 会中把要点分好的那棵议题树（web/src/12-grouping.js 的 hlGroups）。分组在浏览器里算，
   // 会后回看页要看到同一套议题划分，所以每排完一轮就送过来存一份，归档时跟着会话一起落盘。
   setOutline(groups) {
@@ -365,7 +365,7 @@ class Session {
     return false;
   }
   broadcast(o) { const s = JSON.stringify(o); for (const c of this.clients) { try { if (c.readyState === WebSocket.OPEN) c.send(s); } catch (e) {} } }
-  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names, calendar: this.calendar, nameFixes: this.nameFixes } }; }
+  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names, calendar: this.calendar, nameFixes: this.nameFixes, threads: this.threads || {} } }; }
   // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
   connectAsr() {
     if (this.mac || this.dg) return;            // 续场重连时已经有一个在跑，再造一个会漏掉旧的进程和端口
@@ -865,7 +865,7 @@ class Session {
     this.checkpoint(false,{force:true}); clearInterval(this.journalTimer); await this.closeAudio();
     let saved=false;
     try {
-      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||''};
+      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||''};
       // 这一场里，你纠正过的词有没有再错。这是「回流到底有没有用」的唯一证据。
       try {
         const mem = require('./memory');
@@ -1239,6 +1239,10 @@ process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获
 const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,isLocal:isLocalReq,ask:askModel,active:()=>[...SESSIONS.values()].some(s=>!s.finalized)});
 const shareBundles=require('./share-bundles')({settings});
 const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
+// 卡片对话框（第③批）：每条消息起一次本机 claude -p。开着的场次改内存对象，结束的场次改 pending 文件。
+const cardThread=require('./card-thread').create({dataDir:DATA,log,findBin:()=>require('./cli-llm').findBin('claude'),getLive:id=>{const s=SESSIONS.get(id);return s&&!s.finalized?s:null;},
+  readFile:id=>{const f=pendingFileFor(id);return f?journal.read(f):null;},writeFile:(id,obj)=>{const f=pendingFileFor(id);if(f)journal.write(f,obj);},
+  model:process.env.THT_THREAD_MODEL||'sonnet',timeoutMs:Number(process.env.THT_THREAD_TIMEOUT_MS)||120000,maxConcurrent:Number(process.env.THT_THREAD_CONCURRENCY)||2,mcp:process.env.THT_THREAD_MCP||loadEnv().THREAD_MCP||''});
 // 任何一条路由里抛出的异常都在这里兜住：以前异常变成未处理的 Promise，请求永远不回包、页面一直转圈。
 const server = http.createServer((req, res) => {
   handleRequest(req, res).catch(e => {
@@ -1798,6 +1802,26 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
   // 现在写信 + 唤醒轮询器，三分钟内就有人接。只在信箱目录存在的机器上开（普通用户没有这条）。
   // 2026-09-16 Aaron 定：信优先直达他桌面 Claude 的「听会台任务处理界面」会话（它用 Monitor 盯着 to_livemate/），等于他亲手在那里发给 Claude；
   // 那个会话没开时，ark-mailbox-poll 在 10 分钟后把信搬到 to_ark/ 无头处理并发飞书卡片兜底。没有 to_livemate/ 的机器保持原来的 to_ark 路径。
+  // 卡片对话框：POST /thread/<sessionId>/<cardId> {text, card?:{kind,text}} → 等 claude 回完再应答（最长约 120s + 排队）；GET /thread/<sessionId> 读这一场全部线程（回看页用）。
+  if (p.startsWith('/thread') || p.startsWith('/asr-relay/thread')) {
+    const m = p.replace(/^\/asr-relay/, '').match(/^\/thread\/([A-Za-z0-9_.:-]{1,100})(?:\/([A-Za-z0-9_.:-]{1,100}))?$/);
+    if (!m) { res.writeHead(404); return res.end('not found'); }
+    {
+      if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+      const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+      const sid = decodeURIComponent(m[1]), cardId = m[2] ? decodeURIComponent(m[2]) : '';
+      if (req.method === 'GET') { const t = cardThread.threadsOf(sid); return t ? reply(200, { ok: true, threads: t, ...cardThread.status() }) : reply(404, { ok: false, error: '找不到这场会' }); }
+      if (req.method !== 'POST' || !cardId) { res.writeHead(405); return res.end('method'); }
+      const parts = []; let size = 0;
+      for await (const c of req) { parts.push(c); size += c.length; if (size > 16000) return reply(413, { ok: false, error: '请求太长' }); }
+      let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+      const text = String(j.text || '').replace(/\s+$/, '').slice(0, 2000);
+      if (!text.trim()) return reply(400, { ok: false, error: '空消息' });
+      const r = await cardThread.ask({ sessionId: sid, cardId, text, card: j.card && typeof j.card === 'object' ? j.card : null });
+      if (r.ok || r.reply) { const live = SESSIONS.get(sid); if (live) { try { live.broadcast({ type: 'thread', cardId, messages: r.messages }); } catch (e) {} } }
+      return reply(r.ok || r.reply ? 200 : 404, r);
+    }
+  }
   // 看法反馈：有用 / 没用 / 采纳 一击 + 一句话。写账本，并回流到这一场后续的 triage prompt（Aaron 2026-09-17：靠反馈收敛）。
   if (p.endsWith('/view-feedback')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
@@ -2320,6 +2344,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     // 这三个字段是为了能一眼看出「现在跑的到底是哪份代码」。
     // 2026-09-11 踩过：pid 文件是陈旧的，按它杀进程杀错了，老服务继续跑了一整天，
     // 改完的服务端代码一直没生效，而界面因为是从磁盘读的看起来像已经更新。
+    threadTokensToday: cardThread.usageToday().tokens, threadUsageToday: cardThread.usageToday(), threadQueue: cardThread.status(),   // 卡片对话框今天花了多少（第③批，给 Aaron 看额度）
     audioRetention: retention.status(DATA, audioRetentionDays()), pid: process.pid, startedAt: SERVER_STARTED_AT, version: SERVER_VERSION, assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>j.status==='error'||(j.status==='partial'&&!(j.summaryGenerated&&j.fullTextVerified))).length   /* 总结已出、全文已核、只剩「转写有缺口」告警的，是完成不是待处理（2026-09-15 Aaron 定） */   /* empty 是终态，不算待处理 */ })); }
   // D6（2026-09-22）：默认不带逐字稿。原来这条路把 pending 里近百场的逐字稿整个打包，约 9MB，
   // 而首页启动时要的只是最新那一场。四种用法：
