@@ -51,6 +51,9 @@ const LOG_MAX_BYTES = Math.max(1024, Number(process.env.THT_LOG_MAX_BYTES || 10 
 const STATIC_DIR = path.join(__dirname,'../web');
 const INDEX_HTML = path.join(STATIC_DIR,'index.html');
 const contextPack = require('./context-pack');
+const nameFix = require('./name-fix');
+const NAME_ALIAS_FILE = path.join(DATA, 'state', 'name-aliases.json');   // 人手维护的人名别名 + 撤销过的组合，见 app/name-fix.js 文件头
+const CALENDAR_MATCH_DELAY_MS = (process.env.THT_TEST && Number(process.env.THT_CALENDAR_DELAY_MS) >= 0) ? Number(process.env.THT_CALENDAR_DELAY_MS) : 5000;   // 开场后几秒再对日历，≤30s 即可
 // 记忆投影写到哪：默认 Aaron 的项目记忆区（Cowork 的 Chansey 空间），目录不存在就退回本机数据目录。
 // 定义在 app/context-pack.js（会中读 project-state.md 也要找同一个目录，两边不能各算各的）。
 const MEMORY_PROJECTION_DIR = contextPack.memoryProjectionDir(DATA);
@@ -228,6 +231,8 @@ class Session {
     this.brief = startMsg.brief || '';   // 本场背景：参会人/公司/网站/产品名，用户填写；分诊/收尾总结/深度版/归档判断时以此为准（2026-09-04 信）
     this.fixes = Array.isArray(startMsg.fixes) ? startMsg.fixes : [];   // 纠错词表 [{wrong,right}]：转写里出现 wrong 一律按 right 理解，实时原始识别保留；会后整理版应用纠错并保留 originalText
     this.env = env; this.startMsg = startMsg;
+    // 参会人校准 + 静默纠名（2026-09-22 第①批）：开场几秒后异步对一次飞书日历，参会人 + 团队名单进分诊背景、进热词、进纠名表；失败静默，会照开
+    this.calendar = null; this.nameFixes = []; this.nameTable = null;
     // 崩溃重启后新条目又从 1 开始发号，会跟恢复回来的老条目撞 id，深推理会照着 id 改错条目。
     // 与其持久化计数器，不如让 id 天生不撞：每个 Session 实例带一个随机前缀。
     this.idTag = Math.random().toString(36).slice(2, 6);
@@ -239,7 +244,7 @@ class Session {
     this.startTs = Date.now(); this.lastFinalTs = Date.now(); this.lastAudioTs = Date.now();
     this.journalPath=path.join(DATA,'state','live-sessions',this.id+'.json');
     const recovered=journal.read(this.journalPath);if(recovered?.complete)throw Error('本场已结束，请开始新会议');
-    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds'])if(recovered[k]!==undefined)this[k]=recovered[k];this.startTs=recovered.startTs||this.startTs;}
+    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds','calendar','nameFixes'])if(recovered[k]!==undefined)this[k]=recovered[k];this.startTs=recovered.startTs||this.startTs;}
 
     try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
@@ -258,6 +263,8 @@ class Session {
     // 否则这场又要 Aaron 自己口头转述一遍「那件事我已经发了」。
     try { this.memoryBlock += require('./actions').sentDigest(path.join(DATA, 'state/meeting-pipeline')); }
     catch (e) { log('已发出的事没带上 ' + e.message); }
+    this.rebuildNameTable();
+    if (!(this.calendar && this.calendar.matchedAt)) setTimeout(() => { this.matchCalendar().catch(e => log('日历匹配失败（忽略） ' + e.message)); }, CALENDAR_MATCH_DELAY_MS);
     this.triageTimer = setInterval(() => this.runTriage(), 25000);
     // 开场检索用的是会议标题和参会人，会开到一半议题往往已经变了。
     // 每 4 分钟按最近说过的话重新检索一次，让调出来的旧决定跟得上当前话题。
@@ -312,7 +319,7 @@ class Session {
     if(complete||force){this.journalWrite.stop();return this.writeJournal(complete);}
     this.journalWrite.call();return true;
   }
-  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
+  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
   // 会中把要点分好的那棵议题树（web/src/12-grouping.js 的 hlGroups）。分组在浏览器里算，
   // 会后回看页要看到同一套议题划分，所以每排完一轮就送过来存一份，归档时跟着会话一起落盘。
   setOutline(groups) {
@@ -354,7 +361,7 @@ class Session {
     return false;
   }
   broadcast(o) { const s = JSON.stringify(o); for (const c of this.clients) { try { if (c.readyState === WebSocket.OPEN) c.send(s); } catch (e) {} } }
-  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names } }; }
+  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names, calendar: this.calendar, nameFixes: this.nameFixes } }; }
   // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
   connectAsr() {
     if (this.mac || this.dg) return;            // 续场重连时已经有一个在跑，再造一个会漏掉旧的进程和端口
@@ -399,9 +406,10 @@ class Session {
     if (!text) return;
     if (r.type === 'final') {
       if (this.isDuplicateFinal({}, text)) return;
-      this.broadcast({type:'final', text});
       const at = Math.round((Date.now() - this.startTs) / 1000);
-      this.transcript.push({id: 'g' + this.idTag + (this.segSeq = (this.segSeq || 0) + 1), rev: 1, at, t: fmtClock(at), speaker: '', text});
+      const row = {id: 'g' + this.idTag + (this.segSeq = (this.segSeq || 0) + 1), rev: 1, at, t: fmtClock(at), speaker: '', text};
+      this.fixNames(row); this.broadcast({type:'final', text: row.text, seg: row.id});
+      this.transcript.push(row);
       this.charsSinceTriage += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
     } else {
       this.broadcast({type:'partial', text});
@@ -452,7 +460,7 @@ class Session {
     try { lex = require('./memory').lexHotwords(require('./memory').open(DATA), HOTWORD_CAP); }
     catch (e) { log('热词：词表读取失败，回落到简报热词 ' + e.message); }
     const fromBrief = Array.isArray(this.startMsg.hotwords) ? this.startMsg.hotwords : [];
-    const merged = [...new Set([...lex, ...fromBrief].map(x => String(x || '').trim()).filter(Boolean))].slice(0, HOTWORD_CAP);
+    const merged = [...new Set([...lex, ...fromBrief, ...this.attendeeHotwords()].map(x => String(x || '').trim()).filter(Boolean))].slice(0, HOTWORD_CAP);
     if (lex.length) log('热词：词表 ' + lex.length + ' 个 + 简报补位，共 ' + merged.length + ' 个 ' + this.id);
     const hw = merged.map(w => ({ word: w }));
     const req = { model_name: 'bigmodel', enable_nonstream: true, enable_itn: true, enable_punc: true, enable_ddc: false, show_utterances: true, enable_speaker_info: true, ssd_version: '200', end_window_size: 800, result_type: 'single', corpus: { context: JSON.stringify({ hotwords: hw }) } };
@@ -494,8 +502,10 @@ class Session {
       if (u.definite) {
         if (!text) continue;
         if (this.isDuplicateFinal(u, text)) { log('dedup final skip ' + this.id); continue; }
+        const at = Math.round((Date.now() - this.startTs) / 1000); const row = { id: 'g' + this.idTag + (this.segSeq = (this.segSeq || 0) + 1), rev: 1, at, t: fmtClock(at), speaker: out.speaker || '', text };
+        this.fixNames(row); out.text = row.text; out.seg = row.id;
         this.broadcast(out); this.volcFailStreak = 0;
-        const at = Math.round((Date.now() - this.startTs) / 1000); this.transcript.push({ id: 'g' + this.idTag + (this.segSeq = (this.segSeq || 0) + 1), rev: 1, at, t: fmtClock(at), speaker: out.speaker || '', text }); this.charsSinceTriage += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
+        this.transcript.push(row); this.charsSinceTriage += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
       } else {
         this.broadcast(out);
       }
@@ -530,13 +540,72 @@ class Session {
       if (this.lastAudioTs && Date.now() - this.lastAudioTs < 10000 && this.volcWs && this.volcWs.readyState === WebSocket.OPEN && Date.now() - (this.lastWatchdogDrop || 0) > 60000) { this.lastWatchdogDrop = Date.now(); this.dropVolc('silent while audio flowing'); }
     } else if (this.stalled) { this.stalled = false; this.broadcast({ type: 'stall_clear' }); log('stall clear ' + this.id); }
   }
+  // ===== 参会人校准：开场后对一次飞书日历（复用会后那套 calendarMatch），结果落 journal、推页面；参会人名字进热词和纠名表 =====
+  async matchCalendar(chosen) {
+    if (this.finalized) return;
+    const probe = { start: this.startTs, end: Date.now() + 30 * 60e3, calendar: chosen ? { chosen } : (this.calendar && this.calendar.chosen ? { chosen: this.calendar.chosen } : null) };   // 不带 id：会中不写 pending 文件，落盘走自己的 journal
+    await calendarMatch(probe);
+    const c = probe.calendar || {}, ev = c.event || null;
+    this.calendar = { matchedAt: Date.now(), title: ev ? ev.title : '', eventId: ev ? ev.eventId : '', start: ev ? ev.start : '', end: ev ? ev.end : '',
+      attendees: ev ? (ev.attendeeList || []).map(x => ({ name: x.name, open_id: x.open_id || '', declined: !!x.declined })) : [],
+      confidence: ev ? ev.confidence : '', chosen: c.chosen || null, reason: ev ? '' : (c.reason || '未匹配到日历'), dayEvents: c.dayEvents || [] };
+    log('日历匹配 ' + this.id + ' ' + (ev ? ('「' + ev.title + '」' + this.calendar.attendees.length + ' 人') : ('没匹配到：' + this.calendar.reason)));
+    const before = JSON.stringify(this.attendeeHotwords());
+    this.rebuildNameTable();
+    this.broadcast({ type: 'calendar', calendar: this.calendar }); this.checkpoint();
+    // 参会人名字变了 → 火山那条连接要重开一次才带上新热词（同 hotwordsChanged 的路子；本机 / Deepgram 不吃热词，不动）
+    if (before !== JSON.stringify(this.attendeeHotwords()) && this.volcWs && !this.mac && !this.dg) { try { this.volcWs.close(); } catch (e) {} this.volcWs = null; this.seq = 1; this.connectAsr(); }
+  }
+  attendeeNames() { return (this.calendar && Array.isArray(this.calendar.attendees) ? this.calendar.attendees : []).filter(x => x && x.name && !x.declined).map(x => x.name); }
+  rosterNames() { try { return contextPack.roster(this.env).names || []; } catch (e) { return []; } }
+  // 参会人姓名进热词：中英文都要、≥2 字；词表和简报热词优先，这里只补位（sendConfig 里统一去重、封顶）
+  attendeeHotwords() { return [...new Set(this.attendeeNames().map(n => nameFix.normName(n)).filter(n => [...n].length >= 2))]; }
+  // 一行「本场参会人：…；团队名单：…」+ 纠名指令，进分诊 prompt 的【本场背景】
+  peopleLine() {
+    const att = this.attendeeNames(), team = this.rosterNames().slice(0, 40);
+    if (!att.length && !team.length) return '';
+    return (att.length ? '本场参会人：' + att.join('、') : '') + (att.length && team.length ? '；' : '') + (team.length ? '团队名单：' + team.join('、') : '')
+      + '\n转写里疑似人名或团队专有名词的听写错误（同音、近音、音译），直接按上面名单纠正后输出，不要生成「疑似听写错误」这类卡片。';
+  }
+  // 纠名表 = 参会人 + 团队名单 + name-aliases.json + 词表里指向名单名字的那些 wrong→right
+  rebuildNameTable() {
+    try {
+      const names = [...this.attendeeNames(), ...this.rosterNames()];
+      const file = nameFix.readAliasFile(NAME_ALIAS_FILE);
+      const aliases = { ...file.aliases };
+      try { const mem = require('./memory'); const known = new Set(names.map(n => nameFix.normName(n)).flatMap(n => [n, ...n.split(' ')]));
+        for (const r of mem.lexAll(mem.open(DATA))) if (r.state === 'active' && known.has(r.right) && !(r.wrong in aliases)) aliases[r.wrong] = r.right; } catch (e) {}
+      this.nameTable = names.length || Object.keys(aliases).length ? nameFix.buildTable(names, { aliases, ignore: file.ignore }) : null;
+    } catch (e) { this.nameTable = null; log('纠名表没建起来（忽略） ' + e.message); }
+  }
+  // 新到的 final 先过一遍纠名再广播、再入库；原文留在 rawText，撤销时还原
+  fixNames(row) {
+    if (!this.nameTable) return;
+    const r = nameFix.fix(row.text, this.nameTable);
+    if (!r.changes.length) return;
+    row.rawText = row.text; row.text = r.text;
+    for (const c of r.changes) this.nameFixes.push({ seg: row.id, from: c.from, to: c.to });
+    const items = r.changes.map(c => ({ seg: row.id, ...c })), count = this.nameFixes.length;
+    setImmediate(() => this.broadcast({ type: 'namefix', count, items }));   // 排在这条 final 之后发，页面先有句子再有「已纠 N 处」
+  }
+  // 撤销：全部还原，撤掉的每个 from→to 进 ignore 文件，这场和下一场都不再这么改
+  undoNameFixes() {
+    if (!this.nameFixes.length) return;
+    const segs = new Set(this.nameFixes.map(x => x.seg)), restored = [];
+    for (const row of this.transcript) if (segs.has(row.id) && row.rawText != null) { row.text = row.rawText; delete row.rawText; restored.push({ seg: row.id, text: row.text }); }
+    nameFix.addIgnore(NAME_ALIAS_FILE, this.nameFixes);
+    log('撤销纠名 ' + this.nameFixes.length + ' 处 ' + this.id);
+    this.nameFixes = []; this.rebuildNameTable();
+    this.broadcast({ type: 'namefix_undone', items: restored, count: 0 }); this.checkpoint();
+  }
   setNames(names) { this.names = Object.assign({}, this.names, names || {}); this.broadcast({ type: 'names', names: this.names }); log('names ' + this.id + ' ' + Object.keys(this.names).length); }
   // 本场背景 + 纠错词表拼成一段，插进分诊/收尾总结/归档的 prompt；转写原文不受影响，只影响分析层判断。
   buildBriefBlock() {
     const assets = assetList(this.id);
-    if (!this.brief && !this.fixes.length && !assets.length) return '';
+    const people = this.peopleLine();
+    if (!this.brief && !this.fixes.length && !assets.length && !people) return '';
     let block = '';
-    if (this.brief) block += `【本场背景（人名/公司/网站，判断时以此为准）】\n${this.brief}\n\n`;
+    if (this.brief || people) block += `【本场背景（人名/公司/网站，判断时以此为准）】\n${this.brief ? this.brief + '\n' : ''}${people ? people + '\n' : ''}\n`;
     if (this.fixes.length) { block += '【已确认的纠错（转写里出现左边的词，一律按右边理解，不要据此下结论）】\n'; for (const fx of this.fixes) block += `${fx.wrong} → ${fx.right}\n`; block += '\n'; }
     if (assets.length) {
       const rel = path.relative(DATA, assetDir(this.id));
@@ -1182,7 +1251,7 @@ async function calendarMatch(sess) {
   const s0 = typeof sess.start === 'number' ? sess.start : Date.parse(sess.start), e0 = (typeof sess.end === 'number' ? sess.end : Date.parse(sess.end)) || (s0 + 3600e3);
   const bj = t => new Date(t + 8*3600e3).toISOString().slice(0,10);
   const day = bj(s0);
-  let event = null, reason = '';
+  let event = null, reason = '', dayEvents = [];
   try {
     const j = parse(await run(['calendar','+agenda','--as','user','--start', day+'T00:00:00+08:00','--end', day+'T23:59:59+08:00']));
     const items = j && j.ok ? (Array.isArray(j.data) ? j.data : (j.data && j.data.events) || []) : [];
@@ -1197,32 +1266,37 @@ async function calendarMatch(sess) {
       if (overlap > 5*60e3) cands.push({ ev, overlap });
     }
     cands.sort((x, y) => y.overlap - x.overlap);
-    const best = cands[0] ? cands[0].ev : null, bestOverlap = cands[0] ? cands[0].overlap : 0;
+    // 当天全部日程也带回去：会中「换一场」下拉要能选到不重叠的那场（人晚到 / 会提前开都常见）
+    const brief = ev => ({ eventId: ev.event_id, title: ev.summary || '', start: (ev.start_time||{}).datetime || '', end: (ev.end_time||{}).datetime || '' });
+    dayEvents = items.filter(ev => ev.event_id && (ev.start_time||{}).datetime).map(brief).slice(0, 30);
+    // 你手动定过的（选了某一场，或说了「不是日历上的会」）永远优先于自动猜
+    const chosen = sess.calendar && sess.calendar.chosen;
+    let best = cands[0] ? cands[0].ev : null; const bestOverlap = cands[0] ? cands[0].overlap : 0;
     const ratio = bestOverlap / Math.max(1, e0 - s0);
     const ambiguous = cands.length > 1 && cands[1].overlap > bestOverlap * 0.6;
-    const candidates = cands.slice(0, 4).map(c => ({ eventId: c.ev.event_id, title: c.ev.summary || '', start: (c.ev.start_time||{}).datetime || '', end: (c.ev.end_time||{}).datetime || '', overlapMin: Math.round(c.overlap/60e3) }));
+    const candidates = cands.slice(0, 4).map(c => ({ ...brief(c.ev), overlapMin: Math.round(c.overlap/60e3) }));
+    if (chosen && chosen !== 'none') best = items.find(ev => ev.event_id === chosen) || best;
     if (best) {
-      event = { title: best.summary || '', start: (best.start_time||{}).datetime || '', end: (best.end_time||{}).datetime || '',
+      const c = cands.find(x => x.ev === best);
+      event = { ...brief(best),
         location: String(best.description || best.location && best.location.name || '').slice(0,120),
-        organizer: (best.event_organizer||{}).display_name || '', eventId: best.event_id || '', calendarId: best.organizer_calendar_id || '',
-        meetingUrl: (best.vchat||{}).meeting_url || '', attendees: [],
-        confidence: (ratio >= 0.5 && !ambiguous) ? 'high' : 'low', overlapMin: Math.round(bestOverlap/60e3), candidates };
+        organizer: (best.event_organizer||{}).display_name || '', calendarId: best.organizer_calendar_id || '',
+        meetingUrl: (best.vchat||{}).meeting_url || '', attendees: [], attendeeList: [],
+        confidence: (chosen === best.event_id || (ratio >= 0.5 && !ambiguous)) ? 'high' : 'low', chosenByUser: chosen === best.event_id,
+        overlapMin: Math.round((c ? c.overlap : 0)/60e3), candidates };
       // 参会人：能读到就带上
       // 快捷命令 +list-attendees 对群日历返回空；原生 event.attendees list 能读到（2026-09-16 实测：Cary Luo / Aaron Wang / Abel Mei …）
       const aj = parse(await run(['calendar','event.attendees','list','--as','user','--params', JSON.stringify({ calendar_id: event.calendarId || 'primary', event_id: event.eventId, page_size: 100 })]));
       const list = aj && aj.ok ? ((aj.data && aj.data.items) || (Array.isArray(aj.data) ? aj.data : [])) : [];
-      event.attendees = list.filter(x => x.type !== 'resource').map(x => (x.display_name || x.user_id || '') + (x.rsvp_status === 'decline' ? '（已拒绝）' : '')).filter(Boolean).slice(0, 60);
+      const people = list.filter(x => x.type !== 'resource').slice(0, 60);
+      event.attendees = people.map(x => (x.display_name || x.user_id || '') + (x.rsvp_status === 'decline' ? '（已拒绝）' : '')).filter(Boolean);
+      event.attendeeList = people.map(x => ({ name: x.display_name || x.user_id || '', open_id: x.user_id || '', declined: x.rsvp_status === 'decline' })).filter(x => x.name);
       if (!event.attendees.length) event.attendeesNote = '日历里读不到参会人（群日历不开放名单）';
     } else if (!reason) reason = items.length ? '当天日程里没有和录音时间重叠的' : '当天日历为空';
   } catch (e) { reason = e.message; }
-  // 你手动定过的（选了某一场，或说了「不是日历上的会」）永远优先于自动猜
   const chosen = sess.calendar && sess.calendar.chosen;
-  sess.calendar = { checkedAt: Date.now(), event, reason, chosen: chosen || null };
+  sess.calendar = { checkedAt: Date.now(), event, reason, chosen: chosen || null, dayEvents };
   if (chosen === 'none') { sess.calendar.event = null; sess.calendar.reason = '你标了「不是日历上的会」'; event = null; }
-  else if (chosen && event && event.eventId !== chosen && event.candidates) {
-    const pick = event.candidates.find(c => c.eventId === chosen);
-    if (pick) { sess.calendar.event = { ...event, ...pick, confidence: 'high', chosenByUser: true }; event = sess.calendar.event; }
-  } else if (event && chosen === event.eventId) { event.confidence = 'high'; event.chosenByUser = true; }
   // D4（2026-09-22）：这里原来是裸 writeFileSync——没有 tmp+rename，也没有 fsync。
   // 写到一半断电 / 进程被杀，读方 JSON.parse 失败，这场会就从列表里消失一次。
   // 现在走 journal 的原子写，而且只动 calendar 这一个字段：读最新那份再改，不拿手上这份旧快照整份写回
@@ -1958,6 +2032,20 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       return reply(200, { ok:true, card: out.card, actions: out.actions, ...(out.alreadySent ? { alreadySent: true } : {}) });
     } catch (e) { return reply(e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { ok:false, error: e.message, ...(e.uncertain ? { uncertain: true } : {}) }); }
   }
+  // 会中「换一场」：页面 POST {id, eventId|none} → 按你的选择重对一次日历，结果照常推回页面
+  if (p.endsWith('/live-calendar')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method'); }
+    const parts = []; for await (const c of req) { parts.push(c); if (Buffer.concat(parts).length > 4000) return reply(413, { ok:false, error:'太长' }); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
+    const sid = String(j.id || ''), chosen = String(j.eventId || '').slice(0, 120);
+    const s = SESSIONS.get(sid);
+    if (!s || s.finalized) return reply(404, { ok:false, error:'这场会不在进行中' });
+    if (!chosen) return reply(400, { ok:false, error:'缺 eventId（或 none）' });
+    try { await s.matchCalendar(chosen); } catch (e) { return reply(500, { ok:false, error: e.message }); }
+    return reply(200, { ok:true, calendar: s.calendar });
+  }
   if (p.endsWith('/calendar-match')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
@@ -2295,7 +2383,7 @@ wss.on('connection', (ws, req) => {
         session.applyTranscriptEdits(msg.transcriptEdits);
         ws.__session = session;
         ws.send(JSON.stringify(session.snapshot()));
-      } else if (msg.type === 'notes') { if(session)session.notes=String(msg.notes||'').slice(0,20000); } else if (msg.type === 'uiLanguage') { if (session) session.uiLang=msg.language==='en'?'en':'zh'; } else if (msg.type === 'names') { if (session) session.setNames(msg.names); }
+      } else if (msg.type === 'notes') { if(session)session.notes=String(msg.notes||'').slice(0,20000); } else if (msg.type === 'uiLanguage') { if (session) session.uiLang=msg.language==='en'?'en':'zh'; } else if (msg.type === 'names') { if (session) session.setNames(msg.names); } else if (msg.type === 'namefix_undo') { if (session && !session.finalized) session.undoNameFixes(); }
       else if (msg.type === 'outline') { if (session && !session.finalized && role === 'speaker' && !isView) session.setOutline(msg.groups); }
       else if(msg.type==='assistantPatch'){
         if(!session||session.finalized||role!=='speaker'||isView){ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,error:'当前连接不能修改此会议'}));return;}

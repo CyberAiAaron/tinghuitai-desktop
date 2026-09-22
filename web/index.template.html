@@ -155,6 +155,16 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .verdict{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;margin-right:6px;border:1px solid var(--line)}
 .verdict.true{color:var(--ok);border-color:var(--ok)} .verdict.false{color:var(--check);border-color:var(--check)} .verdict.unsure{color:var(--warn);border-color:var(--warn)}
 .empty{color:var(--faint);font-size:13px;padding:14px 2px}
+/* 参会人校准一行 + 纠名一行（2026-09-22） */
+.cal-bar{flex:none;padding:6px 12px;font-size:12px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.cal-bar .cal-head{background:none;border:none;padding:0;color:var(--text);font:inherit;cursor:pointer;text-align:left}
+.cal-bar .cal-caret,.cal-muted{color:var(--faint)}
+.cal-pick{margin-left:auto;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:2px 4px;max-width:45%}
+.cal-people{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px}
+.cal-person{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:11px;color:var(--muted)}
+.cal-person.declined{text-decoration:line-through;color:var(--faint)}
+.namefix-bar{flex:none;padding:4px 12px;font-size:11px;color:var(--faint);border-top:1px solid var(--line)}
+.namefix-bar a{color:var(--muted)}
 
 /* 底栏 */
 .ftr{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;white-space:nowrap;padding:8px 12px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--bg);min-height:var(--ftr);overflow-x:auto}
@@ -427,8 +437,10 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     <section class="pane active" id="p-tr" data-p="tr">
       <h2><i></i><span data-i18n="h_tr">转写</span> <span class="right"><span class="pill" id="src" style="font-size:11px">—</span></span></h2>
       <div id="audio-meter" title="显示实际输入音量；转写和备份状态请分别查看。"><span class="audio-bars" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span><span id="audio-meter-label">未收音</span></div>
+      <div id="cal-bar" class="cal-bar" hidden></div>
       <textarea id="ime" hidden rows="3" data-i18n-ph="ph_ime" placeholder="点这里 → 输入法麦克风 → 说话。停顿 2.5 秒后自动收进转写。"></textarea>
       <div class="scroll tr" id="tr"><div class="empty">点「开始听会」。录音期间保持 Mac 唤醒、联网，并确认能收到双方声音。</div></div>
+      <div id="namefix-bar" class="namefix-bar" hidden></div>
       <button class="jump" id="jump" hidden data-i18n="jump">↓ 最新</button>
     </section>
     <section class="pane" id="p-hl" data-p="hl">

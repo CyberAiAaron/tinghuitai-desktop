@@ -155,6 +155,16 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 .verdict{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;margin-right:6px;border:1px solid var(--line)}
 .verdict.true{color:var(--ok);border-color:var(--ok)} .verdict.false{color:var(--check);border-color:var(--check)} .verdict.unsure{color:var(--warn);border-color:var(--warn)}
 .empty{color:var(--faint);font-size:13px;padding:14px 2px}
+/* 参会人校准一行 + 纠名一行（2026-09-22） */
+.cal-bar{flex:none;padding:6px 12px;font-size:12px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.cal-bar .cal-head{background:none;border:none;padding:0;color:var(--text);font:inherit;cursor:pointer;text-align:left}
+.cal-bar .cal-caret,.cal-muted{color:var(--faint)}
+.cal-pick{margin-left:auto;font-size:11px;color:var(--muted);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:2px 4px;max-width:45%}
+.cal-people{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px}
+.cal-person{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:11px;color:var(--muted)}
+.cal-person.declined{text-decoration:line-through;color:var(--faint)}
+.namefix-bar{flex:none;padding:4px 12px;font-size:11px;color:var(--faint);border-top:1px solid var(--line)}
+.namefix-bar a{color:var(--muted)}
 
 /* 底栏 */
 .ftr{display:flex;gap:8px;align-items:center;flex-wrap:nowrap;white-space:nowrap;padding:8px 12px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--bg);min-height:var(--ftr);overflow-x:auto}
@@ -427,8 +437,10 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     <section class="pane active" id="p-tr" data-p="tr">
       <h2><i></i><span data-i18n="h_tr">转写</span> <span class="right"><span class="pill" id="src" style="font-size:11px">—</span></span></h2>
       <div id="audio-meter" title="显示实际输入音量；转写和备份状态请分别查看。"><span class="audio-bars" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span><span id="audio-meter-label">未收音</span></div>
+      <div id="cal-bar" class="cal-bar" hidden></div>
       <textarea id="ime" hidden rows="3" data-i18n-ph="ph_ime" placeholder="点这里 → 输入法麦克风 → 说话。停顿 2.5 秒后自动收进转写。"></textarea>
       <div class="scroll tr" id="tr"><div class="empty">点「开始听会」。录音期间保持 Mac 唤醒、联网，并确认能收到双方声音。</div></div>
+      <div id="namefix-bar" class="namefix-bar" hidden></div>
       <button class="jump" id="jump" hidden data-i18n="jump">↓ 最新</button>
     </section>
     <section class="pane" id="p-hl" data-p="hl">
@@ -1358,6 +1370,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   function render(){
     if (!cur) return;
     if(applyCorrections(cur)){resetSigs();persist();}
+    renderCalendar();
     const tr = cur.transcript;
     const nTr = tr.length + '|' + (tr.length?tr[tr.length-1].at:'') + '|' + interim.length + '|' + JSON.stringify(cur.names||{})+'|'+ui+'|'+JSON.stringify(cur.i18n?.[ui]?.map||{}).length;
     if (nTr !== sigTr) {
@@ -2136,9 +2149,9 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
           cur = Object.assign(newSession('view', 'view'), S, {viewOnly:true}); resetSigs(); stickBottom = true; render(); el.src.textContent = '🎙 ' + (m.session.source||'另一台设备') + ' 在采音'; updateStatusIdle(); } } else { viewLive = false; updateStatusIdle(); } }
       else if (!running && cur && cur.viewOnly) {
         if(m.type==='assistantAck'){assistantAck(m);return;}
-      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names'])if(restored[key]!==undefined)cur[key]=restored[key];persist();resetSigs();render();}
+      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names','calendar'])if(restored[key]!==undefined)cur[key]=restored[key];cur.nameFixCount=(m.session.nameFixes||[]).length;persist();resetSigs();render();}
       else if (m.type === 'partial') { interim = m.text||''; render(); }
-        else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||''}); render(); }
+        else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||'', seg: m.seg||''}); render(); }
         else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
@@ -2153,6 +2166,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         else if (m.type === 'summary' && m.text) { cur.summary = m.text; render(); }
         else if (m.type === 'ended') { viewLive = false; cur.end = m.at||Date.now(); updateStatusIdle(); el.src.textContent = '已结束'; }
         else if (m.type === 'names' && m.names) { cur.names = m.names; render(); }
+        else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
       } };
     viewWs.onclose = () => { viewWs = null; viewLive = false; if (!running) { updateStatusIdle(); setTimeout(()=>{ checkMac().then(viewerConnect); }, 15000); } };
   }
@@ -2400,7 +2414,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         if (isDup(m.text)) return;                       // 长句在 20 秒内重发，丢掉
         const spk = m.speaker ? String(m.speaker) : whoSpoke(lastFinalAt || (now - 8000), now);
         lastFinalAt = now;
-        cur.transcript.push({at: now, t: Math.round((now-cur.start)/1000), text: m.text, spk});
+        cur.transcript.push({at: now, t: Math.round((now-cur.start)/1000), text: m.text, spk, seg: m.seg||''});
         // 识别语言选「自动」时，攒够几句就去认一次是中文还是英文。
         // 这一行以前漏了，于是「自动」这个选项从来没真正生效过（2026-09-12 补）。
         try { maybeDetectTongue(); } catch(e){}
@@ -2413,6 +2427,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         else if (m.type === 'condensed') applyCondensed(m);
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
+        else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
+        else if (m.type === 'snapshot' && m.session) { cur.calendar = m.session.calendar || null; cur.nameFixCount = (m.session.nameFixes || []).length; persist(); renderCalendar(); }   // 续场 / 重连时把日历和纠名计数接回来
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }
       // R1：中转 12 分钟收不到音频就自己把这场收尾，然后发这条。页面原来只记一笔就接着录——
       // 手机锁屏再解锁那种场合，后半场其实一个字都没进库，人却毫无察觉。服务端那边已经结束了，
@@ -3754,6 +3770,64 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
 
   cfg.key='';cfg.relayToken=window.THT_BOOT?.relayToken||cfg.relayToken;
   ['s-provider','s-key','s-base','s-quick','s-model','s-relay'].forEach(id=>document.getElementById(id)?.closest('.field')?.setAttribute('hidden',''));
+  // ===== 参会人校准 + 静默纠名（2026-09-22 第①批）=====
+  // 转写列顶部一行「📅 会议标题 · N 人」：点开看参会人名单、「换一场」下拉挑同一天别的日程（POST /live-calendar）。
+  // 转写列底部一行灰字「已自动纠 N 处 · 撤销」：服务端按参会人 + 团队名单静默改过的人名，点撤销整体还原并让服务端记住不再这么改。
+  let calSig = '', calOpen = false;
+  const calBar = $('#cal-bar'), nfBar = $('#namefix-bar');
+  const calT = (zh, en) => ui === 'en' ? en : zh;
+  const calClock = s => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toTimeString().slice(0, 5) : ''; };
+  function renderCalendar(){
+    if (!calBar || !nfBar) return;
+    const c = cur && cur.calendar, live = !!cur && !cur.end && (running || (cur.viewOnly && viewLive));
+    const n = cur && cur.nameFixCount || 0;
+    const sig = JSON.stringify([cur && cur.id, c, n, live, calOpen, ui]);
+    if (sig === calSig) return; calSig = sig;
+    if (!cur || (!c && !live)) calBar.hidden = true;
+    else if (!c || !c.matchedAt) { calBar.hidden = false; calBar.innerHTML = `<span class="cal-muted">📅 ${calT('正在对日历…', 'Matching calendar…')}</span>`; }
+    else {
+      calBar.hidden = false;
+      const others = (c.dayEvents || []).filter(e => e.eventId !== c.eventId);
+      const pick = live ? `<select id="cal-pick" class="cal-pick"><option value="">${calT('换一场…', 'Switch…')}</option>${others.map(e => `<option value="${esc(e.eventId)}">${esc(calClock(e.start))} ${esc(e.title || '(无标题)')}</option>`).join('')}${c.eventId ? `<option value="none">${calT('不是日历上的会', 'Not on calendar')}</option>` : ''}</select>` : '';
+      if (!c.title) calBar.innerHTML = `<span class="cal-muted">📅 ${calT('未匹配到日历', 'No calendar match')}</span>${pick}`;
+      else {
+        const people = c.attendees || [];
+        calBar.innerHTML = `<button type="button" class="cal-head" data-cal-toggle aria-expanded="${calOpen}">📅 ${esc(c.title)} · ${people.length} ${calT('人', people.length === 1 ? 'person' : 'people')}${c.confidence === 'low' ? `<span class="cal-muted"> · ${calT('猜的', 'guess')}</span>` : ''} <span class="cal-caret">${calOpen ? '▾' : '▸'}</span></button>${pick}`
+          + (calOpen ? `<div class="cal-people">${people.length ? people.map(p => `<span class="cal-person${p.declined ? ' declined' : ''}">${esc(p.name)}</span>`).join('') : `<span class="cal-muted">${calT('日历里读不到参会人', 'Attendees not readable')}</span>`}</div>` : '');
+      }
+    }
+    nfBar.hidden = !n;
+    if (n) nfBar.innerHTML = `${calT('已自动纠 ' + n + ' 处', 'Auto-fixed ' + n + ' name' + (n > 1 ? 's' : ''))} · <a href="#" data-namefix-undo>${calT('撤销', 'Undo')}</a>`;
+  }
+  if (calBar) calBar.addEventListener('click', e => { if (e.target.closest('[data-cal-toggle]')) { calOpen = !calOpen; renderCalendar(); } });
+  if (calBar) calBar.addEventListener('change', async e => {
+    const sel = e.target.closest('#cal-pick'); if (!sel || !sel.value || !cur) return;
+    const eventId = sel.value; sel.disabled = true;
+    try {
+      const r = await fetch(relayBase() + '/live-calendar?token=' + encodeURIComponent(cfg.relayToken || ''), { method: 'POST', headers: { 'content-type': 'application/json', 'x-tht-token': cfg.relayToken || '' }, body: JSON.stringify({ id: cur.id, eventId }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) note((j && j.error) || calT('换日程没成功', 'Could not switch event'), true);
+      else { cur.calendar = j.calendar; persist(); renderCalendar(); }
+    } catch (err) { note(calT('换日程没成功：', 'Could not switch event: ') + err.message, true); }
+    finally { sel.disabled = false; }
+  });
+  if (nfBar) nfBar.addEventListener('click', e => {
+    if (!e.target.closest('[data-namefix-undo]')) return; e.preventDefault();
+    const w = (asrWs && asrWs.readyState === 1) ? asrWs : (viewWs && viewWs.readyState === 1 ? viewWs : null);
+    if (!w) { note(calT('没连上 Mac，撤不了', 'Not connected to the Mac'), true); return; }
+    try { w.send(JSON.stringify({ type: 'namefix_undo' })); } catch (err) {}
+  });
+  // 服务端消息 → 本场对象。final 帧带 seg（服务端条目号），撤销时按它找回那一句。
+  function applyCalendarMsg(m){
+    if (!cur) return;
+    if (m.type === 'calendar') { cur.calendar = m.calendar || null; persist(); renderCalendar(); }
+    else if (m.type === 'namefix') { cur.nameFixCount = m.count || 0; persist(); renderCalendar(); }
+    else if (m.type === 'namefix_undone') {
+      for (const it of m.items || []) { const row = (cur.transcript || []).find(x => x && x.seg === it.seg); if (row) row.text = it.text; }
+      cur.nameFixCount = 0; persist(); resetSigs(); render();
+    }
+  }
+
   // ===== 启动 =====
   const liveSess = state.live && state.sessions.find(s=>s.id===state.live && !s.end);
   const last = [...state.sessions].sort((a,b)=>b.start-a.start)[0];

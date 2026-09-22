@@ -167,7 +167,7 @@
         if (isDup(m.text)) return;                       // 长句在 20 秒内重发，丢掉
         const spk = m.speaker ? String(m.speaker) : whoSpoke(lastFinalAt || (now - 8000), now);
         lastFinalAt = now;
-        cur.transcript.push({at: now, t: Math.round((now-cur.start)/1000), text: m.text, spk});
+        cur.transcript.push({at: now, t: Math.round((now-cur.start)/1000), text: m.text, spk, seg: m.seg||''});
         // 识别语言选「自动」时，攒够几句就去认一次是中文还是英文。
         // 这一行以前漏了，于是「自动」这个选项从来没真正生效过（2026-09-12 补）。
         try { maybeDetectTongue(); } catch(e){}
@@ -180,6 +180,8 @@
         else if (m.type === 'condensed') applyCondensed(m);
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
+        else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
+        else if (m.type === 'snapshot' && m.session) { cur.calendar = m.session.calendar || null; cur.nameFixCount = (m.session.nameFixes || []).length; persist(); renderCalendar(); }   // 续场 / 重连时把日历和纠名计数接回来
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }
       // R1：中转 12 分钟收不到音频就自己把这场收尾，然后发这条。页面原来只记一笔就接着录——
       // 手机锁屏再解锁那种场合，后半场其实一个字都没进库，人却毫无察觉。服务端那边已经结束了，

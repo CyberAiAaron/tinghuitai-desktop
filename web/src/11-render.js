@@ -43,6 +43,7 @@
   function render(){
     if (!cur) return;
     if(applyCorrections(cur)){resetSigs();persist();}
+    renderCalendar();
     const tr = cur.transcript;
     const nTr = tr.length + '|' + (tr.length?tr[tr.length-1].at:'') + '|' + interim.length + '|' + JSON.stringify(cur.names||{})+'|'+ui+'|'+JSON.stringify(cur.i18n?.[ui]?.map||{}).length;
     if (nTr !== sigTr) {

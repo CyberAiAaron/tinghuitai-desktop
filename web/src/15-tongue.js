@@ -68,9 +68,9 @@
           cur = Object.assign(newSession('view', 'view'), S, {viewOnly:true}); resetSigs(); stickBottom = true; render(); el.src.textContent = '🎙 ' + (m.session.source||'另一台设备') + ' 在采音'; updateStatusIdle(); } } else { viewLive = false; updateStatusIdle(); } }
       else if (!running && cur && cur.viewOnly) {
         if(m.type==='assistantAck'){assistantAck(m);return;}
-      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names'])if(restored[key]!==undefined)cur[key]=restored[key];persist();resetSigs();render();}
+      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names','calendar'])if(restored[key]!==undefined)cur[key]=restored[key];cur.nameFixCount=(m.session.nameFixes||[]).length;persist();resetSigs();render();}
       else if (m.type === 'partial') { interim = m.text||''; render(); }
-        else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||''}); render(); }
+        else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||'', seg: m.seg||''}); render(); }
         else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
@@ -85,6 +85,7 @@
         else if (m.type === 'summary' && m.text) { cur.summary = m.text; render(); }
         else if (m.type === 'ended') { viewLive = false; cur.end = m.at||Date.now(); updateStatusIdle(); el.src.textContent = '已结束'; }
         else if (m.type === 'names' && m.names) { cur.names = m.names; render(); }
+        else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
       } };
     viewWs.onclose = () => { viewWs = null; viewLive = false; if (!running) { updateStatusIdle(); setTimeout(()=>{ checkMac().then(viewerConnect); }, 15000); } };
   }
