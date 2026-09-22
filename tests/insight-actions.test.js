@@ -205,7 +205,7 @@ test('setDate 兜底 A/B（Aaron 2026-09-22 拍板）：有 memory.db 但查不�
       assert.ok(part.patch.task.memoryCardError, label + ' 留原因'); assert.match(part.patch.task.note, /承诺卡没记上（任务已建，请手工补记忆）/, label);
     } finally { mem.putCard = orig; }
   }
-  mem.updateCard = () => ({}); try { const part = await IA.setDate({ card, args: { owner: 'Cary Luo', createIfMissing: true }, session: { id: 's1' }, db, execImpl: fakeExec([]) }); assert.equal(part.memoryCardId, ''); assert.match(part.patch.task.note, /承诺卡没记上/, 'updateCard 无 id 同样留痕'); } finally { mem.updateCard = origU; }
+  mem.updateCard = () => ({}); try { const part = await IA.setDate({ card, args: { owner: 'Cary Luo', createIfMissing: true }, session: { id: 's1' }, db, execImpl: fakeExec([]) }); assert.equal(part.ok, true); assert.equal(part.patch.task.url, 'https://example.test/task/g-1'); assert.equal(part.memoryCardId, ''); assert.equal(part.patch.task.memoryCardError, 'memory 写卡没回卡号'); assert.match(part.patch.task.note, /承诺卡没记上/, 'updateCard 无 id 同样留痕'); } finally { mem.updateCard = origU; }
 });
 
 test('taskCreate：命令成功但回包没有链接也没有编号 → ok:false 且 uncertain（Codex 8b2bdefd F4）；setDate 不写 done', async () => {
