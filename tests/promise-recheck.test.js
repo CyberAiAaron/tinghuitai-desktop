@@ -30,16 +30,23 @@ test('分诊提示词含「承诺回查」规则，源文件和构建产物都�
     assert.ok(!text.includes('至今未落地'), name + '不许断言「至今未落地」：沉淀里只有「没有完成记录」，不等于确认没做');
     assert.ok(text.includes('没带日期的，不做承诺回查'), name + '缺「没日期不回查」');
     assert.ok(text.includes('相近的事不要硬凑'), name + '缺保守条款');
+    assert.ok(text.includes('截止未到'), name + '缺「截止未到不回查」（Codex 55ec859b：pending 不等于逾期）');
   }
 });
-test('toPromptBlock 不依赖 sqlite：日期合法才带，缺失或非法不带，不出现 undefined', () => {
+test('toPromptBlock 不依赖 sqlite：日期按真实日历校验才带，缺失或非法不带，截止未到的承诺标出来', () => {
   const b = ops.toPromptBlock([
     { kind: 'promise', text: 'A', meeting_title: '会1', recorded_at: '2026-09-12T02:00:00.000Z' },
     { kind: 'promise', text: 'B', meeting_title: '会2' },
+    { kind: 'promise', text: 'D', meeting_title: '会4', recorded_at: '2026-99-99T00:00:00.000Z' },
+    { kind: 'promise', text: 'E', meeting_title: '会5', recorded_at: '2026-09-12T02:00:00.000Z', due: '2099-01-01' },
+    { kind: 'promise', text: 'F', meeting_title: '会6', recorded_at: '2026-09-12T02:00:00.000Z', due: '2020-01-01' },
     { kind: 'promise', text: 'C', meeting_title: '会3', recorded_at: '昨天' },
   ]);
   assert.match(b, /- \[承诺\] A　来自《会1》 2026-09-12\n/, '合法日期要带：' + b);
   assert.match(b, /- \[承诺\] B　来自《会2》\n/, '缺日期就不带：' + b);
+  assert.match(b, /- \[承诺\] D　来自《会4》\n/, '格式对但不是真实日历日期（99 月）也不带：' + b);
+  assert.match(b, /- \[承诺\] E 截止 2099-01-01（截止未到）　来自《会5》 2026-09-12\n/, '截止日还没到要标出来：' + b);
+  assert.match(b, /- \[承诺\] F 截止 2020-01-01　来自《会6》 2026-09-12\n/, '已过截止日不标：' + b);
   assert.match(b, /- \[承诺\] C　来自《会3》$/, '非法日期不带：' + b);
-  assert.ok(!/undefined|昨天/.test(b), '不能把脏字符串当日期：' + b);
+  assert.ok(!/undefined|昨天|99-99/.test(b), '不能把脏字符串当日期：' + b);
 });
