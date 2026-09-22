@@ -129,6 +129,17 @@ test('briefNote：三级编号、结论加粗、待办表；没认的人写「�
   assert.equal(nameIn('S3 准备材料，S1 review', m), '未认人 准备材料，Cary Luo review');
 });
 
+test('briefNote：REQ-004 上限只压模型产出——核心结论最多 3 条、overview 待办最多 5 条；处理台卡片是他自己维护的，一条不截', () => {
+  const many = clone(fx.enhanced);
+  many.brief.overview.conclusions = ['a', 'b', 'c', 'd', 'e'];
+  many.brief.overview.todos = Array.from({ length: 8 }, (_, i) => ({ what: 'T' + (i + 1), owner: '', due: '' }));
+  const md = share.briefNote(many, null);
+  assert.equal((md.match(/^- \*\*[a-e]\*\*$/gm) || []).length, 3);
+  assert.equal((md.match(/^\| \d+ \| T\d+ /gm) || []).length, 5);
+  const cards = Array.from({ length: 7 }, (_, i) => ({ id: 'c-' + String(i).repeat(12), kind: 'self', text: 'C' + (i + 1), owner: '', due: '', state: 'open' }));
+  assert.equal((share.briefNote(many, cards).match(/^\| \d+ \| C\d+ /gm) || []).length, 7);
+});
+
 // ===================== 走真服务进程 =====================
 const freePort = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 function stubCli(dir) {

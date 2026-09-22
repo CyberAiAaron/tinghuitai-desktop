@@ -61,7 +61,7 @@ function briefNote(session, cards) {
   const out = [];
   if (b.meta && b.meta.scope) out.push(N(b.meta.scope), '');
   out.push('## 1. 一屏速览', '');
-  (ov.conclusions || []).forEach(c => out.push('- **' + N(c) + '**'));
+  (ov.conclusions || []).slice(0, 3).forEach(c => out.push('- **' + N(c) + '**'));   // REQ-004：核心结论最多 3 条
   if (!(ov.conclusions || []).length) out.push('_这场没有形成核心结论。_');
   out.push('', '## 2. 议题', '');
   const heads = ov.topics || [];
@@ -75,7 +75,7 @@ function briefNote(session, cards) {
   });
   const rows = Array.isArray(cards)
     ? cards.filter(c => c.state !== 'dismissed').map(c => ({ what: c.text, owner: c.owner || ((c.draft || {}).assignee) || '', due: c.due || ((c.draft || {}).due) || '' }))
-    : (ov.todos || []).map(t => ({ what: t.what, owner: t.owner || '', due: t.due || '' }));
+    : (ov.todos || []).slice(0, 5).map(t => ({ what: t.what, owner: t.owner || '', due: t.due || '' }));   // REQ-004：模型给的待办最多 5 条；处理台卡片是他自己维护的清单，不截
   out.push('## 3. 待办', '');
   if (!rows.length) out.push('_这场没有待办。_');
   else { out.push('| # | 事项 | 负责人 | 期限 |', '|---|---|---|---|'); rows.forEach((r, i) => out.push('| ' + (i + 1) + ' | ' + N(r.what).replace(/\|/g, '／') + ' | ' + (N(r.owner) || '—') + ' | ' + (r.due || '—') + ' |')); }

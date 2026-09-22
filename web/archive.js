@@ -170,7 +170,7 @@ function renderBrief(s){
   $('#bf-sum').innerHTML=
     (b.meta&&b.meta.scope?'<p class="bf-scope">'+nm(b.meta.scope,map)+'</p>':'')
     +'<section class="fs"><h3 class="fs-h"><span class="fs-n">1</span>'+esc(t('quick'))+'</h3>'
-      +(ov.conclusions.length?ov.conclusions.map(c=>'<div class="bf-key"><b>'+nm(c,map)+'</b></div>').join(''):'<p class="bf-note">'+esc(t('noKeyc'))+'</p>')
+      +(ov.conclusions.length?ov.conclusions.slice(0,3).map(c=>'<div class="bf-key"><b>'+nm(c,map)+'</b></div>').join(''):'<p class="bf-note">'+esc(t('noKeyc'))+'</p>')
       +'<ul class="bf-topics">'+ov.topics.map((x,i)=>'<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><span>'+nm(x.title,map)+'</span><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>').join('')+'</ul><div class="bf-bar">'+bar+'</div></section>'
     +'<section class="fs"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(t('topics'))+'</h3>'+(b.topics||[]).map(card).join('')+'</section>'
     // REQ-009 + 09-22：待办是这一节的表，内容由 paintActions() 填（读 /meeting-actions）；表下面是一句话改待办的对话框。
