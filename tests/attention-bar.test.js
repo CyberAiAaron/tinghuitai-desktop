@@ -81,6 +81,7 @@ test('页面接得住：有 attn-bar、健康检查和广播两条路都会更�
  assert.match(html,/id="attn-bar" hidden/,'红条默认隐藏');
  assert.match(html,/setAttention\(h\.attention\)/,'页面刷新后要从 /health 把条挂回来');
  assert.match(html,/m\.type === 'attention'[\s\S]{0,80}setAttention\(m\.attention\)/,'会中广播要接');
+ assert.ok((html.match(/m\.type === 'attention'\) \{ try \{ setAttention\(m\.attention\); \} catch\(e\)\{\} /g)||[]).length>=2,'会中（录音）和旁听（role=view）两条 WS 都要接 attention');
  assert.match(html,/const on = !!\(a && a\.total > 0\);\s*bar\.hidden = !on;/,'total 为 0 时隐藏');
  assert.match(html,/已停止重试，要你来点/);assert.match(html,/会自动重试/);
  assert.match(html,/#attn-open'\)\.onclick = \(\) => \{ const b = \$\('#b-hist'\)/,'唯一动作是去会议列表');

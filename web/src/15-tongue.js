@@ -62,6 +62,8 @@
     try { viewWs = new WebSocket(`${wsBase()}?token=${encodeURIComponent(cfg.relayToken)}&role=view`); } catch(e) { return; }
     viewWs.onopen = () => { viewWs.send(JSON.stringify({type:'view'})); };
     viewWs.onmessage = ev => { let m; try { m = JSON.parse(ev.data); } catch(e) { return; }
+      // THT-R2：不在录音、只是开着页面（旁听或会后）也要看到「会后处理有失败」红条，不然它只在下一次 checkMac 时才挂回来。
+      if (m.type === 'attention') { try { setAttention(m.attention); } catch(e){} return; }
       if (m.type === 'snapshot') { if (m.session) { viewLive = !m.session.end; if (!running) { const S = normalizeSession(m.session);
           ['highlights','todos','factchecks'].forEach(k => { (S[k]||[]).forEach((x,i) => { if (!x.at) x.at = (S.start||Date.now()) + i*1000; }); });
           (S.transcript||[]).forEach((x,i) => { if (!x.at) x.at = (S.start||Date.now()) + (x.t||i)*1000; });
