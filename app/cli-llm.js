@@ -111,8 +111,12 @@ function args(kind, { model = '', system = '' } = {}) {
 
 // 返回 { ok, text, reason, usage, model }。reason 是失败原因码，给红条和日志用，不给用户看原文。
 // 失败原因码：not_installed / spawn_failed / timeout / proc_error / cli_exit_<码> / cli_is_error / empty / bad_json
-// maxTokens：claude 命令行没有 max_tokens 参数，走 CLAUDE_CODE_MAX_OUTPUT_TOKENS 环境变量（批 5 提速：分诊 2000 → 700）；不给就不设，沿用命令行默认。
-function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null, maxTokens = 0 } = {}) {
+// thinking：claude 命令行的思考预算，走 MAX_THINKING_TOKENS 环境变量；0 = 关掉思考（批 5 提速：会中分诊用）。undefined = 不设，沿用命令行默认。
+//   实测 2026-09-22（haiku 同一题）：MAX_THINKING_TOKENS=0 → thinking 0 / api 1.2 s；不设 → thinking 107 / api 2.3 s。
+//   会中分诊那 2,000 多输出 token 里大半是思考（一次 4 条要点、正文 212 字，output_tokens 2,278），所以 max_tokens 砍不到它。
+// ⚠️ 没走 CLAUDE_CODE_MAX_OUTPUT_TOKENS 限输出：实测超限时 claude -p 直接 is_error「exceeded the N output token maximum」，
+//   整次调用报废而不是截断——比原来「截断 + 抢救」更糟，而且思考 token 也算在里面。输出上限只对接口那条路（app/llm.js openai）生效。
+function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null, thinking } = {}) {
   const spec = kind === 'custom' ? custom : null;
   if (kind === 'custom' && !spec) return Promise.resolve({ ok: false, reason: 'not_configured' });
   let bin = spec ? spec.bin : findBin(kind);
@@ -127,7 +131,7 @@ function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}
     try { p = spawn(bin, spec ? customArgs(spec, { prompt: full, model }) : args(kind, { model, system }),
       spec ? { cwd: dataDir || process.cwd(), env: customEnv() }
            : { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}),
-               ...(kind === 'claude' && Number(maxTokens) > 0 ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(Math.floor(Number(maxTokens))) } : {}) } }); }
+               ...(kind === 'claude' && Number.isFinite(Number(thinking)) && thinking !== undefined && thinking !== null && thinking !== '' ? { MAX_THINKING_TOKENS: String(Math.max(0, Math.floor(Number(thinking)))) } : {}) } }); }
     catch (e) { log('cli-llm spawn 失败 ' + e.message); return finish({ ok: false, reason: 'spawn_failed' }); }
     let out = '', err = '';
     const timer = setTimeout(() => { log('cli-llm 超时 ' + kind); finish({ ok: false, reason: 'timeout' }); try { p.kill('SIGTERM'); } catch (e) {} setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} }, 2000); }, timeoutMs);
@@ -193,6 +197,9 @@ function parseOut(kind, out, log) {
     usage: {
       in: (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
       out: u.output_tokens || 0,
+      // 批 5：思考 token 和轮数也记下来——分诊慢在哪（思考 / 多轮工具调用 / 正文）以后账本上能直接看
+      thinking: Number((u.output_tokens_details && u.output_tokens_details.thinking_tokens) || 0),
+      turns: Number(d.num_turns || 0),
     },
   };
 }

@@ -8,7 +8,10 @@
 // 这个文件只放纯函数和一个小状态机，server.js 的 runTriageBody 调它们；不碰网络、不读文件。
 //   ① existedSummary   已有条目只传 id + 前 20 字（原来整条 JSON 回传，20 条要点 + 20 待办 + 20 看法能到几千字）
 //   ② outputRules      提示词尾巴：只输出新增；text ≤40 字、why ≤30 字、evidence 只引原句片段 ≤40 字
-//   ③ MAX_OUTPUT_TOKENS 700（原 2000）。命令行那条路（claude -p）没有 max_tokens 参数，靠 CLAUDE_CODE_MAX_OUTPUT_TOKENS 环境变量传（app/cli-llm.js）
+//   ③ MAX_OUTPUT_TOKENS 700（原 2000）。只对接口那条路（app/llm.js openai，max_tokens）生效；claude 命令行不设硬上限——
+//      实测 CLAUDE_CODE_MAX_OUTPUT_TOKENS 超限是整次报错不是截断（见 app/cli-llm.js 头注）。
+//   ③b liveThinking     分诊关思考（LLM_LIVE_THINKING 默认 '0'）。这一条不在 Aaron 拍板的六项里，是实测后加的：
+//      那 2,000 多输出 token 里大半是思考（一次 4 条要点正文 212 字、output_tokens 2,278），提示词瘦身砍不到它；不关思考到不了 ≤10 s。
 //   ④ gateWindow       Jev 命中触发的分诊：只带命中句 ±5 句 + 还没分诊过的增量，不再整段 8000 字
 //   ⑤ PackDelta        项目背景 / 记忆块一场会只在第一次分诊全量带；之后 hash 不变就换成一行占位，用量账 contextDelta 记 same / full
 //   ⑥ triageInterval   JEV_GATE=on → 120 s 兜底、只补漏；off → 25 s 全量（与改前一致）
@@ -27,6 +30,13 @@ const KEEP_EXISTED = 20;
 
 // ⑥ 定时器间隔：门卫开着就只兜底
 function triageInterval(gateEnabled) { return gateEnabled ? INTERVAL_GATE_ON_MS : INTERVAL_GATE_OFF_MS; }
+
+// ③b 分诊的思考预算：LLM_LIVE_THINKING '0' → 0（关）；'' / 缺 → undefined（不干预）；正整数 → 该数；其他非法值 → undefined
+function liveThinking(env) {
+  const raw = env && env.LLM_LIVE_THINKING;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return undefined;
+  const n = Number(raw); return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
 
 // ① 已有条目摘要：非 stale、各留最近 20 条、每条 id + 前 20 字。给模型去重用，不需要全文。
 function existedSummary({ highlights, todos, factchecks } = {}, { keep = KEEP_EXISTED, chars = SUMMARY_CHARS } = {}) {
@@ -74,4 +84,4 @@ class PackDelta {
 const hashOf = text => crypto.createHash('sha256').update(String(text || '')).digest('hex').slice(0, 12);
 
 module.exports = { MAX_OUTPUT_TOKENS, INTERVAL_GATE_ON_MS, INTERVAL_GATE_OFF_MS, HIT_WINDOW, SUMMARY_CHARS,
-  triageInterval, existedSummary, outputRules, gateWindow, PackDelta, hashOf };
+  triageInterval, liveThinking, existedSummary, outputRules, gateWindow, PackDelta, hashOf };

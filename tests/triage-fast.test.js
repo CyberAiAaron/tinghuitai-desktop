@@ -39,14 +39,27 @@ test('② outputRules：只新增 + 上限；sweep 才有「只补漏」；英�
   assert.match(en, /ONLY new items/); assert.match(en, /Sweep round/); assert.doesNotMatch(en, /只输出/);
 });
 
-test('③ 输出上限 700：server.js 的分诊调用用 MAX_OUTPUT_TOKENS，不再写死 2000；命令行路只给 claude 设环境变量', () => {
+test('③ 输出上限 700 只走接口路；命令行不设 CLAUDE_CODE_MAX_OUTPUT_TOKENS（超限是整次报错）；分诊关思考走 MAX_THINKING_TOKENS，只给 claude 设', () => {
   assert.equal(T.MAX_OUTPUT_TOKENS, 700);
   assert.match(server, /triageFast\.MAX_OUTPUT_TOKENS, 'live', trace\)/, '分诊 askModel 用常量');
   assert.doesNotMatch(server, /【最新转写】\\n\$\{recent\}\$\{userReminder\}`, 2000/, '2000 那个字面量该没了');
   const cli = fs.readFileSync(path.join(root, 'app/cli-llm.js'), 'utf8');
-  assert.match(cli, /kind === 'claude' && Number\(maxTokens\) > 0 \? \{ CLAUDE_CODE_MAX_OUTPUT_TOKENS/, 'claude 命令行按 maxTokens 设环境变量，别家不设');
+  assert.doesNotMatch(cli, /CLAUDE_CODE_MAX_OUTPUT_TOKENS:/, '不许给命令行设硬输出上限（09-22 实测 haiku 上限 60：is_error「exceeded the 60 output token maximum」，整次报废）');
+  assert.match(cli, /kind === 'claude' && [^\n]*\{ MAX_THINKING_TOKENS: String\(Math\.max\(0, Math\.floor\(Number\(thinking\)\)\)\) \}/, '只有 claude 命令行按 thinking 设 MAX_THINKING_TOKENS');
   const llm = fs.readFileSync(path.join(root, 'app/llm.js'), 'utf8');
-  assert.match(llm, /cliLlm\.askDetailed\(p\.kind, user, \{[^}]*maxTokens \}\)/, 'llm.js 的 cli 适配器把 maxTokens 传下去');
+  assert.match(llm, /cliLlm\.askDetailed\(p\.kind, user, \{[^}]*thinking \}\)/, 'llm.js 的 cli 适配器把 thinking 传下去');
+  assert.match(server, /thinking: triageFast\.liveThinking\(this\.env\)/, '分诊 trace 带 thinking');
+  assert.match(server, /thinking: trace \? trace\.thinking : undefined/, 'askModel 把 trace.thinking 递给 llm.ask');
+  // liveThinking 的解析：'0' 关；'' / 缺 / 非法 → 不干预；正整数原样
+  assert.equal(T.liveThinking({ LLM_LIVE_THINKING: '0' }), 0);
+  assert.equal(T.liveThinking({ LLM_LIVE_THINKING: '' }), undefined);
+  assert.equal(T.liveThinking({}), undefined);
+  assert.equal(T.liveThinking({ LLM_LIVE_THINKING: 'abc' }), undefined);
+  assert.equal(T.liveThinking({ LLM_LIVE_THINKING: '-5' }), undefined);
+  assert.equal(T.liveThinking({ LLM_LIVE_THINKING: '1024' }), 1024);
+  // 用量账：命令行的 usage 多带 thinking / turns，noteUsage 落账
+  assert.match(cli, /thinking: Number\(\(u\.output_tokens_details && u\.output_tokens_details\.thinking_tokens\) \|\| 0\)/);
+  assert.match(llm, /\{ thinking: u\.thinking \}/);
 });
 
 test('④ gateWindow：命中 ±5 ∪ 未分诊增量，升序去重、不越界；没有命中就只剩增量', () => {

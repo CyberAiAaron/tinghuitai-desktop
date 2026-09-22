@@ -221,7 +221,7 @@ const isTimeoutCode = code => /timeout|abort/i.test(String(code || ''));
 async function askModel(env, system, user, maxTokens, tier, trace) {
   // 不认品牌：按 settings 的降级链挨个试（app/llm.js）。换一家模型只改配置，不动这里。
   const r = await llm.ask(env, { kind: tier || 'post', system, user, maxTokens, dataDir: DATA, log, fetchImpl: fetch,
-    skip: (trace && trace.skip) || 0, timeoutMs: (trace && trace.timeoutMs) || 0 });
+    skip: (trace && trace.skip) || 0, timeoutMs: (trace && trace.timeoutMs) || 0, thinking: trace ? trace.thinking : undefined });
   if (trace) { trace.errorCode = r.errorCode || ''; trace.timedOut = (r.attempts && r.attempts.length) ? isTimeoutCode(r.attempts[0].errorCode) : (!r.text && isTimeoutCode(r.errorCode)); if (trace.timedOut) LLM_HEALTH.timeouts++; }
   // 一把钥匙都没配不是「模型坏了」，是还没配：不计入故障计数，交给就绪条去说。
   if (r.errorCode !== 'no_provider') markLlm(!!r.text, r.errorCode || '');
@@ -861,7 +861,7 @@ class Session {
       // 带了哪几份、哪一版会跟着这次调用记进用量账（app/context-pack.js）。
       // 批 5：一场会第一次分诊全量带资料，之后 hash 不变就换成一行占位（用量账 contextDelta = same / full，app/triage-fast.js PackDelta）
       const pack = this.packDelta.apply(contextPack.build(this.env, { purpose: 'live', dataDir: DATA, session: this, meetingId: this.id }));
-      const trace = { sessionId: this.id, purpose: 'triage', pack, skip: this.llmSkip || 0, timeoutMs: LIVE_LLM_TIMEOUT_MS };
+      const trace = { sessionId: this.id, purpose: 'triage', pack, skip: this.llmSkip || 0, timeoutMs: LIVE_LLM_TIMEOUT_MS, thinking: triageFast.liveThinking(this.env) };   // 批 5：分诊默认关思考（LLM_LIVE_THINKING）
       const gateBlock = gateOn ? this.jev.marksBlock(endIndex) : '';
       const raw = await askModel(this.env, sys, `${pack.text}${fbBlock}\n\n【已有条目】${existed}${gateBlock}\n\n【最新转写】\n${recent}${userReminder}`, triageFast.MAX_OUTPUT_TOKENS, 'live', trace);
       // R4：同一场连续 2 次首选超时 → 这场后续都跳过首选（skip），别每 40 秒白等一次；超时那一段也算分诊过，游标照样前进，不越积越长。
