@@ -116,9 +116,8 @@ function normalizeView(f) { if (!f || typeof f !== 'object') return f; let k = S
 // 看法必须带一句能在最新转写里找到的原话；找不到就整条丢掉（Aaron：说不准的不说）。
 function viewNorm(s) { return String(s || '').replace(/[\s“”"'‘’「」『』（）()，。、,.!?！？：:；;…—\-]/g, ''); }
 function viewGrounded(f, hay) { const ev = viewNorm(f && f.evidence); if (ev.length < 6 || !hay) return false; if (hay.includes(ev.slice(0, 10)) || hay.includes(ev.slice(0, 8))) return true; for (let i = 5; i + 10 <= ev.length; i += 5) if (hay.includes(ev.slice(i, i + 10))) return true; return false; }
-// 洞察（0.6.14）：claim ≤30 字、必须有 source 和 why，禁词（无法核实 / 建议）直接丢。返回 null = 丢弃。
-const INSIGHT_BAN = /无法核实|需确认|待核实|需要确认|待确认|建议|应该|可以考虑|听错|说错|口误|cannot (be )?verif|not verifiable|you should|consider /i;
-function normalizeInsight(f) { if (!f || typeof f !== 'object') return null; const claim = String(f.claim || '').trim().slice(0, 60), source = String(f.source || '').trim().slice(0, 80), why = String(f.why || '').trim().slice(0, 80); if (!claim || !source || !why) return null; if (INSIGHT_BAN.test(claim) || INSIGHT_BAN.test(why)) return null; return { kind: 'insight', claim, source, why, refs: Array.isArray(f.refs) ? f.refs.map(String).slice(0, 6) : [], note: why, verdict: 'true' }; }
+// 洞察（0.6.14）的服务端门槛在 app/insight-filter.js：claim ≤30 字、source 必须命中本场背景 / 名单 / 日期 / 决策编号 / 时间戳、why 必须说清省了哪一步。
+const { normalizeInsight } = require('./insight-filter');
 function viewIsJunk(f) { if (!f || typeof f !== 'object') return true; if (!String(f.claim || '').trim()) return true; return VIEW_JUNK.test(String(f.note || '')) || VIEW_JUNK.test(String(f.claim || '')); }
 
 
@@ -827,7 +826,7 @@ class Session {
         const stamp = a => { for (const x of a) { if (!x) continue; x.id = 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1); x.sourceRefs = segIds.map(id => ({ segId: id })); } return a; };
         // 置信度不采信模型自述：说「大概率对/可能有误」必须能在最新转写里指出依据；指不出就降成「拿不准」
         // 0.6.14 起模型输出 insights（洞察）；旧模型 / 回看旧场次仍可能是 factchecks，两路都收，统一存进 this.factchecks（存储字段名不改，日志 / 快照 / 回看全兼容）
-        if (Array.isArray(j.insights)) { const before = j.insights.length; j.factchecks = j.insights.map(normalizeInsight).filter(Boolean).slice(0, 2); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} insights without source/why`); }
+        if (Array.isArray(j.insights)) { const before = j.insights.length; const ictx = { brief: this.brief, names: [...this.attendeeNames(), ...this.rosterNames()] }; j.factchecks = j.insights.map(f => normalizeInsight(f, ictx)).filter(Boolean).slice(0, 2); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} insights without concrete source/why`); }
         else if (Array.isArray(j.factchecks)) { const hay = viewNorm(recent); const before = j.factchecks.length; j.factchecks = j.factchecks.filter(f => !viewIsJunk(f)).filter(f => { normalizeView(f); return viewGrounded(f, hay); }); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} views without verbatim evidence`); }
         const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`); }
     } catch (e) { log('triage exc ' + e.message); }

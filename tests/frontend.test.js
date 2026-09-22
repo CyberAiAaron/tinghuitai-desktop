@@ -490,10 +490,14 @@ test('卡片：取消发生在发出去之前，所以真的什么都没发',()=
 });
 // ── 0.6.14 看法列减法（Aaron 09-22）：洞察去重、最新 8 条折叠、本人待办条、旧场次 factchecks 兼容 ──
 function viewsCtx(){const c={esc:s=>String(s).replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])),tt:t=>t||'',hms:()=>'10:20:00',ui:'zh',T:()=>'',Date};vm.createContext(c);vm.runInContext(code('  const insightNorm', '  function applyFeedback('),c);vm.runInContext(code('  const VIEW_SHOW', '  function viewItemOf('),c);c.cur={id:'s1',threads:{}};vm.runInContext(code('  const threadDrafts', '  async function threadSend('),c);return c;}
-test('insights merge: same first-12-chars or containment replaces in place, keeps latest',()=>{const c=viewsCtx();const list=[{id:'a',claim:'CDCP 原定 09-22 已延期，新日期未定',source:'决策板',why:'省一次查找',at:1}];
+test('insights merge: same first-12-chars (punctuation stripped) replaces in place, keeps latest',()=>{const c=viewsCtx();const list=[{id:'a',claim:'CDCP 原定 09-22 已延期，新日期未定',source:'决策板',why:'省一次查找',at:1}];
  const n=c.mergeInsights(list,[{id:'b',claim:'CDCP 原定 09-22 已延期（新日期未定，见项目状态）',source:'project-state §8b',why:'免得再问一遍',at:2},{id:'c',claim:'PDT KO 2026-11-17 在 CDCP 之后',source:'决策板',why:'省一次查找',at:3}],9);
- assert.equal(n,2);assert.equal(list.length,2);assert.equal(list[0].id,'b');assert.equal(list[0].source,'project-state §8b');assert.equal(list[1].id,'c');
- c.mergeInsights(list,[{id:'d',claim:'新日期未定',source:'x',why:'y',at:4}],9);assert.equal(list.length,2);assert.equal(list[0].id,'d','shorter claim contained in existing one replaces it');});
+ assert.equal(n,2);assert.equal(list.length,2);assert.equal(list[0].id,'b');assert.equal(list[0].source,'project-state §8b');assert.equal(list[1].id,'c');});
+test('insights merge: overlapping phrase but different claims are NOT merged (no containment rule)',()=>{const c=viewsCtx();const list=[{id:'a',claim:'CDCP 原定 09-22 已延期，新日期未定',source:'决策板',why:'省一次查找',at:1}];
+ c.mergeInsights(list,[{id:'d',claim:'新日期未定',source:'x',why:'y',at:4}],9);
+ assert.equal(list.length,2,'短句只是长句里的一个片段，不能把长句吞掉');assert.equal(list[0].id,'a');assert.equal(list[1].id,'d');
+ c.mergeInsights(list,[{id:'e',claim:'D1 Pin 与手机绑定还没定，卡着 D2',source:'决策板 D1',why:'省一轮讨论',at:5},{id:'f',claim:'D1 Pin 与手机绑定还没定（理由见 09-05 推演）',source:'09-05 推演',why:'省一次查找',at:6}],9);
+ assert.equal(list.length,3,'去标点后前 12 字「D1Pin与手机绑定还没」相同 → 合并成一条');assert.equal(list[2].id,'f');});
 test('views pane shows latest 8 flat, folds earlier ones, no kind tag or rating buttons, has a thread input',()=>{const c=viewsCtx();const cks=Array.from({length:11},(_,i)=>({id:'i'+i,claim:'洞察 '+i,source:'S'+i,why:'W'+i,at:i+1}));const html=c.viewListHtml(cks,true);
  assert.ok(html.startsWith('<details class="ck-older"><summary>更早 3 条</summary>'));assert.equal((html.match(/class="card ck/g)||[]).length,11);
  const fold=html.slice(0,html.indexOf('</details>'));assert.ok(fold.includes('洞察 0')&&fold.includes('洞察 2')&&!fold.includes('洞察 3'));

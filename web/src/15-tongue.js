@@ -152,9 +152,10 @@
     if(n){ persist(); render(); }
   }
 
-  // 洞察去重（0.6.14）：claim 去标点后前 12 字相同、或一条包含另一条 → 同一件事，保留最新那条（原位替换，位置不动，时间取新的）。
+  // 洞察去重（0.6.14）：claim 去标点后前 12 字相同 → 同一件事，保留最新那条（原位替换，位置不动，时间取新的）。
+  // 不做「一条包含另一条」的判断：短句会把只是提到同一个词的长句吞掉（Codex b0d361a5 复审 major）。
   const insightNorm = t => String(t||'').replace(/[\s“”"'‘’「」『』（）()，。、,.!?！？：:；;…—\-·]/g,'');
-  function sameInsight(a,b){ const x=insightNorm(a), y=insightNorm(b); if(!x||!y) return false; if(x.slice(0,12)===y.slice(0,12)) return true; return x.includes(y)||y.includes(x); }
+  function sameInsight(a,b){ const x=insightNorm(a), y=insightNorm(b); if(!x||!y) return false; return x.slice(0,12)===y.slice(0,12); }
   function mergeInsights(list, incoming, at){
     let n=0;
     for(const x of (incoming||[])){
