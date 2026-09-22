@@ -17,7 +17,7 @@
     if (!boot.asrConfigured) {
       if (!boot.macAsrAvailable) {
         note(ui==='en'?'This Mac cannot transcribe on-device. Connect a transcription service first.':'这台机器用不了本机转写，先接一个转写服务。', true);
-        window.open('setup.html','_blank','noopener'); return;
+        openSettings('asr'); return;
       }
       el.start.disabled = true;
       try {
@@ -28,18 +28,21 @@
         setTimeout(()=>note(''), 6000);
       } catch(e) {
         note(ui==='en'?'Could not switch to on-device transcription; open settings.':'切本机转写没成功，去设置页看看。', true);
-        window.open('setup.html','_blank','noopener'); el.start.disabled = false; return;
+        openSettings('asr'); el.start.disabled = false; return;
       }
       el.start.disabled = false;
     }
     const manual = el.lang && el.lang.value && el.lang.value !== 'auto';
     if (manual || !macOnline) { startAll(null); return; }
-    $('#k-msg').textContent = ''; openSheet('#sh-kind');
+    $('#k-msg').textContent = ''; renderKindList(); openSheet('#sh-kind');
   };
-  $('#k-live').onclick = () => { closeSheets(); startAll(null, 'asr'); };
-  $('#k-online').onclick = () => { closeSheets(); startAll(null, 'asr-tab'); };
-  $('#k-room').onclick = () => { closeSheets(); startAll(null, 'asr-room'); };
-  $('#k-online').addEventListener('contextmenu', e => { e.preventDefault(); selfTest(); });
+  function renderKindList(){
+    const box = $('#kind-list'); if (!box) return;
+    box.innerHTML = MODE_OPTS_GET().slice(0,3)
+      .map(([v,t,d]) => `<button type="button" class="mode-opt" data-v="${v}">${t}<small>${d}</small></button>`).join('');
+    box.querySelectorAll('button').forEach(b => b.onclick = () => { closeSheets(); startAll(null, b.dataset.v); });
+    box.addEventListener('contextmenu', e => { e.preventDefault(); selfTest(); });
+  }
   $('#k-test').onclick = () => selfTest();
   async function startAll(resume, force){
     if (cur && cur.reviewing) { $('#review-bar').hidden = true; cur = reviewBackup || newSession(); reviewBackup = null; }
@@ -78,19 +81,31 @@
       if (asrMode && running) {
         const quiet = Date.now() - (lastFinalAt || cur.start);
         const wsBad = !asrWs || asrWs.readyState !== 1;
-        if ((wsBad || quiet > 90000) && sec > 30) {
+        const heardSound = Date.now() - lastLoudAt < 90000;   // 最近 90 秒房间里有人出过声
+        // 90 秒一帧音频都没来 = 采音这条路断了（切了音频设备、系统收回麦克风权限、标签页被节流），
+        // 这种要单独算一种断线：它连"安静"都算不上，lastLoudAt 会一直冻在那儿，只看 heardSound 反而更晚发现。
+        const noPcm = asrMode && Date.now() - meterLast > 90000;
+        if ((wsBad || noPcm || (quiet > 90000 && heardSound)) && sec > 30) {
           if (quiet > 30000 && Date.now()-lastStallRetry>(stallTries<2?30000:120000)) {                       // 先自己救两次，不打扰他
             stallTries++; lastStallRetry = Date.now();
+            stallNoticeShown = true;
             note((T('stall_auto')||'转写断了，正在自动重连（第 ') + stallTries + (T('stall_auto2')||' 次）…'), true);
             asrReopen();
           } else if (!fellBack) {
-            fellBack = true;cur.transcriptionInterrupted=true;
+            fellBack = true;cur.transcriptionInterrupted=true;stallNoticeShown=true;
             note(backupHealthy&&safetyRecording?(ui==='en'?'Transcription interrupted. Check Audio backups to recover missing content.':'转写暂时中断，请核对「录音备份」并补转缺失内容。'):(ui==='en'?'Transcription and browser backup are unavailable. Use another recorder now.':'转写中断且浏览器备份不可用，请立即改用其他录音方式。'),true);
           }
         }
-        if (!wsBad && quiet < 90000) { stallTries = 0; stallWarned = false; fellBack=false; }
+        if (!wsBad && !noPcm && quiet < 90000) {
+          stallTries = 0; stallWarned = false; fellBack=false;
+          // 恢复了就把提示撤掉。只撤自己发的那条：notice 是全局唯一一行，
+          // 直接 note('') 会顺手把"录音备份失败"之类别人的警告一起抹掉。
+          if (stallNoticeShown) { stallNoticeShown = false; cur.transcriptionInterrupted = false; if (mine(el.notice && el.notice.textContent)) note(''); }
+        }
       } if (imeMode) imeIngest(false); if (sec % 40 === 0 && macOnline && !asrMode) analyze(false); const lastAt = cur.transcript.length ? cur.transcript[cur.transcript.length-1].at : cur.start; if (!asrMode && sec > 120 && Date.now() - lastAt > (cfg.autoEndMin||12)*60000) { note(`超过 ${cfg.autoEndMin||12} 分钟没人说话，自动结束。`); stopAll(true); } }, 1000);
   }
+  // 当前显示的这行提示是不是"转写断了"这一类（撤提示时只撤自己的）
+  function mine(t){ return !t || /转写|Transcription|重连|reconnect/i.test(String(t)); }
   el.stop.onclick = () => stopAll(true);
   async function stopAll(summarize){
     if (!running) return;

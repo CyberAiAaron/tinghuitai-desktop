@@ -1,10 +1,24 @@
 'use strict';
 const crypto=require('crypto'),fs=require('fs'),path=require('path');
+// 下面三个是「怎么跟 Slack 说话」，和「谁在调它」无关，所以放在工厂外面并导出：
+// 会后分享按钮（app/share.js）和这个分享面板走的必须是同一份实现，不许各写一份。
+async function apiCall(token,method,body,fetcher=fetch){const r=await fetcher('https://slack.com/api/'+method,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':method==='files.getUploadURLExternal'?'application/x-www-form-urlencoded':'application/json'},body:method==='files.getUploadURLExternal'?new URLSearchParams(body).toString():JSON.stringify(body),signal:AbortSignal.timeout(20000)});const j=await r.json();if(!r.ok||!j.ok){const e=Error(j.error||'Slack 未返回确认，请到频道核对后再试');e.definite=!!j.error;throw e;}return j;}
+async function uploadFile(token,filename,content,fetcher=fetch){const bytes=Buffer.from(content,'utf8');const data=await apiCall(token,'files.getUploadURLExternal',{filename,length:bytes.length},fetcher);const url=new URL(data.upload_url);if(url.protocol!=='https:'||!(url.hostname==='slack.com'||url.hostname.endsWith('.slack.com')))throw Error('Slack 返回了无效上传地址');const r=await fetcher(data.upload_url,{method:'POST',body:bytes,headers:{'Content-Type':'application/octet-stream'},signal:AbortSignal.timeout(60000)});if(!r.ok)throw Error('附件上传未完成，请重试');return {id:data.file_id,title:filename};}
+// 发一条纯文本消息。channel 传频道 id，或传自己的 user id（Slack 会转成和本人的私聊）——
+// 和分享面板里「发给我自己 / 某个频道」那两个选项是同一套语义。
+async function postText({token,channel,text,fetcher=fetch}){
+ if(!token)throw Error('请先在设置里连接 Slack');
+ if(!channel)throw Error('没有指定发到哪里');
+ const body=String(text||'').trim();
+ if(!body)throw Error('没有可发送的内容');
+ if(body.length>12000)throw Error('分享内容过长（最多 12000 字）');
+ const out=await apiCall(token,'chat.postMessage',{channel,markdown_text:body,unfurl_links:false,unfurl_media:false},fetcher);
+ return {channel:out.channel,ts:out.ts};}
 module.exports=function({settings,isLocal,getBundle,fetcher=fetch}){
  const locks=new Set();
- async function api(token,method,body){const r=await fetcher('https://slack.com/api/'+method,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':method==='files.getUploadURLExternal'?'application/x-www-form-urlencoded':'application/json'},body:method==='files.getUploadURLExternal'?new URLSearchParams(body).toString():JSON.stringify(body),signal:AbortSignal.timeout(20000)});const j=await r.json();if(!r.ok||!j.ok){const e=Error(j.error||'Slack 未返回确认，请到频道核对后再试');e.definite=!!j.error;throw e;}return j;}
+ const api=(token,method,body)=>apiCall(token,method,body,fetcher);
+ const upload=(token,filename,content)=>uploadFile(token,filename,content,fetcher);
  async function channels(token){let cursor='',out=[];const cfg=settings.load(),userToken=cfg.SLACK_USER_TOKEN;do{const j=await api(userToken||token,userToken?'users.conversations':'conversations.list',{types:'public_channel,private_channel',exclude_archived:true,limit:200,cursor});out.push(...j.channels.filter(c=>userToken||c.is_member).map(c=>({id:c.id,name:c.name,private:!!c.is_private})));cursor=j.response_metadata?.next_cursor||'';}while(cursor);if(userToken){const joined=new Set();let next='';do{const page=await api(token,'users.conversations',{types:'public_channel,private_channel',exclude_archived:true,limit:200,cursor:next});for(const c of page.channels)joined.add(c.id);next=page.response_metadata?.next_cursor||'';}while(next);out=out.map(c=>({...c,canSend:joined.has(c.id)}));}return out;}
- async function upload(token,filename,content){const bytes=Buffer.from(content,'utf8');const data=await api(token,'files.getUploadURLExternal',{filename,length:bytes.length});const url=new URL(data.upload_url);if(url.protocol!=='https:'||!(url.hostname==='slack.com'||url.hostname.endsWith('.slack.com')))throw Error('Slack 返回了无效上传地址');const r=await fetcher(data.upload_url,{method:'POST',body:bytes,headers:{'Content-Type':'application/octet-stream'},signal:AbortSignal.timeout(60000)});if(!r.ok)throw Error('附件上传未完成，请重试');return {id:data.file_id,title:filename};}
  return async(req,res,u,authed)=>{
  const route=u.pathname.replace(/^\/asr-relay/,'');if(!route.startsWith('/sharing/slack/'))return false;
  const send=(code,j)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
@@ -28,3 +42,7 @@ module.exports=function({settings,isLocal,getBundle,fetcher=fetch}){
  }catch(e){send(400,{error:e.message==='missing_scope'?'Slack 需要补充附件或个人频道权限，请在连接设置中重新授权':e.message==='not_in_channel'?'请先在这个 Slack 频道中邀请 Meeting LiveMate，再发送':e.message,uncertain:!!e.uncertain});}return true;
  };
 };
+// 给 app/share.js 用：会后「分享到 Slack」和这个面板走同一份实现。
+module.exports.api=apiCall;
+module.exports.upload=uploadFile;
+module.exports.postText=postText;

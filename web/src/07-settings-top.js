@@ -16,7 +16,9 @@
       const now = $('#s-llm-now');
       if (now) now.textContent = c.modelConfigured
         ? '现在用：MyAgent'
-        : 'MyAgent 还没接。会后纪要需要它；可以在后台选择 Codex、Claude 或 DeepSeek。';
+        // L-11：界面上会出现四个 AI 名字。Codex / Claude / DeepSeek 是 MyAgent 背后用哪个模型，
+        // 不是另外三个助手——这里说清楚，比把它们改名更有用（改名会让人对不上后台实际配置）。
+        : 'MyAgent 还没接。会后纪要需要它。Codex、Claude、DeepSeek 是 MyAgent 背后用哪个模型，不是另外的助手。';
       const agentProvider = $('#s-agent-provider');
       if (agentProvider) agentProvider.value = ['codex','claude','deepseek'].includes(c.provider) ? c.provider : 'deepseek';
       const f = $('#f-asr'); if (f) f.hidden = false;
@@ -59,7 +61,8 @@
     }catch(err){e.target.value=previous||'deepseek';note('MyAgent 没切换：'+(err.message||err),true);}
     finally{e.target.disabled=false;}
   });
-  $('#s-open-setup') && ($('#s-open-setup').onclick = () => window.open('setup.html','_blank','noopener'));
+  $('#s-open-setup') && ($('#s-open-setup').onclick = () => jumpTo('api'));
+  $('#s-jump-api') && ($('#s-jump-api').onclick = () => jumpTo('api'));
 
   $('#s-provider').onchange = e => { const pr = PRESET[e.target.value]; $('#f-base').hidden = e.target.value!=='openai'; $('#s-base').value = pr.base; $('#s-quick').value = pr.quick; $('#s-model').value = pr.model; };
   $('#s-cancel').onclick = () => dlg.close();

@@ -1,5 +1,8 @@
   // ===== 渲染 =====
   let stickBottom = true;
+  // REQ-007：议题层的展开状态。outlineClosed = 他自己收起来过的议题（别再自动打开）；
+  // nowKey = 当前「正在聊」的那个议题，换了才重新自动展开。
+  const outlineClosed = new Set(); let nowKey = '';
   el.tr.addEventListener('scroll', () => { const nearBottom = el.tr.scrollHeight - el.tr.scrollTop - el.tr.clientHeight < 40; stickBottom = nearBottom; el.jump.hidden = nearBottom; });
   el.jump.onclick = () => { stickBottom = true; el.tr.scrollTop = el.tr.scrollHeight; el.jump.hidden = true; };
   // 一个人在工位时麦克风只收到自己，标「我」；会议室模式收的是整个房间，标「在场」
@@ -44,7 +47,7 @@
     const nTr = tr.length + '|' + (tr.length?tr[tr.length-1].at:'') + '|' + interim.length + '|' + JSON.stringify(cur.names||{})+'|'+ui+'|'+JSON.stringify(cur.i18n?.[ui]?.map||{}).length;
     if (nTr !== sigTr) {
       sigTr = nTr;
-      el.tr.innerHTML = tr.length ? tr.map((x,i)=>`<p${fillerASR(x.text)?' class="filler"':''}><time>${hms(x.at)}</time>${spkChip(x.spk)}<span role="button" tabindex="0" data-fix="tr" data-key="${i}" title="点击修改逐字稿">${repeatedASR(x.text)?'<span class="asr-anomaly"><button type="button" class="btn sm" data-asr-expand>异常重复转写 · 展开原文</button><span hidden>'+esc(tt(x.text))+'</span></span>':esc(tt(x.text))}${x.memo?`<small class="memo" style="display:block;color:var(--muted)">📝 ${esc(x.memo)}</small>`:''}</span></p>`).join('') + (interim?`<p><time>…</time><span class="spk s0">·</span><span class="interim">${esc(interim)}</span></p>`:'') : `<div class="empty">${running?(T('e_tr_live')||'正在听……'):(cur.transcript.length?'':(T('e_tr_none')||'这场还没有内容。'))}</div>`;
+      el.tr.innerHTML = tr.length ? tr.map((x,i)=>`<p data-at="${Number(x.at)||0}" data-seg="${esc(String(x.id==null?'':x.id))}"${fillerASR(x.text)?' class="filler"':''}><time>${hms(x.at)}</time>${spkChip(x.spk)}<span role="button" tabindex="0" data-fix="tr" data-key="${i}" title="点击修改逐字稿">${repeatedASR(x.text)?'<span class="asr-anomaly"><button type="button" class="btn sm" data-asr-expand>异常重复转写 · 展开原文</button><span hidden>'+esc(tt(x.text))+'</span></span>':esc(tt(x.text))}${x.memo?`<small class="memo" style="display:block;color:var(--muted)">📝 ${esc(x.memo)}</small>`:''}</span></p>`).join('') + (interim?`<p><time>…</time><span class="spk s0">·</span><span class="interim">${esc(interim)}</span></p>`:'') : `<div class="empty">${running?(T('e_tr_live')||'正在听……'):(cur.transcript.length?'':(T('e_tr_none')||'这场还没有内容。'))}</div>`;
       if (stickBottom) el.tr.scrollTop = el.tr.scrollHeight;
     }
     renderMeetingTasks(); scheduleTranslation();
@@ -61,19 +64,74 @@
       const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}${x.stale?' stale':''}${x.revised?' revised':''}${x.recomputed&&!x.stale?' recomputed':''}${x.pendingFix?' pending':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:(x.at?hms(x.at).slice(0,5):'')}</span><div>${esc(tt(x.text))}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}${x.k==='todo'?`<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button>`:''}</div></div>`;
 
       const pinned=$('#hl-pinned');
+      // 他手动收起过的议题，记在这里；换了一个「正在聊」的议题时才重新自动展开
+      if(pinned.dataset.session!==String(cur.id)){outlineClosed.clear();nowKey='';}
       const openKeys=new Set(pinned.dataset.session===String(cur.id)?[...pinned.querySelectorAll('details[data-outline-key][open]')].map(d=>d.dataset.outlineKey):[]);
       const pinnedTop=pinned.scrollTop;
       const settled=[],pending=[];
+      const liveNow=running&&!cur.end&&!cur.viewOnly;
+      const lastSettled=liveNow?grouped.filter(g=>!g.ungrouped).reduce((m,g)=>!m||g.to>=m.to?g:m,null):null;
+      const pinnedAtBottom=pinned.scrollHeight-pinned.scrollTop-pinned.clientHeight<30;
       for(const g of grouped){
         const a=g.from==null?'':hms(g.from).slice(0,5),b=g.to==null?'':hms(g.to).slice(0,5);
         const span=a+(b&&b!==a?'–'+b:'');
         if(g.ungrouped){pending.push(`<section class="outline-pending">${cardOf(g.list[0],g.live,g.no+'.')}<small class="outline-time">${esc(span)}</small></section>`);continue;}
         const key=String(cur.id)+':'+hlKey(g.list[0].text);
-        settled.push(`<details class="outline-section" data-outline-key="${esc(key)}" ${openKeys.has(key)?'open':''}><summary><h3>${g.no}. ${esc(tt(g.title))}</h3></summary>${g.summary?`<p class="outline-summary">${esc(tt(g.summary))}</p>`:''}<details data-outline-key="${esc(key+':raw')}" ${openKeys.has(key+':raw')?'open':''}><summary>${ui==='en'?'Original points':'原始要点'}${span?' · '+esc(span):''}</summary>${g.list.map(x=>cardOf(x,false,'')).join('')}</details></details>`);
+        // REQ-007：收起来时一行一个议题——标题 + 一句结论 + 状态。正在聊的那个自动展开到论点层，
+        // 证据（原始要点）会中不展开。他自己收起来过的，下一次渲染不再强行打开。
+        const isNow = g===lastSettled;
+        if (isNow && nowKey !== key) { outlineClosed.delete(key); nowKey = key; }
+        const open = openKeys.has(key) || (isNow && !outlineClosed.has(key));
+        const badge = g.status==='unresolved'
+          ? `<span class="outline-tag unresolved">${ui==='en'?'unresolved':'未收敛'}</span>` : '';
+        const roleTags = [...new Set(Object.values(g.roles||{}).filter(r=>r==='否定'||r==='分歧'))]
+          .map(r=>`<span class="outline-tag ${r==='分歧'?'split':'nope'}">${esc(ui==='en'?(r==='分歧'?'disagreement':'rejected'):r)}</span>`).join('');
+        const pointCard = x => {
+          const r = (g.roles||{})[x.text] || '';
+          const rest = (g.restated && g.restated.get(hlKey(x.text))) || [];
+          const tag = (r==='否定'||r==='分歧') ? `<span class="outline-tag ${r==='分歧'?'split':'nope'}">${esc(ui==='en'?(r==='分歧'?'disagreement':'rejected'):r)}</span>` : '';
+          const more = rest.length
+            ? `<details class="outline-restated"><summary>${ui==='en'?('Restated '+rest.length+' more times'):('这点重复说了 '+rest.length+' 次')}</summary>${rest.map(y=>cardOf(y,false,'')).join('')}</details>`
+            : '';
+          // 每条论点都要能跳回它那一刻的原话——这是 REQ-007 第三层（证据）在会中的入口。
+          // 手写要点没有时间戳，跳过去落不到地方，就不给按钮。
+          // 服务端产的要点只有 sourceRefs（指向转写段 id），浏览器侧产的才有 at，两种都认；都没有就不给按钮。
+          const seg = segOf(x), jat = atOf(cur, x);
+          const jump = (seg || jat>0)
+            ? `<button class="hl-jump" type="button" data-jump-seg="${esc(seg)}" data-jump-at="${jat}" title="${ui==='en'?'Jump to what was said':'跳到当时的原话'}">${ui==='en'?'Source':'原话'}</button>`
+            : '';
+          return `<div class="outline-point">${tag}${jump}${cardOf(x,false,'')}${more}</div>`;
+        };
+        settled.push(`<details class="outline-section" data-outline-key="${esc(key)}" ${open?'open':''}><summary>${isNow?`<span class="outline-now">● ${ui==='en'?'Now':'正在聊'}</span>`:''}<h3>${g.no}. ${esc(tt(g.title))}</h3>${badge}${roleTags}${span?`<span class="outline-span">${esc(span)}</span>`:''}${g.conclusion?`<span class="outline-lead">${esc(tt(g.conclusion))}</span>`:''}</summary>${g.summary?`<p class="outline-summary">${esc(tt(g.summary))}</p>`:''}${(g.mainList||g.list).map(pointCard).join('')}<details class="outline-raw" data-outline-key="${esc(key+':raw')}" ${openKeys.has(key+':raw')?'open':''}><summary>${ui==='en'?'All original points':'全部原始要点'}${span?' · '+esc(span):''}</summary>${g.list.map(x=>cardOf(x,false,'')).join('')}</details></details>`);
       }
       pinned.hidden=!settled.length;
+      // 2026-09-20：大纲原来只占这一栏的 42%，剩下让给还没归组的平铺要点。REQ-007 之后大纲就是
+      // 主视图，而且要点全归了组时下面那块是空的——243 条的会，大纲被压在 180px 的窗口里翻不动。
+      // 没有待归组的要点时，大纲吃满整栏。
+      pinned.classList.toggle('solo', !pending.length);
       pinned.innerHTML=settled.length?`<div class="outline-label">${ui==='en'?'AI summary':'AI 总结'}</div>`+settled.join(''):'';
-      pinned.dataset.session=String(cur.id);pinned.scrollTop=pinnedTop;
+      pinned.querySelectorAll('details.outline-section').forEach(d => d.addEventListener('toggle', () => {
+        const k = d.dataset.outlineKey; if (!k) return;
+        if (d.open) outlineClosed.delete(k); else outlineClosed.add(k);   // 他收起来的，下次别自动打开
+      }));
+      pinned.querySelectorAll('[data-jump-at]').forEach(b => b.onclick = e => {
+        e.preventDefault(); e.stopPropagation();
+        const seg = b.dataset.jumpSeg || '', at = Number(b.dataset.jumpAt) || 0;
+        const ps = [...el.tr.querySelectorAll('p[data-at]')];
+        if (!ps.length) return;
+        // segId 是要点自己记下的来源段，能精确命中就不猜时间；
+        // 没有 segId 时才按时间取最近的那一段（要点的时间戳落在两段之间是常事）。
+        const hit = (seg && ps.find(p => p.dataset.seg === seg))
+          || (at ? ps.reduce((m, p) => Math.abs(Number(p.dataset.at) - at) < Math.abs(Number(m.dataset.at) - at) ? p : m, ps[0]) : null);
+        if (!hit) return;
+        stickBottom = false; el.jump.hidden = false;
+        hit.scrollIntoView({block:'center', behavior:'smooth'});
+        hit.classList.add('tr-flash'); setTimeout(() => hit.classList.remove('tr-flash'), 1800);
+      });
+      const pinnedFirst=pinned.dataset.session!==String(cur.id);
+      pinned.dataset.session=String(cur.id);
+      // 会中大纲按时间正序，「正在聊」那组在最下面：首次打开或本来就在底部时跟到底，用户往上翻了就不抢。
+      pinned.scrollTop=liveNow&&(pinnedFirst||pinnedAtBottom)?pinned.scrollHeight:(pinnedFirst?0:pinnedTop);
       keepScroll(el.hl,()=>{el.hl.innerHTML=pending.join('')||`<div class="empty">${settled.length?(ui==='en'?'New points will appear here.':'新的要点会显示在这里。'):(T('e_hl')||'要点会显示在这里。')}</div>`;});
       if (hlPaintedFor !== (cur && cur.id)) {
         el.hl.scrollTop = running ? el.hl.scrollHeight : 0;

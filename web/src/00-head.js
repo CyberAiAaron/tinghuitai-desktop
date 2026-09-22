@@ -6,7 +6,8 @@
   const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const fmt = sec => String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');
   const hms = ts => new Date(ts).toTimeString().slice(0,8);
-  const note = (msg, warn) => { el.notice.hidden = !msg; el.notice.textContent = msg||''; el.notice.className = 'notice'+(warn?' warn':''); };
+  // warn 传 true 是黄条；传 'danger' 多一条红边，留给「已经丢了东西」这种必须看见的事，别滥用。
+  const note = (msg, warn) => { el.notice.hidden = !msg; el.notice.textContent = msg||''; el.notice.className = 'notice'+(warn?' warn':'')+(warn==='danger'?' danger':''); };
   const noteAction = (msg, label, fn) => {
     el.notice.hidden = false; el.notice.className = 'notice warn'; el.notice.textContent = '';
     const t = document.createElement('span'); t.textContent = msg + '  ';

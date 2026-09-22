@@ -5,6 +5,23 @@
   let rbNoteHidden = false;
   try { rbNoteHidden = localStorage.getItem('tht-rb-note') === 'off'; } catch(e){}
   const ASR_LABEL = { mac:['本机转写','On-device'], volc:['火山语音','Volcano'], deepgram:['Deepgram','Deepgram'] };
+  // 模型断路红条（N-01 / REQ-008 ①）：服务端连续 3 次拿不到模型回复就广播 llm_down，成功一次广播 llm_up。
+  // 页面刷新后靠 /health 的 llmDown 兜底，不然重开一次就看不到故障了。
+  let llmDownNow = false;
+  function setLlmDown(down, msg){
+    llmDownNow = !!down;
+    if (down) { const d = $('#llm-degraded-bar'); if (d) d.hidden = true; }
+    const bar = $('#llm-bar'); if (!bar) return;
+    bar.hidden = !down;
+    const m = $('#llm-bar-msg'); if (m) m.textContent = down ? (msg || '要点和总结已暂停；录音和转写不受影响，会后可以补跑。') : '';
+  }
+  // 降级黄条：首选模型没回应、备用模型顶上了。红条亮着时不显示（两条路都断了，说降级没有意义）。
+  function setLlmDegraded(on, msg){
+    const bar = $('#llm-degraded-bar'); if (!bar) return;
+    bar.hidden = !on || llmDownNow;
+    const m = $('#llm-degraded-msg'); if (m) m.textContent = on ? (msg || '首选模型没回应，已临时改用备用模型；要点和总结照常出。') : '';
+  }
+  $('#llm-bar-setup') && ($('#llm-bar-setup').onclick = () => openSettings('llm'));
   function updateReadyBar(){
     const bar = $('#ready-bar'); if (!bar) return;
     const en = ui === 'en';
@@ -28,8 +45,8 @@
                : (en?'You can start right now; notes need a model, which you can connect after the meeting.':'现在就能开会，纪要要接个模型，会后再接也行。'));
   }
   $('#rb-hide') && ($('#rb-hide').onclick = () => { rbNoteHidden = true; try { localStorage.setItem('tht-rb-note','off'); } catch(e){} updateReadyBar(); });
-  $('#rb-asr') && ($('#rb-asr').onclick = () => window.open('setup.html','_blank','noopener'));
-  $('#rb-llm') && ($('#rb-llm').onclick = () => window.open('setup.html','_blank','noopener'));
+  $('#rb-asr') && ($('#rb-asr').onclick = () => openSettings('asr'));
+  $('#rb-llm') && ($('#rb-llm').onclick = () => openSettings('llm'));
   // 设置页在另一个窗口改完，回到这里要能自己刷新状态
   async function refreshBoot(){
     try { const r = await fetch('/setup', {cache:'no-store'}); if (r.ok) { boot = Object.assign({}, boot, await r.json()); } } catch(e){}
@@ -47,7 +64,7 @@
   const A=window.LiveMateCore;
   const assistantSay=(text)=>{const p=document.createElement('p');p.textContent=text;$('#assistant-log').append(p);p.scrollIntoView({block:'nearest'});};
   function assistantInvalidate(s){s.i18n={};s.assistantRevision=(s.assistantRevision||0)+1;s.brief=effectiveBrief(s);persist();resetSigs();render();scheduleTranslation();}
-  function assistantRulesUI(){const box=$('#assistant-rules');box.replaceChildren();for(const [scope,rules] of [['session',cur?.assistantRules||[]],['memory',assistantMemory]])rules.forEach((rule,i)=>{const p=document.createElement('p'),t=document.createElement('span'),b=document.createElement('button');t.textContent=(scope==='memory'?'个人记忆：':'本场：')+rule;b.textContent='移除';b.className='btn sm';b.type='button';b.onclick=async()=>{if(assistantBusy)return;const s=cur;if(scope==='session'&&(!running||viewMode||!s)){assistantSay('本场已结束；历史会议保持只读。');return;}assistantBusy=true;try{const next=(s?.assistantRules||[]).slice(),mem=assistantMemory.slice();(scope==='memory'?mem:next).splice(i,1);if(running&&s)await assistantRemote(s,[],[briefText,...mem,...next].filter(Boolean).join('\n'));if(scope==='memory'){localStorage.setItem('livemate-memory',JSON.stringify(mem));assistantMemory=mem;}else s.assistantRules=next;if(s)assistantInvalidate(s);assistantRulesUI();assistantSay('规则已移除，后续处理将使用新背景。已有内容保留，需要回退修改请点“撤销上次修改”。');}catch(e){assistantSay(e.message);}finally{assistantBusy=false;}};p.append(t,b);box.append(p);});}
+  function assistantRulesUI(){const box=$('#assistant-rules');box.replaceChildren();for(const [scope,rules] of [['session',cur?.assistantRules||[]],['memory',assistantMemory]])rules.forEach((rule,i)=>{const p=document.createElement('p'),t=document.createElement('span'),b=document.createElement('button');t.textContent=(scope==='memory'?'会中规矩：':'本场：')+rule;b.textContent='移除';b.className='btn sm';b.type='button';b.onclick=async()=>{if(assistantBusy)return;const s=cur;if(scope==='session'&&(!running||viewMode||!s)){assistantSay('本场已结束；历史会议保持只读。');return;}assistantBusy=true;try{const next=(s?.assistantRules||[]).slice(),mem=assistantMemory.slice();(scope==='memory'?mem:next).splice(i,1);if(running&&s)await assistantRemote(s,[],[briefText,...mem,...next].filter(Boolean).join('\n'));if(scope==='memory'){await forgetRule(rule);}else s.assistantRules=next;if(s)assistantInvalidate(s);assistantRulesUI();assistantSay('规则已移除，后续处理将使用新背景。已有内容保留，需要回退修改请点“撤销上次修改”。');}catch(e){assistantSay(e.message);}finally{assistantBusy=false;}};p.append(t,b);box.append(p);});}
   async function assistantRemote(s,patches,brief){
     if(!running||viewMode||!asrMode||cur!==s||asrWs?.readyState!==1)throw Error('本场没有连接到录音服务；这次未修改。');
     const r=await fetch(relayBase()+'/health?token='+encodeURIComponent(cfg.relayToken||''));const health=await r.json();
@@ -78,9 +95,12 @@
     }catch(e){assistantSay('未完成：'+e.message);}finally{assistantBusy=false;$('#assistant-send').disabled=false;}
   };
   $('#assistant-undo').onclick=async()=>{if(assistantBusy||!assistantUndo)return;const u=assistantUndo,s=u.session;if(cur!==s||!running){assistantSay('只能撤销当前正在录音的会议修改。');return;}assistantBusy=true;try{const patches=A.reverse(u.patches);const rules=JSON.stringify(s.assistantRules)===JSON.stringify(u.newRules)?u.oldRules:s.assistantRules;const ack=await assistantRemote(s,patches,[briefText,...assistantMemory,...rules].filter(Boolean).join('\n'));const result=A.apply(s,patches.filter((_,i)=>ack.applied.includes(i)));s.assistantRules=rules;assistantInvalidate(s);assistantRulesUI();assistantSay(`已撤销 ${result.applied.length} 处；${patches.length-result.applied.length} 处因后续修改而保留。${ack.saved?'已保存。':'服务存储异常，请保留页面。'}`);assistantUndo=null;assistantLastRule='';$('#assistant-remember').hidden=true;$('#assistant-undo').disabled=true;}catch(e){assistantSay(e.message);}finally{assistantBusy=false;}};
-  $('#assistant-remember').onclick=()=>{if(assistantBusy||!assistantLastRule)return;try{const next=[...new Set([...assistantMemory,assistantLastRule])].slice(-20);localStorage.setItem('livemate-memory',JSON.stringify(next));assistantMemory=next;assistantRulesUI();assistantSay('已记入这个浏览器的个人记忆，下次会议也会使用。可在下方移除。');$('#assistant-remember').hidden=true;}catch{assistantSay('本机存储不可用，未保存长期记忆。');}};
+  $('#assistant-remember').onclick=async()=>{if(assistantBusy||!assistantLastRule)return;assistantBusy=true;try{await rememberRule(assistantLastRule);assistantRulesUI();assistantSay('已记进「它记住的」里的「会中规矩」，以后每场会都会用上。可在下方移除。');$('#assistant-remember').hidden=true;}catch(e){assistantSay('没存上：'+(e.message||e)+'（这条只在本场生效）');}finally{assistantBusy=false;}};
   // This indicator measures incoming PCM only, never claims that ASR/storage succeeded.
   let meterLast=0,meterPaint=0,meterRms=0;
   function updateAudioMeter(samples){meterLast=Date.now();meterRms=A?A.level(samples):0;if(meterLast-meterPaint<90)return;meterPaint=meterLast;paintAudioMeter();}
-  function paintAudioMeter(){updateAssistantIdentity();const box=$('#audio-meter'),label=$('#audio-meter-label'),fresh=Date.now()-meterLast<1200;const active=running&&asrMode&&fresh;const loud=active&&meterRms>.006;label.textContent=ui==='en'?(active?(loud?'Sound received':'Listening · quiet'):(running&&asrMode?'Waiting for audio':'Not listening')):(active?(loud?'收到声音':'正在收音 · 暂时安静'):(running&&asrMode?'等待音频输入':'未收音'));box.dataset.active=loud?'true':'false';const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;box.querySelectorAll('b').forEach((b,i)=>b.style.height=(active?3+Math.min(1,meterRms*16)*(reduced?10:8+12*Math.sin((i+1)*.65)**2):3)+'px');}
+  // L-04：34 场真实会议里 6 场被误标成「转写断了」，其实只是会场安静。
+  // 安静 ≠ 断线：只有「有人在说话但一直没有识别结果回来」或者连接真的掉了才算断。
+  let lastLoudAt = 0, stallNoticeShown = false;
+  function paintAudioMeter(){updateAssistantIdentity();const box=$('#audio-meter'),label=$('#audio-meter-label'),fresh=Date.now()-meterLast<1200;const active=running&&asrMode&&fresh;const loud=active&&meterRms>.006;if(loud)lastLoudAt=Date.now();label.textContent=ui==='en'?(active?(loud?'Sound received':'Listening · quiet'):(running&&asrMode?'Waiting for audio':'Not listening')):(active?(loud?'收到声音':'正在收音 · 暂时安静'):(running&&asrMode?'等待音频输入':'未收音'));box.dataset.active=loud?'true':'false';const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;box.querySelectorAll('b').forEach((b,i)=>b.style.height=(active?3+Math.min(1,meterRms*16)*(reduced?10:8+12*Math.sin((i+1)*.65)**2):3)+'px');}
   setInterval(paintAudioMeter,350);

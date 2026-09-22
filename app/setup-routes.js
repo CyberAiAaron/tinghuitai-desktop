@@ -12,7 +12,15 @@ module.exports=async function(req,res,u,{isLocal,localReason,settings,active,tes
  const asrLocal=c.ASR_PROVIDER==='mac';
  const asrDg=c.ASR_PROVIDER==='deepgram';
  const publicState={agentLabel:'MyAgent',provider:c.LLM_PROVIDER||'',asrProvider:c.ASR_PROVIDER||'',volcConfigured:!!(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY),macAsrAvailable:macAsr,deepgramConfigured:!!c.DEEPGRAM_API_KEY,ready:!!((asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY))&&(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER)),asrConfigured:!!(asrLocal||(asrDg&&c.DEEPGRAM_API_KEY)||(c.VOLC_APP_KEY&&c.VOLC_ACCESS_KEY)),modelConfigured:!!(c.DEEPSEEK_API_KEY||c.LLM_PROVIDER),base:c.LLM_BASE_URL,model:c.LLM_MODEL,resource:c.VOLC_RESOURCE_ID,archive:c.ARCHIVE_TARGET};
- if(bootstrap&&req.method==='GET'){res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end('window.THT_BOOT='+JSON.stringify({...publicState,relayToken:c.RELAY_TOKEN})+';');return true;}
+ // X2（2026-09-22）：bootstrap.js 把 RELAY_TOKEN 当全局变量吐出来，原来只靠 isLocal 拦。
+ // 漏洞：<script src> 是 no-cors 请求，不带 Origin；同机别的端口（旧中转 3101、deck 3102、任何本地 dev server）
+ // 上的页面算 same-site 不算 cross-site，isLocal 全部通过 → 一行 script 标签就把全权口令读进它的 window。
+ // 现在：被当成脚本加载（Sec-Fetch-Dest: script）时必须 same-origin。自家页面都是 <script src="bootstrap.js">
+ // 相对路径同源加载，Chrome/Safari 给的就是 same-origin，不受影响。不发 Sec-Fetch-* 的老浏览器维持原行为。
+ if(bootstrap&&req.method==='GET'){
+  const dest=String(req.headers['sec-fetch-dest']||''),site=String(req.headers['sec-fetch-site']||'');
+  if(dest==='script'&&site&&site!=='same-origin')return json(403,{error:'bootstrap.js 只能由本机同源页面加载（当前 '+site+'）'});
+  res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end('window.THT_BOOT='+JSON.stringify({...publicState,relayToken:c.RELAY_TOKEN})+';');return true;}
  if(setup&&req.method==='GET')return json(200,publicState);
  // 本机装没装 AI 命令行：装了就不用申请 API Key
  if(detect&&req.method==='GET'){const found=require('./cli-llm').detect();return json(200,{found:Object.keys(found),provider:c.LLM_PROVIDER||''});}

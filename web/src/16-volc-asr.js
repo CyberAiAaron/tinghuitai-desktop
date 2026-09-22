@@ -181,8 +181,17 @@
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }
-      else if (m.type === 'ended') { cur.relayHandled=true;persist();refreshArchive(); }
+      // R1：中转 12 分钟收不到音频就自己把这场收尾，然后发这条。页面原来只记一笔就接着录——
+      // 手机锁屏再解锁那种场合，后半场其实一个字都没进库，人却毫无察觉。服务端那边已经结束了，
+      // 本机再录也没有去处：直接停下，并且用红条把「后面的没录上」说明白。
+      else if (m.type === 'ended') { cur.relayHandled=true;persist();refreshArchive();
+        if(running){ stopAll(false);
+          note(ui==='en'?'The Mac ended this meeting; anything spoken after that was not recorded. Please start a new meeting.'
+                        :'服务端已经结束了这场会，后面的内容没有被记录。请重新开始一场。','danger'); } }
       else if (m.type === 'stall') note(m.message || (T('stall_relay')||'中转报告采音异常。'), true);
+      else if (m.type === 'llm_down') setLlmDown(true, m.message||'');
+      else if (m.type === 'llm_degraded') setLlmDegraded(!!m.on, m.message||'');
+      else if (m.type === 'llm_up') { setLlmDown(false); note(ui==='en'?'Model is back; analysis resumes.':'模型已恢复，分析继续'); }
       else if (m.type === 'error') note('中转报错：' + (m.message||''), true);
     };
     ws.onclose = (ev) => {

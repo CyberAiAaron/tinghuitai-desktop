@@ -65,23 +65,41 @@
         }else{
           body.innerHTML='<div>'+(ui==='en'?'You are on the latest version.':'已经是最新版本了。')+'</div>';
         }
-        const back=$('#upd-back');
-        if(info.prev){ back.hidden=false; back.textContent=(ui==='en'?'Roll back to ':'回到 ')+info.prev; }
+        // P-20：备份可能停在好几个版本之前（拷贝安装那几次没走更新流程），按钮上要写清楚退到哪、退掉几版
+        const back=$('#upd-back'), pi=info.prevInfo||{};
+        if(info.prev){
+          back.hidden=false; back.textContent=(ui==='en'?'Roll back to ':'回到 ')+info.prev;
+          if(pi.stale) body.insertAdjacentHTML('beforeend','<div class="warn">'+esc(ui==='en'
+            ? ('The rollback snapshot is '+info.prev+', '+pi.gap+' versions behind — rolling back undoes everything since.')
+            : ('可回退的备份是 '+info.prev+'，比现在落后 '+pi.gap+' 个版本；回退会退掉这中间所有改动。'))+'</div>');
+        }
         else back.hidden=true;
       }catch(e){ const offline=e instanceof TypeError || /failed to fetch|load failed/i.test(e.message||''); now.textContent=offline?(ui==='en'?'Cannot reach the meeting service. Open Meeting LiveMate or double-click 启动.command, then check again.':'连接不到听会台服务。请打开 Meeting LiveMate，或双击「启动.command」，再重新检查。'):(ui==='en'?'Check failed: ':'检查失败：')+(e.message||e); }
     }
     $('#m-update').onclick=()=>{ closeSheets(); $('#meeting-more-dialog').close(); $('#upd-dlg').showModal(); load(); renderLog(); };
+    // L-19：正在录音时更新会把这场会打断，服务端本来就会拒（409），但按钮还亮着、点了才知道。
+    // 现在直接停用，并写清楚为什么、什么时候能点。
+    function updGate(){
+      const on = !!running, doBtn=$('#upd-do'), back=$('#upd-back'), st=$('#upd-state');
+      if(doBtn){ doBtn.disabled = on; }
+      if(back){ back.disabled = on; }
+      if(on && st && !st.dataset.busy) st.textContent = ui==='en' ? 'Recording — finish this meeting first; updating now would cut it off.' : '正在录音，先结束这场会再更新（现在更新会把这场打断）。';
+    }
+    setInterval(()=>{ const d=$('#upd-dlg'); if(d&&d.open) updGate(); }, 1000);
     $('#upd-recheck').onclick=load;
     $('#upd-back').onclick=async()=>{
       const back=$('#upd-back'), st=$('#upd-state');
-      if(!confirm(ui==='en'?'Roll back to the previous version? Your settings and meetings are not touched.':'回到上一版？你的凭据和会议记录不会动。')) return;
+      const tv=(info&&info.prev)||'', gap=((info&&info.prevInfo)||{}).gap||0;
+      if(!confirm(ui==='en'
+        ? ('Roll back to '+(tv||'the previous version')+(gap>1?(' ('+gap+' versions back)'):'')+'? Your settings and meetings are not touched.')
+        : ('回到 '+(tv||'上一版')+(gap>1?('（往回退 '+gap+' 个版本）'):'')+'？你的凭据和会议记录不会动。'))) return;
       back.disabled=true; st.textContent=ui==='en'?'Rolling back…':'正在回退…';
       try{
         const r=await fetch(relayBase()+'/update-rollback?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(300000)});
         const j=await r.json();
         if(!j.ok) throw new Error(j.error||('HTTP '+r.status));
-        st.textContent=(ui==='en'?('Back on '+j.version+'. Quit and reopen 启动.command.'):('已回到 '+j.version+'。关掉页面，重新双击「启动.command」就好。'));
         back.hidden=true;
+        if(j.restarting) await waitRestart(j.version); else st.textContent=(ui==='en'?('Back on '+j.version+'. Quit and reopen 启动.command.'):('已回到 '+j.version+'。关掉页面，重新双击「启动.command」就好。'));
       }catch(e){ st.textContent=(ui==='en'?'Failed: ':'没回成：')+(e.message||e); back.disabled=false; }
     };
     $('#upd-do').onclick=async()=>{
@@ -91,10 +109,25 @@
         const r=await fetch(relayBase()+'/update?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(300000)});
         const j=await r.json();
         if(!j.ok) throw new Error(j.error||('HTTP '+r.status));
-        st.textContent=ui==='en'?('Updated to '+j.version+'. Quit and reopen 启动.command.'):('已更新到 '+j.version+'。关掉页面，重新双击「启动.command」就好。');
         doBtn.hidden=true; bar.hidden=true;
+        if(j.restarting) await waitRestart(j.version); else st.textContent=ui==='en'?('Updated to '+j.version+'. Quit and reopen 启动.command.'):('已更新到 '+j.version+'。关掉页面，重新双击「启动.command」就好。');
       }catch(e){ st.textContent=(ui==='en'?'Failed: ':'没更新成：')+(e.message||e); doBtn.disabled=false; }
     };
+    // L-19：服务端更新完会自己重启（见 server.js relaunchAfterUpdate），这里只负责等它活过来再刷新页面。
+    // 等不到也要说人话，不把用户晾在「正在重启…」上。
+    async function waitRestart(want){
+      const st=$('#upd-state'); if(st){st.dataset.busy='1';st.textContent=ui==='en'?'Restarting the service…':'正在重启听会台…';}
+      const deadline=Date.now()+60000;
+      while(Date.now()<deadline){
+        await new Promise(r=>setTimeout(r,2000));
+        try{
+          const r=await fetch(relayBase()+'/health',{cache:'no-store',signal:AbortSignal.timeout(2000)});
+          const j=await r.json();
+          if(j&&j.ok&&(!want||j.version===want)){ if(st)st.textContent=ui==='en'?'Restarted. Reloading…':'重启好了，正在刷新…'; setTimeout(()=>location.reload(),600); return; }
+        }catch(e){}
+      }
+      if(st){st.dataset.busy='';st.textContent=ui==='en'?'It did not come back on its own. Double-click 启动.command.':'它没能自己起来，双击一次「启动.command」就好。';}
+    }
     async function renderLog(){
       const box=$('#upd-log'); if(!box||box.dataset.loaded) return;
       box.textContent=ui==='en'?'Loading…':'读取中…';

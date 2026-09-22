@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 __pycache__/
 *.pyc
 .DS_Store
@@ -16,3 +16,4 @@ preset.json
 
 # 发行产物不进源码树
 *.zip
+.tmp/

@@ -1,10 +1,12 @@
-  // ===== 录音管理看板：一场一卡、按周分组、按来源/状态筛、打开/删除/失败重试 =====
-  const board = { source: 'all', status: 'all', trash: false, list: [], trashList: [] };
+  // ===== 往期会议看板：一场一卡、按周分组、按来源/状态筛、打开/重新整理/删除 =====
+  // L-11：这一块以前在三处叫三个名字（往期会议 / 录音管理 / 历史场次），统一成「往期会议」。
+  const board = { source: 'all', status: 'all', showAll: false, trash: false, q: '', list: [], trashList: [] };
   const bdDur = sec => { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec/3600); return (h?h+':':'') + String(Math.floor(sec%3600/60)).padStart(2,'0') + ':' + String(sec%60).padStart(2,'0'); };
   function bdState(s){
     if (s.recording || (!s.end && s.id === (cur&&cur.id) && running)) return { k:'rec', t: ui==='en'?'Recording':'录音中' };
     const st = (s.archive && s.archive.status) || '';
-    if (st === 'error') return { k:'err', t: ui==='en'?'Failed':'整理失败' };
+    const why = String((s.archive && s.archive.error) || s.summaryNote || '').replace(/\s+/g,' ').slice(0, 40);
+    if (st === 'error') return { k:'err', t: (ui==='en'?'Failed':'整理失败') + (why ? ' · ' + why : '') };
     if (st === 'queued' || st === 'running') {
       const began = Date.parse(s.archive.startedAt || '') || 0;
       const mins = began ? Math.max(0, Math.round((Date.now()-began)/60000)) : 0;
@@ -23,6 +25,12 @@
         tail += ui==='en' ? ' · long meetings take 5–15m' : ' · 长会通常 5–15 分钟';
       }
       return { k:'run', t: base + tail };
+    }
+    // P-03：归档做完但总结没出来的，以前也显示「已归档」，出了问题看不见。几句话的短录音不算失败。
+    if ((st === 'done' || st === 'partial') && s.summaryStatus === 'failed') {
+      if ((s.transcriptCount || 0) < 8) return { k:'done', t: ui==='en'?'Archived · too short to summarize':'已归档 · 太短没出总结' };
+      const note = s.summaryNote && s.summaryNote !== '已归档，但总结没出来' ? ' · ' + String(s.summaryNote).slice(0, 40) : '';
+      return { k:'err', t: (ui==='en'?'No summary':'总结没出来') + note };
     }
     if (st === 'done' || st === 'partial') return { k:'done', t: ui==='en'?'Archived':'已归档' };
     if (!s.end) return { k:'', t: ui==='en'?'Not finished':'未结束' };
@@ -62,26 +70,56 @@
         transcriptCount: (s.transcript||[]).length, source: 'tinghuitai', archive: {}, onMac: false });
     }
     let rows = [...byId.values()];
+    // L-07：70 条里 47 条是压测场和没录到内容的空会，真会议被淹掉。默认只显示真会议，
+    // 「显示全部」把它们调回来。服务端已经算好 kind，本机独有的场次（onMac=false）按老规矩一律显示。
+    if (!board.showAll) rows = rows.filter(r => !r.kind || r.kind === 'real');
+    // U-04：搜会议名和日期。一场会你记得住的通常只有这两样，所以不去搜转写全文（那要另开接口）。
+    const q = (board.q||'').trim().toLowerCase();
+    if (q) rows = rows.filter(r => {
+      const when = new Date(r.start||0);
+      // 卡片上显示的那串日期也要能搜到：他照着屏幕敲「09/17」，不该搜不出来
+      const shown = when.toLocaleString(ui==='en'?'en-US':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+      // 没名字的会卡片上写的是「会议 17:58」，搜「会议」也该搜得到——按卡片上看得见的那行算
+      const head = r.topicTitle || r.title || ((ui==='en'?'Meeting ':'会议 ') + hms(r.start).slice(0,5));
+      const hay = [head, r.topicTitle, r.title, shown, when.toLocaleString('zh-CN'), when.toLocaleString('en-US'),
+                   when.toISOString().slice(0,10)].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
     if (board.source !== 'all') rows = rows.filter(r => (r.source||'tinghuitai') === board.source);
     if (board.status !== 'all') rows = rows.filter(r => bdState(r).k === board.status);
     return rows.sort((a,b) => (b.start||0) - (a.start||0));
   }
   function renderFilters(){
     const f = $('#hist-filters'); if (!f) return;
+    // YoooClaw 是另一个录音来源（硬件/另一个 App），不是另一个 AI 助手——加个 title 说清楚
     const srcs = [['all', ui==='en'?'All sources':'全部来源'], ['tinghuitai', ui==='en'?'LiveMate':'听会台'], ['yoooclaw', 'YoooClaw']];
+    const SRC_TIP = {yoooclaw: ui==='en'?'Recordings that came from the YoooClaw device':'从 YoooClaw 那边传过来的录音', tinghuitai: ui==='en'?'Recorded by Meeting LiveMate itself':'听会台自己录的'};
     const sts  = [['all', ui==='en'?'All':'全部状态'], ['run', ui==='en'?'Processing':'整理中'], ['done', ui==='en'?'Archived':'已归档'], ['err', ui==='en'?'Failed':'失败']];
-    f.innerHTML = srcs.map(([k,l])=>`<button type="button" class="bd-chip${board.source===k?' on':''}" data-src="${k}">${esc(l)}</button>`).join('')
+    f.innerHTML = srcs.map(([k,l])=>`<button type="button" class="bd-chip${board.source===k?' on':''}" data-src="${k}"${SRC_TIP[k]?` title="${esc(SRC_TIP[k])}"`:''}>${esc(l)}</button>`).join('')
       + '<span style="width:8px"></span>'
       + sts.map(([k,l])=>`<button type="button" class="bd-chip${board.status===k?' on':''}" data-st="${k}">${esc(l)}</button>`).join('');
+    const hidden = (board.list||[]).filter(r => r.kind && r.kind !== 'real').length;
+    if (hidden) f.insertAdjacentHTML('beforeend', '<span style="width:8px"></span>'
+      // 开着的时候按钮要显示「怎么退回去」，不然点完了文案没变，像是没生效
+      + `<button type="button" class="bd-chip${board.showAll?' on':''}" data-all="1">${esc(board.showAll
+          ? (ui==='en'?'Only real meetings':'只看真会议')
+          : (ui==='en'?('Show all (+'+hidden+' test/empty)'):('显示全部（另有 '+hidden+' 条测试场和空会）')))}</button>`);
+    f.querySelectorAll('[data-all]').forEach(b => b.onclick = () => { board.showAll = !board.showAll; renderHist(); });
     f.querySelectorAll('[data-src]').forEach(b => b.onclick = () => { board.source = b.dataset.src; renderHist(); });
     f.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { board.status = b.dataset.st; renderHist(); });
   }
   function renderHist(){
     renderFilters();
+    const qi = $('#hist-q');
+    if (qi) { if (qi.value !== board.q) qi.value = board.q;
+      qi.oninput = () => { board.q = qi.value; renderHist(); qi.focus(); };
+      qi.placeholder = ui==='en' ? 'Search by name or date' : '搜会议名、日期'; }
     const box = $('#hist-list'); if (!box) return;
     if (board.trash) return renderTrash();
     const rows = boardRows();
-    if (!rows.length) { box.innerHTML = `<div class="empty">${T('e_hist')||'这台设备上还没有场次。点右上角「从 Mac 找回」。'}</div>`; return; }
+    if (!rows.length) { box.innerHTML = `<div class="empty">${board.q
+      ? esc(ui==='en' ? ('No meeting matches “'+board.q+'”.') : ('没有匹配「'+board.q+'」的会议。'))
+      : (T('e_hist')||'这台设备上还没有场次。点右上角「从 Mac 找回」。')}</div>`; return; }
     let html = '', lastWeek = null;
     for (const s of rows) {
       const ws = weekStart(s.start||Date.now());
@@ -101,7 +139,8 @@
       html += `<div class="bd-card" data-id="${esc(s.id)}"><p class="t">${esc(head)}</p><div class="m">${meta.map(x=>`<span>${x}</span>`).join('')}</div><div class="ops">`
         + (canOpen ? `<button class="btn sm" data-act="open">${ui==='en'?'Open':'打开'}</button>` : `<button class="btn sm" data-act="resume">${ui==='en'?'Resume':'继续这场'}</button>`)
         + (['err','done'].includes(st.k) ? `<button class="btn sm" data-act="retry">${st.k==='err' ? (ui==='en'?'Retry':'重试整理') : (ui==='en'?'Re-process':'重新整理')}</button>` : '')
-        + (s.onMac && macOnline ? `<button class="btn sm" data-act="del">${ui==='en'?'Delete':'删除'}</button>` : '')
+        // U-04：删除以前和「打开」「重新整理」一样显眼，误点代价却完全不同——收进「⋯」里
+        + (s.onMac && macOnline ? `<details class="bd-more"><summary aria-label="${ui==='en'?'More':'更多'}">⋯</summary><div class="menu"><button class="btn sm danger" data-act="del">${ui==='en'?'Delete':'删除'}</button></div></details>` : '')
         + `<span class="msg" style="font-size:12px;color:var(--muted)"></span></div></div>`;
     }
     box.innerHTML = html;
@@ -217,7 +256,7 @@
           state.deletedIds = (state.deletedIds||[]).filter(x => String(x) !== String(id));
           persist();
           try {   // 服务端文件回来了，本机这份也要补回去，否则导出/助手/编辑都用不了
-            const er = await fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(8000)});
+            const er = await fetch(relayBase()+'/export-state?ids='+encodeURIComponent(id)+'&token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(8000)});
             if (er.ok) { const d = await er.json(); const back = (d.sessions||[]).find(x => String(x.id) === String(id));
               if (back && !state.sessions.some(s => String(s.id) === String(id))) { state.sessions.push(normalizeSession(back)); persist(); } }
           } catch(e){}

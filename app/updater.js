@@ -36,6 +36,23 @@ function replaceFiles(source,names){
  }finally{fs.rmSync(stage,{recursive:true,force:true});}
 }
 function prevVersion(){ try{ return fs.readFileSync(path.join(PREV,'.version'),'utf8').trim(); }catch(e){ return ''; } }
+// P-20：0.6.13 之后的几版是直接拷文件装上去的，没走 apply()，所以 .prev 一直停在 0.6.12。
+// 点「回到上一版」其实会退掉四个版本，按钮上却什么都没写。现在把备份的真实版本和新旧差距一起报出来，
+// 由界面写在按钮上；同时把「装之前先存一份」单独导出成 snapshotCurrent，拷贝安装的那条路也能调。
+function prevInfo(){
+  const version=prevVersion(); if(!version) return {version:'',at:0,gap:0,stale:false};
+  let at=0; try{ at=fs.statSync(path.join(PREV,'.version')).mtimeMs; }catch(e){}
+  const cur=localVersion();
+  const n=v=>{const x=String(v).split('.').map(t=>parseInt(t,10)||0);return (x[0]||0)*1e6+(x[1]||0)*1e3+(x[2]||0);};
+  const gap=Math.max(0,n(cur)-n(version));
+  // 差一个小版本是正常的（上一次就是从它升上来的），差更多说明中间有几版没经过 apply()
+  return {version,at,gap,stale:gap>1};
+}
+// 供拷贝安装／部署脚本在覆盖文件之前调用：把当前这一版整份存进 .prev
+function snapshotCurrent(){
+  const names=fs.readdirSync(ROOT).filter(n=>!KEEP.has(n)&&!n.startsWith('.update-')&&!n.startsWith('.replace-')&&!n.startsWith('.prev'));
+  snapshot(localVersion(),names); return {version:localVersion(),files:names.length};
+}
 async function rollbackUnlocked(log=()=>{}){
   const v=prevVersion(); if(!v) throw new Error('没有可回退的版本');
   log('正在回到 '+v);
@@ -85,17 +102,27 @@ async function check(){
   return {ok:true,current:cur,latest:man.version,hasUpdate:cmp(man.version,cur)>0,notes:man.notes||'',released:man.released||'',src,manifest:man};
 }
 
+// X4：sha256 以前是可选的——manifest 里不写，校验那一段就整个跳过，等于谁能往那个路径放一个 zip，
+// 这台机器就装什么。现在必填：没有校验值就不下载、不安装，宁可这次升不了。
+// 发版时由 scripts/release-publish.sh 按真 zip 算出来写进 version.json，正常发版不会被这条拦住。
+function requiredSha(man){
+  const want=String((man&&man.sha256)||'').trim().toLowerCase();
+  if(!/^[0-9a-f]{64}$/.test(want)) throw new Error('更新包没有校验值（version.json 里缺 sha256 或格式不对），未更新。等发布方补上再升级。');
+  return want;
+}
+
 // 下载并就地替换程序文件；失败时保留原样
 async function applyUnlocked(log=()=>{},canApply=()=>true){
   const info=await check();
   if(!info.ok) throw new Error(info.error||'检查更新失败');
   if(!info.hasUpdate) return {updated:false,version:info.current};
   const man=info.manifest;
+  const want=requiredSha(man);
   log('下载 '+man.zip);
   // 带上内容哈希做 cache-buster：CDN 若还缓存着同名旧文件，这个参数能绕过
-  const buf=Buffer.from(await fetchFile(info.src,man.zip+(man.sha256?('?v='+man.sha256.slice(0,12)):''),true));
+  const buf=Buffer.from(await fetchFile(info.src,man.zip+'?v='+want.slice(0,12),true));
   const got=crypto.createHash('sha256').update(buf).digest('hex');
-  if(man.sha256&&got!==man.sha256) throw new Error('下载校验不通过，未更新');
+  if(got!==want) throw new Error('下载校验不通过，未更新');
   const tmp=path.join(ROOT,'.update-'+Date.now());
   fs.mkdirSync(tmp,{recursive:true});
   const zipPath=path.join(tmp,'p.zip'); fs.writeFileSync(zipPath,buf);
@@ -128,4 +155,4 @@ let busy=false;
 async function exclusive(fn){if(busy)throw Error('另一个更新操作正在进行');busy=true;try{return await fn();}finally{busy=false;}}
 const apply=(log,canApply)=>exclusive(()=>applyUnlocked(log,canApply));
 const rollback=log=>exclusive(()=>rollbackUnlocked(log));
-module.exports={check,apply,localVersion,fetchChangelog,rollback,prevVersion};
+module.exports={check,apply,localVersion,fetchChangelog,rollback,prevVersion,prevInfo,snapshotCurrent,requiredSha};

@@ -209,8 +209,9 @@
       cur.fixes = fixesBefore;                       // 这一次记下的词一起收回
       cur.assistantRules = rulesBefore;              // 这一场的规则一起收回
       cur.names = namesBefore; state.names = stateNamesBefore; sendNames();
-      assistantMemory = memBefore;                   // 长期规则也收回
-      try { localStorage.setItem('livemate-memory', JSON.stringify(assistantMemory)); } catch(e){}
+      // 长期规矩也收回：这一次新加的那几条从服务端删掉，回到点「撤销」之前的样子
+      for (const t of assistantMemory.filter(x => !memBefore.includes(x))) { forgetRule(t).catch(()=>{}); }
+      assistantMemory = memBefore.slice();
       try { assistantRulesUI(); } catch(e){}
       syncCorrectionContext(); persist(); resetSigs(); render();
       note(ui==='en'?'Put back — words, rules and names too.' + (intent.calendar?' The calendar link stays; change it in the meeting page.':'') : '放回去了，连带词、规则和名字一起收回。' + (intent.calendar?'日历那一项没动，要改去会议页改。':'')); setTimeout(()=>note(''), 3600);
@@ -260,11 +261,7 @@
       cur.assistantRules = next;
     }
     if ($('#fix-why-keep').checked) {
-      try {
-        const mem = [...new Set([...assistantMemory, why])].slice(-20);
-        localStorage.setItem('livemate-memory', JSON.stringify(mem));
-        assistantMemory = mem;
-      } catch(e){}
+      rememberRule(why).catch(()=>{});
     }
     try { assistantRulesUI(); } catch(e){}
     // 会中就把新规则推给正在跑的分析；没在录音就等下一场带上
@@ -379,4 +376,5 @@
     finally { try { ctx && ctx.close(); } catch(e){} [ds,mic].forEach(st => { try { st && st.getTracks().forEach(t=>t.stop()); } catch(e){} }); }
   }
   async function asrStart(){ asrStarting=true;audioQueue=[];audioQueueBytes=0;try{await asrAudioUp();if(!running){asrStop();return;}el.status.textContent=T('st_live')||'正在听';el.status.className='pill live';asrOpen();}finally{asrStarting=false;if(!running)el.start.disabled=false;} }
-  function asrStop(){ let delivered=false;try { if(asrWs?.readyState===1){asrWs.send(JSON.stringify({type:'end',notes:cur?.notes||'',browserGapSeconds:cur?.untranscribedSeconds||0,transcriptEdits:cur?.transcriptEdits||[]}));delivered=true;} } catch(e){} const w = asrWs; setTimeout(()=>{ try { w && w.close(); if(asrWs===w)asrWs=null; } catch(e){} }, 125000); if(safetyRecording){safetyRecording.stop();safetyRecording=null;} try { asrNode && asrNode.disconnect(); } catch(e){} try { asrCtx && asrCtx.close(); } catch(e){} try { asrStream && asrStream.getTracks().forEach(t=>t.stop()); (asrStream && asrStream._extra || []).forEach(s=>s.getTracks().forEach(t=>t.stop())); } catch(e){} asrNode = asrCtx = asrStream = null; stopSpkTrack(); lastFinalAt = 0;return delivered; }
+  function asrStop(){ let delivered=false;let outline;try{outline=outlineDigest(cur)||undefined;}catch(e){}   // 议题摘要算不出来也不能拦住 end 帧
+    try { if(asrWs?.readyState===1){asrWs.send(JSON.stringify({type:'end',notes:cur?.notes||'',browserGapSeconds:cur?.untranscribedSeconds||0,transcriptEdits:cur?.transcriptEdits||[],outline}));delivered=true;} } catch(e){} const w = asrWs; setTimeout(()=>{ try { w && w.close(); if(asrWs===w)asrWs=null; } catch(e){} }, 125000); if(safetyRecording){safetyRecording.stop();safetyRecording=null;} try { asrNode && asrNode.disconnect(); } catch(e){} try { asrCtx && asrCtx.close(); } catch(e){} try { asrStream && asrStream.getTracks().forEach(t=>t.stop()); (asrStream && asrStream._extra || []).forEach(s=>s.getTracks().forEach(t=>t.stop())); } catch(e){} asrNode = asrCtx = asrStream = null; stopSpkTrack(); lastFinalAt = 0;return delivered; }
