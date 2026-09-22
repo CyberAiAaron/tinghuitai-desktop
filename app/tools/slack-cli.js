@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// tht-slack：卡片对话框里那个无头 agent 用的 Slack 命令行（app/card-thread.js 把它包成 <数据目录>/state/bin/tht-slack 放进 PATH）。
+// tht-slack：卡片对话框里那个无头 agent 用的 Slack 命令行（壳是仓库里的 app/tools/bin/tht-slack，app/card-thread.js 校验过它再把目录前置到 PATH）。
 // 和 lark-cli 一样是 Bash 里的一条命令、输出 JSON；口令从本机 settings.json 读（SLACK_USER_TOKEN / SLACK_BOT_TOKEN，同 app/slack-share.js），
 // 不进参数、不进输出、不进日志。读类：search / read-channel / read-thread / user；写类：send / dm（正文自动补「— Aaron 的 Claude 代回」）。
 // 写类能不能被调到不由这里管——card-thread 只在用户确认了对应动作的那一轮才把 Bash(tht-slack send:*) / dm 放进 allowedTools。

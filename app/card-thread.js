@@ -6,7 +6,7 @@
 //   实测 2026-09-22：不加 strict 会把 claude.ai 全部连接器（Slack / Notion / Gmail / Drive / Figma…）的工具描述都带上，一次 85k token；
 //   只连 lark-mcp（默认工具集）也要 37k；strict + 只留 Bash 一次 14k。Aaron 原话「token 别太多」。
 //   THT_THREAD_MCP=lark 时额外连本机 lark-mcp 的工具子集（从 ~/.claude.json 抄配置，写到 <数据目录>/state/thread-mcp.json），放开时按精确工具名列，不用服务器级通配。
-//   Slack 不走 claude.ai 连接器（strict 模式下挂不上单个），走 tht-slack 命令行：app/tools/slack-cli.js，口令从本机 settings.json 读。
+//   Slack 不走 claude.ai 连接器（strict 模式下挂不上单个），走 tht-slack 命令行：app/tools/bin/tht-slack → app/tools/slack-cli.js，口令从本机 settings.json 读。
 // 授权规则（硬闸，不靠模型自觉）：读 / 查 / 起草直接做；建日历、发消息、派任务要先在线程里问一句，
 //   agent 那条提问按关键词记下 pendingAction（calendar / message / task），用户紧接着回「是」的那一轮才放开**那个动作**的写工具，
 //   放开一次就把 pendingAction 消费掉——早先的「是」、隔了别的消息的「是」、没有 pendingAction 的问句后面的「是」都放不开（Codex 94dd3aa4 复审）。
@@ -80,9 +80,9 @@ function buildSystem({ card, sess, history, confirmed, slack }) {
   return parts.join('\n');
 }
 
-function args({ model, system, confirmed, mcpConfig }) {
-  const read = mcpConfig ? [...READ_TOOLS, ...MCP_READ_TOOLS] : READ_TOOLS;
-  const allowed = confirmed ? [...read, ...agentTools.writeToolsFor(confirmed, { mcp: !!mcpConfig })] : read;
+function args({ model, system, confirmed, mcpConfig, slack = false }) {
+  const read = agentTools.readToolsFor({ mcp: !!mcpConfig, slack });
+  const allowed = confirmed ? [...read, ...agentTools.writeToolsFor(confirmed, { mcp: !!mcpConfig, slack })] : read;
   return ['-p', '--model', model, '--output-format', 'json', '--max-turns', String(MAX_TURNS),
     '--setting-sources', '',          // 不读 ~/.claude 的 settings、CLAUDE.md、skill
     '--disable-slash-commands',
@@ -105,18 +105,19 @@ function larkMcpConfig(dataDir, log) {
     return file;
   } catch (e) { log('thread lark-mcp 配置抄不到：' + e.message); return ''; }
 }
-// tht-slack：把 app/tools/slack-cli.js 包成一条可执行命令放到 <数据目录>/state/bin，子进程的 PATH 前面加这个目录。
-// 口令由 slack-cli 自己从 settings.json 读（THT_DATA_DIR），不经这里、不进 argv。
-function slackBin(dataDir, log) {
+// tht-slack：壳固定在仓库 app/tools/bin/（随代码发版，不在可写的数据目录里现写——Codex 70f42bb6）。每次起子进程前校验一遍：
+// 常规文件、不是符号链接、属主是当前用户、组 / 其他人不可写、可执行；任何一条不满足就不把它放进 PATH，也不给模型 Slack 工具。
+const SLACK_BIN_DIR = path.join(__dirname, 'tools', 'bin');
+function slackBinOk(log = () => {}, file = path.join(SLACK_BIN_DIR, 'tht-slack')) {
   try {
-    const dir = path.join(dataDir, 'state', 'bin');
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, 'tht-slack');
-    const body = '#!/bin/sh\nexec ' + JSON.stringify(process.execPath) + ' ' + JSON.stringify(path.join(__dirname, 'tools', 'slack-cli.js')) + ' "$@"\n';
-    if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== body) fs.writeFileSync(file, body, { mode: 0o755 });
-    fs.chmodSync(file, 0o755);
-    return dir;
-  } catch (e) { log('thread tht-slack 壳写不出来：' + e.message); return ''; }
+    const f = file;
+    const st = fs.lstatSync(f);
+    if (st.isSymbolicLink() || !st.isFile()) { log('thread tht-slack 壳不是常规文件，不挂'); return false; }
+    if (typeof process.getuid === 'function' && st.uid !== process.getuid()) { log('thread tht-slack 壳属主不是当前用户，不挂'); return false; }
+    if (st.mode & 0o022) { log('thread tht-slack 壳组 / 其他人可写，不挂'); return false; }
+    if (!(st.mode & 0o100)) { log('thread tht-slack 壳不可执行，不挂'); return false; }
+    return true;
+  } catch (e) { log('thread tht-slack 壳读不到：' + e.message); return false; }
 }
 function slackReady(dataDir) {
   try { const j = JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8')); return !!(String(j.SLACK_USER_TOKEN || '').trim() || String(j.SLACK_BOT_TOKEN || '').trim()); }
@@ -148,7 +149,6 @@ function killTree(p, graceMs) {
 
 function create({ dataDir, log = () => {}, findBin = cliLlm.agentBin, getLive, readFile, writeFile, model = MODEL, timeoutMs = TIMEOUT_MS, maxConcurrent = MAX_CONCURRENT, maxQueue = MAX_QUEUE, killGraceMs = KILL_GRACE_MS, mcp = '' }) {
   const mcpConfig = mcp === 'lark' ? larkMcpConfig(dataDir, log) : '';
-  const binDir = slackBin(dataDir, log);
   const ledgerPath = path.join(dataDir, 'state', 'thread-usage.json');
   function readLedger() { try { return JSON.parse(fs.readFileSync(ledgerPath, 'utf8')) || {}; } catch (e) { return {}; } }
   function addLedger(u) {
@@ -181,20 +181,21 @@ function create({ dataDir, log = () => {}, findBin = cliLlm.agentBin, getLive, r
   let running = 0; const queue = [];
   function pump() { while (running < maxConcurrent && queue.length) { const job = queue.shift(); running++; job().finally(() => { running--; pump(); }); } }
   // 满了不排：等着的已经有 maxQueue 条就直接回 queue_full（调用方回 429）
+  // 满了不排：等着的已经有 maxQueue 条就回 null（调用方回 429）。占位和入队在同一个同步步骤里，中间没有 await，不会先落盘再被拒
   function enqueue(fn) {
-    if (queue.length >= maxQueue) return Promise.resolve({ ok: false, reason: 'queue_full', detail: '排队 ' + queue.length + ' 条已满' });
+    if (queue.length >= maxQueue) return null;
     return new Promise((resolve, reject) => { queue.push(() => fn().then(resolve, reject)); pump(); });
   }
 
-  function runClaude({ system, prompt, confirmed }) {
+  function runClaude({ system, prompt, confirmed, slack }) {
     const bin = findBin();
     if (!bin) return Promise.resolve({ ok: false, reason: 'not_installed' });
     return new Promise(resolve => {
       let done = false; const finish = v => { if (!done) { done = true; resolve(v); } };
       let p;
-      const env = { ...process.env, CLAUDECODE: '', THT_DATA_DIR: dataDir, PATH: (binDir ? binDir + ':' : '') + String(process.env.PATH || '') };
+      const env = { ...process.env, CLAUDECODE: '', THT_DATA_DIR: dataDir, THT_NODE: process.execPath, PATH: (slack ? SLACK_BIN_DIR + ':' : '') + String(process.env.PATH || '') };
       // detached：自成进程组，超时能连它起的 Bash / 飞书命令行一起杀；stdio 仍是管道，不 unref，服务端退出前照样等它
-      try { p = spawn(bin, args({ model, system, confirmed, mcpConfig }), { cwd: dataDir, env, detached: true }); }
+      try { p = spawn(bin, args({ model, system, confirmed, mcpConfig, slack }), { cwd: dataDir, env, detached: true }); }
       catch (e) { return finish({ ok: false, reason: 'spawn_failed' }); }
       let out = '', err = '', timedOut = false;
       // 超时：先杀进程组，等 close 事件真到了再 finish——并发槽在 finish 之后才释放（Codex 94dd3aa4：以前先 finish 再杀，槽先空了、旧进程还在）
@@ -223,17 +224,19 @@ function create({ dataDir, log = () => {}, findBin = cliLlm.agentBin, getLive, r
     const card = findCard(st.sess, cardId, fallback);
     if (!card) return { ok: false, error: '找不到这张卡', status: 404 };
     const history = st.threads[cardId] = st.threads[cardId] || [];
-    if (queue.length >= maxQueue) return { ok: false, error: 'queue_full', reply: '没做成：' + REASON_TEXT.queue_full, status: 429, ...status() };
     const action = isConfirmation(text, history);
     const confirmed = !!action;
+    const slack = slackReady(dataDir) && slackBinOk(log);
+    const system = buildSystem({ card, sess: st.sess, history, confirmed: action, slack });
+    const queuedAt = Date.now();
+    // 先占队列位（同步），占到了才把用户消息和 consumedAt 写进线程；占不到直接 429，线程一字不动（Codex 70f42bb6：以前先落盘再入队）
+    const pending = enqueue(() => runClaude({ system, prompt: text, confirmed: action, slack }));
+    if (!pending) return { ok: false, error: 'queue_full', reply: '没做成：' + REASON_TEXT.queue_full, status: 429, ...status() };
     if (confirmed) history[history.length - 1].consumedAt = Date.now();   // 一次性消费：这条提问以后再回「是」也不算
     history.push({ role: 'user', text, at: Date.now() });
     if (history.length > HISTORY_MAX) history.splice(0, history.length - HISTORY_MAX);
     st.save();
-    const slack = slackReady(dataDir);
-    const system = buildSystem({ card, sess: st.sess, history: history.slice(0, -1), confirmed: action, slack });
-    const queuedAt = Date.now();
-    const r = await enqueue(() => runClaude({ system, prompt: text, confirmed: action }));   // 上面已查过队列没满，这里拿不到 queue_full；enqueue 里那道是兜底
+    const r = await pending;
     const st2 = openState(sessionId) || st;           // 跑的这两分钟里文件可能被别的写者改过，重读再写
     const hist2 = st2.threads[cardId] = st2.threads[cardId] || history;
     let reply;
@@ -257,7 +260,7 @@ function create({ dataDir, log = () => {}, findBin = cliLlm.agentBin, getLive, r
   function exists(sessionId) { return !!openState(sessionId); }
   function status() { return { running, queued: queue.length, maxQueue }; }
 
-  return { ask, threadsOf, exists, usageToday, status, isConfirmation, buildSystem, args, READ_TOOLS, WRITE_TOOLS, mcpConfig };
+  return { ask, threadsOf, exists, usageToday, status, isConfirmation, buildSystem, args, slackBinOk: () => slackBinOk(log), READ_TOOLS, WRITE_TOOLS, mcpConfig };
 }
 
-module.exports = { create, isConfirmation, buildSystem, args, parseJson, usageOf, killTree, READ_TOOLS, WRITE_TOOLS, TIMEOUT_MS, MAX_CONCURRENT, MAX_QUEUE, KILL_GRACE_MS };
+module.exports = { create, isConfirmation, buildSystem, args, parseJson, usageOf, killTree, slackBinOk, SLACK_BIN_DIR, READ_TOOLS, WRITE_TOOLS, TIMEOUT_MS, MAX_CONCURRENT, MAX_QUEUE, KILL_GRACE_MS };

@@ -18,7 +18,7 @@ process.stdin.on('data',d=>stdin+=d);
 process.stdin.on('end',()=>{
   const sl=Number(process.env.FAKE_SLEEP||0)*1000;
   setTimeout(()=>{
-    fs.appendFileSync(process.env.FAKE_LOG,JSON.stringify({argv:process.argv.slice(2),stdin,start,end:Date.now()})+'\\n');
+    fs.appendFileSync(process.env.FAKE_LOG,JSON.stringify({argv:process.argv.slice(2),stdin,start,end:Date.now(),PATH:process.env.PATH||'',THT_NODE:process.env.THT_NODE||''})+'\\n');
     process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,num_turns:1,result:process.env.FAKE_RESULT||'好的，记下了',total_cost_usd:0.0123,usage:{input_tokens:1200,output_tokens:80,cache_read_input_tokens:300}}));
   },sl);
 });
@@ -185,7 +185,8 @@ test('授权规则：写动作首轮只有只读工具；agent 的提问记 pend
   assert.ok(a1.length>0);
   for(const w of ['mcp__lark-mcp','Bash(lark-cli:*)','Bash(lark-cli calendar +create:*)','Bash(lark-cli im +messages-send:*)','Bash(tht-slack send:*)','mcp__claude.ai Slack','mcp__claude.ai Notion'])assert.ok(!a1.includes(w),'首轮不能放开 '+w);
   assert.ok(a1.some(x=>/freebusy|contact/.test(x)),'首轮要有只读工具');
-  assert.ok(a1.includes('Bash(tht-slack search:*)'),'首轮就有 Slack 读工具');
+  assert.ok(!a1.includes('Bash(tht-slack search:*)'),'设置里没接 Slack 就不给 Slack 工具');
+  assert.ok(!argOf(t.calls()[0].argv,'--system-prompt').includes('tht-slack'),'没接 Slack 就不带 Slack 速查');
   assert.ok(argOf(t.calls()[0].argv,'--system-prompt').includes('未确认轮次'));
   assert.ok(t.calls()[0].argv.includes('--strict-mcp-config'),'默认不连 ~/.claude.json 里的连接器（省 token）');
   assert.ok(!t.calls()[0].argv.includes('--mcp-config'),'没开 THT_THREAD_MCP 就不挂 lark-mcp');
@@ -232,6 +233,10 @@ test('isConfirmation 纯函数：必须紧邻上一条带 pendingAction 的 agen
  assert.equal(ta.pendingActionOf('派个任务给 Cary，截止 09-25，可以吗？'),'task');
  assert.equal(ta.pendingActionOf('这件事已经建好了。'),'', '不是问句');
  assert.equal(ta.pendingActionOf('你是想看哪一天的？'),'', '问句但不是写动作');
+ assert.equal(ta.pendingActionOf('约好 09-24 14:00 之后，要不要再发消息通知 Cary？'),'', '一句里问了两种动作 → 不记，一个「是」不能放开两类');
+ assert.deepEqual(ta.writeToolsFor('calendar,message'),[],'逗号拼的多动作不认');
+ assert.ok(!ta.writeToolsFor('message',{slack:false}).some(x=>/tht-slack/.test(x)),'slack 关着就没有 tht-slack 写工具');
+ assert.ok(!ta.readToolsFor({slack:false}).some(x=>/tht-slack/.test(x)));
  // 每个动作只对应一小集，没有服务器级通配、没有 lark-cli 全放
  for(const a of ta.ACTIONS){const w=ta.writeToolsFor(a,{mcp:true});assert.ok(w.length>0);for(const x of w)assert.ok(!/^mcp__lark-mcp$|^Bash\(lark-cli:\*\)$/.test(x),a+' 里有通配：'+x);}
  assert.ok(ta.writeToolsFor('message',{mcp:true}).includes('mcp__lark-mcp__im_v1_message_create'));
@@ -239,16 +244,31 @@ test('isConfirmation 纯函数：必须紧邻上一条带 pendingAction 的 agen
  assert.deepEqual(ta.writeToolsFor('nope'),[]);
 });
 
-test('tht-slack：壳写进 <数据目录>/state/bin，子进程 PATH 前面带它；口令不进 argv；命令行本体用假 fetch 走一遍读 / 写',async()=>{
+test('tht-slack：壳固定在仓库 app/tools/bin 并过所有者 / 权限 / 非符号链接校验，子进程 PATH 前置它；口令不进 argv；命令行本体用假 fetch 走一遍读 / 写',async()=>{
  const t=await setup();
  try{
   fs.writeFileSync(path.join(t.dir,'settings.json'),JSON.stringify({RELAY_TOKEN:TOKEN,ARCHIVE_TARGET:'local',MEMORY_PROJECTION_DIR:path.join(t.dir,'mem'),SLACK_USER_TOKEN:'xoxp-fake-user-token',SLACK_BOT_TOKEN:'xoxb-fake-bot-token'}));
   const r=await t.post('th1','todo1','看看 Slack 上 Cary 说了什么');
   assert.equal(r.status,200);
-  const shell=path.join(t.dir,'state','bin','tht-slack');
-  assert.ok(fs.existsSync(shell),'壳要在 state/bin');
+  const shell=path.join(root,'app','tools','bin','tht-slack');
+  assert.ok(fs.existsSync(shell),'壳固定在仓库 app/tools/bin');
   assert.ok((fs.statSync(shell).mode&0o111)!==0,'壳要可执行');
   assert.ok(fs.readFileSync(shell,'utf8').includes('slack-cli.js'));
+  const c0=t.calls()[0];
+  assert.ok(c0.PATH.split(':')[0]===path.dirname(shell),'子进程 PATH 第一项是仓库里的壳目录，不是数据目录');
+  assert.equal(c0.THT_NODE,process.execPath,'壳用服务端自己的 node');
+  assert.ok(allowedOf(c0.argv).includes('Bash(tht-slack search:*)'),'接了 Slack 才有 Slack 读工具');
+  assert.ok(!fs.existsSync(path.join(t.dir,'state','bin')),'数据目录里不再现写壳');
+  // 壳校验：符号链接 / 组可写 / 属主不对 都不挂；正常 0755 常规文件才挂
+  const ct=require(path.join(root,'app/card-thread'));
+  assert.equal(ct.slackBinOk(),true,'仓库里的壳应通过校验');
+  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'tht-slack-chk-'));
+  const good=path.join(tmp,'good');fs.writeFileSync(good,'#!/bin/sh\n',{mode:0o755});assert.equal(ct.slackBinOk(()=>{},good),true);
+  const link=path.join(tmp,'link');fs.symlinkSync(good,link);assert.equal(ct.slackBinOk(()=>{},link),false,'符号链接不挂');
+  const ww=path.join(tmp,'ww');fs.writeFileSync(ww,'#!/bin/sh\n');fs.chmodSync(ww,0o777);assert.equal(ct.slackBinOk(()=>{},ww),false,'组 / 其他人可写不挂');
+  const nx=path.join(tmp,'nx');fs.writeFileSync(nx,'#!/bin/sh\n',{mode:0o644});assert.equal(ct.slackBinOk(()=>{},nx),false,'不可执行不挂');
+  assert.equal(ct.slackBinOk(()=>{},path.join(tmp,'missing')),false);
+  fs.rmSync(tmp,{recursive:true,force:true});
   const argvStr=JSON.stringify(t.calls()[0].argv);
   assert.ok(!argvStr.includes('xoxp-')&&!argvStr.includes('xoxb-'),'口令不能出现在 claude 的参数里');
   assert.ok(argOf(t.calls()[0].argv,'--system-prompt').includes('tht-slack search'),'设置里接了 Slack 才带 Slack 速查');

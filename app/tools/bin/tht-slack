@@ -1,0 +1,4 @@
+#!/bin/sh
+# tht-slack：卡片对话框里无头 agent 用的 Slack 命令行壳（app/card-thread.js 把这个目录前置到子进程 PATH）。
+# 固定在仓库里、随代码一起发版，不在数据目录里现写（Codex 70f42bb6：可写目录里的壳能被替换）。node 用服务端自己的那一份（THT_NODE），没有就用 PATH 里的。
+exec "${THT_NODE:-node}" "$(dirname "$0")/../slack-cli.js" "$@"
