@@ -101,7 +101,7 @@ reg.register({
     if (desc) a.push('--description', desc);
     if (ids.length) a.push('--attendee-ids', ids.join(','));
     const r = await runCli(a, opts);
-    if (!r.ok) return { ok: false, error: r.error };
+    if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
     return { ok: true, data: {
       url: dig(r.json, 'data.event.app_link', 'data.event.url', 'data.app_link', 'data.url'),
       id: dig(r.json, 'data.event.event_id', 'data.event_id'), missing,
@@ -140,7 +140,7 @@ reg.register({
       if (i >= 0) a[i + 1] += '\n\n' + add; else a.push('--description', add);
     }
     const r = await runCli(a, opts);
-    if (!r.ok) return { ok: false, error: r.error };
+    if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
     const id = dig(r.json, 'data.task.guid', 'data.task.task_id', 'data.guid');
     return { ok: true, data: {
       url: dig(r.json, 'data.task.url', 'data.url'), id,

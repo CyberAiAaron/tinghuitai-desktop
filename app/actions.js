@@ -411,13 +411,14 @@ async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log 
   }
   else if (action === 'send') {
     const d = sanitizeDraft(card.kind, draft, null);
-    if (!['meeting', 'delegate'].includes(card.kind)) { const e = Error('这类卡不外发'); e.code = 400; throw e; }
-    if (!d) { const e = Error('草稿是空的，没有可发的内容'); e.code = 400; throw e; }
+    // definite（第 9 条）：还没碰外部命令就拒掉的，是确定没发；外发门禁据此清收据，不留 pending。
+    if (!['meeting', 'delegate'].includes(card.kind)) { const e = Error('这类卡不外发'); e.code = 400; e.definite = true; throw e; }
+    if (!d) { const e = Error('草稿是空的，没有可发的内容'); e.code = 400; e.definite = true; throw e; }
     // 幂等（2026-09-22 X6）：已经发出去的卡不再发第二遍。连点两下、页面超时后重试、断线重连
     // 各自都会再来一次同样的请求，以前每一次都是一条真的日历 / 一条真的飞书任务。
     if (card.state === 'sent') return { card, actions: data, alreadySent: true };
     const r = await send(card.kind, d, env, execImpl, log, dataDir, sessionId, confirmed);
-    if (!r.ok) { const e = Error(r.error || '没发出去'); e.code = 400; throw e; }
+    if (!r.ok) { const e = Error(r.error || '没发出去'); e.code = 400; e.definite = !r.uncertain; throw e; }
     card.draft = d; card.state = 'sent'; card.sentAt = now();
     card.sentRef = { type: card.kind === 'meeting' ? 'calendar' : 'task', url: r.url || '', id: r.id || '' };
     if (r.note) card.sentNote = r.note; else delete card.sentNote;   // 发是发了，但有没派到人这类事要写在卡上
@@ -427,6 +428,23 @@ async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log 
   data.updatedAt = now();
   writeAtomic(file, data);
   return { card, actions: data };
+}
+
+// 第 9 条（2026-09-22）：按发送收据把卡补成 sent。用在「上次工具真发成了、进程在写卡前断了」——收据在、卡不在，
+// 再点一下时门禁回 alreadySent，这里把卡对齐到收据，不再发第二遍。
+function markSent({ dir, sessionId, cardId, draft, ref, note }) {
+  const file = fileOf(dir, sessionId), data = readJSON(file);
+  if (!data) { const e = Error('这场会还没有处理台数据'); e.code = 404; throw e; }
+  const card = (data.cards || []).find(c => c.id === cardId);
+  if (!card) { const e = Error('找不到这张卡'); e.code = 404; throw e; }
+  if (card.state !== 'sent') {
+    if (draft) card.draft = draft;
+    card.state = 'sent'; card.sentAt = now();
+    card.sentRef = { type: card.kind === 'meeting' ? 'calendar' : 'task', url: (ref && ref.url) || '', id: (ref && ref.id) || '' };
+    if (note) card.sentNote = note;
+    data.updatedAt = now(); writeAtomic(file, data);
+  }
+  return { card, actions: data, alreadySent: true };
 }
 
 // 草稿校验：只留这一类卡认得的字段，长度都夹住。页面传什么都不会直接拼进命令行。
@@ -474,21 +492,22 @@ async function claimToHub(hub, card, sessionId) {
 // 服务端事后查不出人到底点没点。现在由路由从请求体的 confirmed 读出来一路传进来，没有就直接拒，一个工具都不调。
 async function send(kind, d, env, execImpl, log, dataDir, sessionId, confirmed = false) {
   if (confirmed !== true) return { ok: false, error: '请在界面上确认后再发送（服务端没收到确认）' };
-  const ctx = { env, dataDir, execImpl, log, caller: 'ui', sessionId, confirmedByUser: true };
+  const ctx = { env, dataDir, execImpl, log, caller: 'ui', sessionId, confirmedByUser: true,
+    timeoutMs: (process.env.THT_TEST && Number(process.env.THT_TOOL_TIMEOUT_MS) > 0) ? Number(process.env.THT_TOOL_TIMEOUT_MS) : 0 };   // 只有测试进程能把工具超时调短
   if (kind === 'meeting') {
     const slot = d.slots[Math.min(Math.max(d.pick || 0, 0), Math.max(d.slots.length - 1, 0))];
     if (!slot) return { ok: false, error: '草稿里没有时间，先选一个时间再发' };
     if (!d.title) return { ok: false, error: '草稿里没有标题' };
     const r = await tools.call('lark.calendar.create', { title: d.title, start: slot.start, end: slot.end,
       note: d.note || '', agenda: d.agenda || [], attendees: d.attendees || [] }, ctx);
-    if (!r.ok) return { ok: false, error: r.error };
+    if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
     return { ok: true, url: (r.data || {}).url || '', id: (r.data || {}).id || '' };
   }
   // delegate
   if (!d.description && !d.assignee) return { ok: false, error: '草稿是空的' };
   const r = await tools.call('lark.task.create', { description: d.description || '', assignee: d.assignee || '',
     assigneeId: d.assigneeId || '', due: d.due || '', links: d.links || [] }, ctx);
-  if (!r.ok) return { ok: false, error: r.error };
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
   return { ok: true, url: (r.data || {}).url || '', id: (r.data || {}).id || '', note: (r.data || {}).note || '' };
 }
 // 名字 → open_id。「重名不猜」那套规则现在只有一份，在工具登记表的 people.lookup 里。
@@ -521,6 +540,6 @@ function sentDigest(dir, { limit = 5, max = 8 } = {}) {
 module.exports = {
   resolveIds,
   KINDS, STATES, MAX_RESEARCH, MAX_RISKS,
-  keyOf, fileOf, read, ensure, ensureBackground, generate, apply, projectFocus, sentDigest,
+  keyOf, fileOf, read, ensure, ensureBackground, generate, apply, markSent, projectFocus, sentDigest,
   classifyByRules, enforceExclusive, sourceCards, mergeStates, sanitizeDraft, twoSlots, norm, todayLocal,
 };

@@ -1919,16 +1919,36 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const cardId = String(j.cardId || ''); if (!/^c-[0-9a-f]{12}$/.test(cardId)) return reply(400, { ok:false, error:'卡片编号不对' });
     // X6 / 21（2026-09-22）：do:'send' 是这条路上唯一会真外发的动作（建日历、派飞书任务）。
     // 「人在界面上点了确认」必须由请求带进来，服务端不再自己假设；没带就 400，一个工具都不调。
-    // 幂等在 actions.apply 里：已经是 sent 的卡不再发第二遍（连点两下 / 断线重试都只发一次）。
-    if (String(j.do || '') === 'send' && j.confirmed !== true) return reply(400, { ok:false, error:'请在界面上确认后再发送（服务端没收到确认）' });
+    // 幂等分两层：卡已是 sent 的不再发（actions.apply）；卡还没标 sent 但这份内容发过 / 上次没发清楚的，由外发门禁挡
+    // （第 9 条，2026-09-22，和 /share-send 同一套 app/send-gate.js）：键 = 会 + 卡 + 卡类型 + 清洗后的草稿内容；
+    // 工具超时这类「不知道发没发出去」留 pending 收据，再点必须带 retryConfirmed:true，否则 409。
+    const doSend = String(j.do || '') === 'send';
+    if (doSend && j.confirmed !== true) return reply(400, { ok:false, error:'请在界面上确认后再发送（服务端没收到确认）' });
     try {
-      const out = await withMeetingLock(sid, () => actions.apply({
-        dir: ACTIONS_DIR, sessionId: sid, cardId, action: String(j.do || ''), draft: j.draft,
-        env: loadEnv(), log, hub: workHub && workHub.hub, dataDir: DATA, confirmed: j.confirmed === true,
-      }));
-      log('meeting-action ' + sid + ' ' + cardId + ' ' + j.do);
-      return reply(200, { ok:true, card: out.card, actions: out.actions });
-    } catch (e) { return reply(e.code === 404 ? 404 : 400, { ok:false, error: e.message }); }
+      const out = await withMeetingLock(sid, async () => {
+        const run = () => actions.apply({
+          dir: ACTIONS_DIR, sessionId: sid, cardId, action: String(j.do || ''), draft: j.draft,
+          env: loadEnv(), log, hub: workHub && workHub.hub, dataDir: DATA, confirmed: j.confirmed === true,
+        });
+        if (!doSend) return run();
+        const have = actions.read(ACTIONS_DIR, sid);
+        const card = have && (have.cards || []).find(c => c.id === cardId);
+        if (!card) { const e = Error(have ? '找不到这张卡' : '这场会还没有处理台数据'); e.code = 404; throw e; }
+        if (card.state === 'sent') return { card, actions: have, alreadySent: true };
+        const d = actions.sanitizeDraft(card.kind, j.draft, null);
+        let applied = null;
+        const receipt = await sendGate.send({
+          dataDir: DATA, kind: 'meeting-action', body: j, meta: { id: sid, cardId, cardKind: card.kind },
+          key: ['meeting-action', sid, cardId, card.kind, sendGate.hash(d || {})],
+          run: async () => { applied = await run(); const ref = (applied.card && applied.card.sentRef) || {}; return { url: ref.url || '', refId: ref.id || '' }; },
+        });
+        if (applied) return applied;
+        // 收据说这份早发出去了、卡却还没标 sent（上次发完没来得及写卡）：按收据把卡补成 sent，不再发
+        return actions.markSent({ dir: ACTIONS_DIR, sessionId: sid, cardId, draft: d, ref: { url: receipt.url || '', id: receipt.refId || '' }, note: '按上次的发送收据补记' });
+      });
+      log('meeting-action ' + sid + ' ' + cardId + ' ' + j.do + (out.alreadySent ? '（已发过，未重发）' : ''));
+      return reply(200, { ok:true, card: out.card, actions: out.actions, ...(out.alreadySent ? { alreadySent: true } : {}) });
+    } catch (e) { return reply(e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { ok:false, error: e.message, ...(e.uncertain ? { uncertain: true } : {}) }); }
   }
   if (p.endsWith('/calendar-match')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }

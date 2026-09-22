@@ -170,5 +170,5 @@ test('R3 显示侧：转写缺口（gapWarning）在回看页和归档列表都�
   assert.match(server,/if\(job\.speakerWarning\)\{result\.names=\{\};/);
   assert.ok(!/if\(job\.gapWarning\)\{result\.names/.test(server),'缺口不该触发抹名字');
   // 回看页脚本改了，缓存串要跟着加一
-  assert.match(archiveHtml,/archive\.js\?v=15"/,'archive.js 改了，archive.html 的 ?v= 要加一');
+  assert.match(archiveHtml,/archive\.js\?v=16"/,'archive.js 改了，archive.html 的 ?v= 要加一');
 });
