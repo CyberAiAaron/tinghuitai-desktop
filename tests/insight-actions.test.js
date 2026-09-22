@@ -98,6 +98,10 @@ test('openSource：写回 correction / quote / doc，找到才出冲突条；找
     const row = db.prepare('SELECT * FROM cards WHERE id=?').get(made.memoryCardId);
     assert.equal(row.kind, 'question'); assert.equal(row.state, 'open'); assert.equal(row.needs_review, 1); assert.ok(row.text.includes('预算是 20M') && row.text.includes('决策板 D8'));
   } else assert.equal(made.patch.correction, '资料里没有这个数');
+  // 待核卡写不进去 → definite 失败（没有外发，可重试），不返回成功；没记忆库同样失败（Codex bbf46b84 F0）
+  const broken = { prepare() { throw Error('disk I/O error'); }, exec() { throw Error('disk I/O error'); }, transaction() { throw Error('disk I/O error'); } };
+  await assert.rejects(IA.openSource({ card: missCard, args: { createIfMissing: true }, env: { DECISION_BOARD_DIR: dir }, db: broken, inspect: inspectOk }), e => e.definite === true && /待核卡没记上/.test(e.message));
+  await assert.rejects(IA.openSource({ card: missCard, args: { createIfMissing: true }, env: { DECISION_BOARD_DIR: dir }, db: null, inspect: inspectOk }), e => e.definite === true && /记忆库/.test(e.message));
 });
 
 // 假 lark-cli 的 execFile：记下每次参数；contact 搜人按名字回；task +create 按模式文件决定成 / 败
@@ -183,6 +187,14 @@ test('setDate 兜底 A/B（Aaron 2026-09-22 拍板）：有 memory.db 但查不�
   assert.ok(row && row.kind === 'promise' && row.state === 'pending' && row.due === '2026-10-01' && row.owner === 'Cary Luo', '照会上说的新建了承诺卡');
   const plain = await IA.setDate({ card, args: {}, session: {}, db: null, execImpl: fakeExec([]) });
   assert.equal(plain.ok, true); assert.equal(plain.sourceHit, null, '没 db 查不了，不计命中也不计缺失');
+  // 任务建成、承诺卡写失败：不抛（抛了会让人重点、重复建任务），部分成功写进 task.note（Codex bbf46b84 F1）
+  // 上面 createIfMissing 已经建了这件事的承诺卡，这一次走 updateCard；两条写路都拦
+  const orig = mem.putCard, origU = mem.updateCard; mem.putCard = mem.updateCard = () => { throw Error('database is locked'); };
+  try {
+    const part = await IA.setDate({ card, args: { owner: 'Cary Luo', createIfMissing: true }, session: { id: 's1' }, db, execImpl: fakeExec([]) });
+    assert.equal(part.ok, true); assert.equal(part.patch.task.url, 'https://example.test/task/g-1'); assert.equal(part.memoryCardId, '');
+    assert.equal(part.patch.task.memoryCardError, 'database is locked'); assert.match(part.patch.task.note, /承诺卡没记上（任务已建，请手工补记忆）/);
+  } finally { mem.putCard = orig; mem.updateCard = origU; }
 });
 
 test('taskCreate：命令成功但回包没有链接也没有编号 → ok:false 且 uncertain（Codex 8b2bdefd F4）；setDate 不写 done', async () => {
@@ -257,6 +269,21 @@ test('POST /insight-action：鉴权、类型匹配、open_source 写回 + 冲突
     // 同 cardId 同 do 再点：不重做
     r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'open_source', confirmed: true });
     assert.equal(r.status, 200); assert.equal(r.j.alreadySent, true); assert.equal(cli.calls().filter(x => x.startsWith('drive +inspect')).length, 1);
+    // 兜底 A 路由级（conflict）：D8 资料里没有 → 200 ok:false offer、不写卡、/health miss+1；带 createIfMissing → done、memory.db 里多一张 question/open/needs_review 待核卡；再点 alreadySent、miss 仍 1（Codex bbf46b84 F2）
+    const cid8 = await S.addCard({ type: 'conflict', claim: '会上说预算 20M；决策板 D8 记的是 15M', evidence: '预算是 20M', source: '决策板 D8', refs: ['D8'], why: '省一次翻决策板', action: { do: 'open_source', args: {} } });
+    r = await S.post({ id: 'ia-e2e', cardId: cid8, do: 'open_source', confirmed: true });
+    assert.equal(r.status, 200); assert.equal(r.j.ok, false); assert.equal(r.j.uncertain, true); assert.equal(r.j.offer, 'create'); assert.equal(r.j.state.status, 'offer'); assert.ok(!r.j.card.correction, 'offer 不写 correction');
+    let h8 = await (await fetch(S.base + '/health?token=' + TOKEN)).json(); assert.deepEqual(h8.sourceHit, { hit: 1, miss: 1 });
+    const mem = require(path.join(root, 'app/memory.js')); const dbT = mem.open(dir);
+    const countQ = () => dbT ? dbT.prepare(`SELECT count(*) n FROM cards WHERE kind='question' AND needs_review=1`).get().n : null;
+    if (dbT) assert.equal(countQ(), 0, 'offer 不写待核卡');
+    r = await S.post({ id: 'ia-e2e', cardId: cid8, do: 'open_source', args: { createIfMissing: true }, confirmed: true });
+    assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done'); assert.equal(r.j.card.correction, '资料里没有这个数（已记冲突待核）'); assert.equal(r.j.card.quote, '');
+    if (dbT) { assert.equal(countQ(), 1, '照会上说的记了一张待核卡'); const q = dbT.prepare(`SELECT * FROM cards WHERE kind='question' AND needs_review=1`).get(); assert.equal(q.state, 'open'); assert.ok(q.text.includes('预算是 20M') && q.text.includes('决策板 D8')); assert.equal(q.meeting_id, 'ia-e2e'); }
+    assert.ok(!S.msgs.some(m => m.type === 'feedback' && (m.highlights || []).some(h => /20M|15M/.test(h.text))), '查不到不编冲突条');
+    r = await S.post({ id: 'ia-e2e', cardId: cid8, do: 'open_source', args: { createIfMissing: true }, confirmed: true });
+    assert.equal(r.j.alreadySent, true); if (dbT) assert.equal(countQ(), 1, '再点不重复记卡');
+    h8 = await (await fetch(S.base + '/health?token=' + TOKEN)).json(); assert.deepEqual(h8.sourceHit, { hit: 1, miss: 1 }, 'offer → 新建 → 再点，同一张卡缺失只记一次');
     // 快照里带着产物和执行态（重连 / 旁听能接回来）
     const snap = await new Promise(res => { const ws2 = new WS('ws://127.0.0.1:' + port + '/?token=' + TOKEN + '&role=view'); ws2.once('message', d => { res(JSON.parse(d.toString())); ws2.close(); }); });
     const c = (snap.session.factchecks || []).find(x => x.id === cid); assert.equal(c.actionState.status, 'done'); assert.equal(c.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.equal(c.sourceHit, 'hit', '卡片带 sourceHit，会后统计从它算');

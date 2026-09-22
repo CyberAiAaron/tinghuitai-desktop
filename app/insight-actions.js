@@ -228,13 +228,18 @@ async function openSource({ card, args = {}, session = {}, env, db, dataDir, log
   const r = await resolveSource(card.source, card.refs, { env, claim: card.claim, evidence: card.evidence, db, execImpl, log, inspect, kbMap });
   if (!r.found && !args.createIfMissing) return offerCreate();
   let memoryCardId = '';
-  if (!r.found && db) {
-    // 照会上说的记一张待核卡：question / open，人工核过再改状态；不当决定写
+  if (!r.found) {
+    // 照会上说的记一张待核卡：question / open，人工核过再改状态；不当决定写。
+    // 这条路没有任何外发，写不进去就 definite 失败让人重试，不返回成功（Codex bbf46b84 F0：以前吞掉只记日志，卡片却显示做完）
+    const fail = why => { const e = Error('待核卡没记上：' + why); e.definite = true; throw e; };
+    if (!db) fail('这台机器没有记忆库（sqlite）');
+    let c = null;
     try {
       const mem = require('./memory');
-      const c = mem.putCard(db, { kind: 'question', state: 'open', text: `会上说「${clip(card.evidence || card.claim, 120)}」，资料（${card.source || '未写出处'}）里没查到，待核`, topic: clip(card.claim, 40), meeting_id: session.id || '', meeting_title: session.title || '', source_refs: r.doc && r.doc.url ? [r.doc.url] : [], human_edited: 1, needs_review: 1, review_note: '会中冲突待核（照会上说的新建）', change_reason: '会中冲突待核' });
-      memoryCardId = c ? c.id : '';
-    } catch (e) { log('insight-action open_source 待核卡没写进去 ' + e.message); }
+      c = mem.putCard(db, { kind: 'question', state: 'open', text: `会上说「${clip(card.evidence || card.claim, 120)}」，资料（${card.source || '未写出处'}）里没查到，待核`, topic: clip(card.claim, 40), meeting_id: session.id || '', meeting_title: session.title || '', source_refs: r.doc && r.doc.url ? [r.doc.url] : [], human_edited: 1, needs_review: 1, review_note: '会中冲突待核（照会上说的新建）', change_reason: '会中冲突待核' });
+    } catch (e) { log('insight-action open_source 待核卡没写进去 ' + e.message); fail(e.message); }
+    if (!c || !c.id) fail('memory.putCard 没回卡号');
+    memoryCardId = c.id;
   }
   const patch = {
     correction: r.found ? `记录：${r.value}（${r.label}${r.date ? '，' + r.date : ''}）` : NOT_FOUND + (memoryCardId ? '（已记冲突待核）' : ''),
@@ -292,7 +297,12 @@ async function setDate({ card, args = {}, session = {}, env, db, log = () => {},
       const refs = task.url ? [task.url] : [];
       if (best) memoryCard = mem.updateCard(db, best.id, { due, owner: owner || best.owner, source_refs: [...safeJson(best.source_refs), ...refs], human_edited: 1 }, `会中定日期（${session.title || session.id || '本场'}）`);
       else memoryCard = mem.putCard(db, { kind: 'promise', state: 'pending', text: card.claim, topic: clip(card.claim, 40), owner: owner || '', due, meeting_id: session.id || '', meeting_title: session.title || '', source_refs: refs, human_edited: 1, change_reason: '会中定日期' });
-    } catch (e) { log('insight-action set_date 承诺卡没写进去 ' + e.message); }
+    } catch (e) {
+      // 任务已经建在飞书了，不能抛错让人重点（会重复建任务）；写成部分成功：卡片 task.note 直说承诺卡没记上，让人手工补（Codex bbf46b84 F1）
+      log('insight-action set_date 承诺卡没写进去 ' + e.message);
+      task.memoryCardError = String(e.message || e).slice(0, 120);
+      task.note = [task.note, '承诺卡没记上（任务已建，请手工补记忆）'].filter(Boolean).join('；');
+    }
   }
   return { ok: true, patch: { task }, url: task.url, refId: task.id, memoryCardId: memoryCard ? memoryCard.id : '', sourceHit };
 }
