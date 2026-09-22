@@ -6,7 +6,7 @@
 //   决策板 D1–D8       → kb_backup 最新 决策板D1-D8_*.md 的对应 D 行（复用 app/decision-board.js 的表解析）
 //   总纲 / 产品需求总纲 §x → kb_backup 最新 产品需求总纲_*.md 的对应小节
 //   《会名》日期        → memory.db 的承诺 / 决定卡 → 会后台那场的页面（archive.html?id=）
-//   其它文档名          → ~/.claude-maint/kb-map.json 查 token；查到才附链接，查不到只写来源名
+//   其它文档名          → ~/.claude-maint/kb-map.json 查 token（只取 token，链接仍由工具层回读）；查不到只写来源名
 // 链接一律由工具层回读（tools/ 的 docInspect），代码里不手拼域名；找不到原文就写「资料里没有这个数」，不编。命令行只在 tools/ 里拼，这里不出现。
 // 这个文件不碰网络之外的副作用：文件只读，memory.db 只在 set_date 里写承诺卡。
 const fs = require('fs'), path = require('path');
@@ -203,8 +203,8 @@ async function resolveSource(source, refs, opts = {}) {
   let doc = null;
   if (hit.token) {
     const ins = await (opts.inspect || larkCli.docInspect)(hit.token, { execImpl: opts.execImpl, log: opts.log });
+    // 链接只认工具层当场回读的（Codex 1edd4fc4 初审：kb-map 里存的旧链接不走回读，可能过期 / 无权限，不拿来顶）
     if (ins && ins.ok) doc = { title: ins.title || hit.label, url: ins.url, token: hit.token };
-    else if (mapHit && /^https:\/\//.test(mapHit.url || '')) doc = { title: mapHit.title, url: mapHit.url, token: hit.token };   // kb-map 里 Aaron 自己记的链接，不是手拼
     else doc = { title: hit.label, url: '', token: hit.token, linkError: (ins && ins.error) || '工具层没回链接' };
   } else if (hit.kind === 'meeting') doc = { title: hit.title, url: hit.url, meetingId: hit.meetingId };
   const found = !!hit.quote;
@@ -240,7 +240,8 @@ async function setDate({ card, args = {}, session = {}, env, db, log = () => {},
   }
   const title = clip(String(args.title || '').trim() || card.claim, 100);
   const desc = [card.claim, card.evidence ? `会上原话：「${card.evidence}」` : '', card.source ? `出处：${card.source}` : '', session.title ? `来自会议：${session.title}` : '', note].filter(Boolean).join('\n');
-  const r = await larkCli.taskCreate({ summary: title, description: desc, assignee, due }, { execImpl, log });
+  const cliTimeout = Math.max(500, Number((env || {}).INSIGHT_ACTION_CLI_TIMEOUT_MS) || 30000);
+  const r = await larkCli.taskCreate({ summary: title, description: desc, assignee, due }, { execImpl, log, timeout: cliTimeout });
   if (!r.ok) { const e = Error(r.error || '建任务没成'); e.uncertain = !!r.uncertain; e.definite = !r.uncertain; throw e; }
   const task = { url: r.url, id: r.id, owner: owner || '本人', assignee, due, note };
   // 承诺卡：找同一件事的 pending 承诺写 due / owner；没有就新建一张，别让这次「定日期」只留在飞书

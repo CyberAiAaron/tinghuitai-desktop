@@ -83,7 +83,9 @@ async function taskCreate({ summary, description = '', assignee = '', due = '' }
   const a = ['task', '+create', '--summary', s];
   if (description) a.push('--description', clip(description, 2000));
   if (/^(?:ou_|cli_)[A-Za-z0-9]{1,64}$/.test(assignee)) a.push('--assignee', assignee);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) a.push('--due', due);   // 裸 YYYY-MM-DD（1.0.96 的 date: 前缀会解析失败）
+  // 裸 YYYY-MM-DD 会被 1.0.96 发成本地 0 点的 is_all_day，飞书按 UTC 日归一后早一天（09-22 e2e：传 09-29 回读 09-28）。
+  // 发成当天 18:00 Asia/Shanghai 的 ISO 时刻，日期不会漂；date: 前缀 1.0.96 解析失败，不用。
+  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) a.push('--due', due + 'T18:00:00+08:00');
   a.push('--as', 'user', '--format', 'json');
   const r = await runCli(a, { timeout: 30000, ...opts });
   if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };

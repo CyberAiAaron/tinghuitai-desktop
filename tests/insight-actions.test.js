@@ -63,13 +63,13 @@ test('resolveSource：《会名》日期 → memory.db 承诺 / 决定卡 → �
   assert.equal(r3.found, false);
 });
 
-test('resolveSource：其它文档名走 kb-map.json 查 token；lark-cli 回不出链接就退到 kb-map 里记的链接；查不到只写来源名', async () => {
+test('resolveSource：其它文档名走 kb-map.json 查 token；lark-cli 回不出链接就不附链接；查不到只写来源名', async () => {
   const { dir, kbMap } = fixtures();
   const r = await IA.resolveSource('技术架构 v0.2', [], { dir: path.join(dir, 'nope'), kbMap, claim: 'x', inspect: inspectOk });
   assert.equal(r.found, false, '本机没有导出、摘不到原文 → 不编原文'); assert.equal(r.message, '资料里没有这个数');
   assert.equal(r.doc.url, 'https://example.test/docx/UifYd8eGCoxyyuxEIZjlzBHNgae', '链接还是附上');
   const r2 = await IA.resolveSource('CDCP 汇报框架', [], { dir, kbMap, claim: 'x', inspect: inspectFail });
-  assert.equal(r2.doc.url, 'https://example.test/docx/FRAMEWORKtoken0000000', 'lark-cli 失败 → kb-map 里的链接');
+  assert.deepEqual(r2.doc, { title: 'CDCP 汇报框架', url: '', token: 'FRAMEWORKtoken0000000', linkError: 'lark-cli 没跑起来' }, '回读失败 → 不附链接、不拿 kb-map 里存的旧链接顶（Codex 1edd4fc4）');
   const r3 = await IA.resolveSource('某个谁也没听过的文档', [], { dir, kbMap, claim: 'x', inspect: inspectOk });
   assert.deepEqual({ found: r3.found, message: r3.message, doc: r3.doc }, { found: false, message: '资料里没有这个数', doc: undefined });
   // 决策板 token 由 lark-cli 回读失败、kb-map 里也没有 → 有原文、没链接、说明原因
@@ -109,13 +109,13 @@ test('setDate：owner 解析到 → 派给他；解析不到 → 建给本人并
   let calls = [];
   let r = await IA.setDate({ card, args: { owner: 'Cary Luo' }, session: { id: 's1', title: '硬件周会' }, db, execImpl: fakeExec(calls) });
   let a = calls.find(x => x[1] === '+create');
-  assert.equal(a[a.indexOf('--assignee') + 1], 'ou_cary'); assert.equal(a[a.indexOf('--due') + 1], plus7); assert.ok(a.includes('--as') && a[a.indexOf('--as') + 1] === 'user');
+  assert.equal(a[a.indexOf('--assignee') + 1], 'ou_cary'); assert.equal(a[a.indexOf('--due') + 1], plus7 + 'T18:00:00+08:00', '截止发成当天 18:00+08:00，裸日期在飞书会早一天'); assert.ok(a.includes('--as') && a[a.indexOf('--as') + 1] === 'user');
   assert.equal(r.patch.task.url, 'https://example.test/task/g-1'); assert.equal(r.patch.task.owner, 'Cary Luo'); assert.equal(r.patch.task.note, '');
   if (db) { const row = db.prepare('SELECT * FROM cards WHERE id=?').get('p-bom'); assert.equal(row.due, plus7, '同一件事的承诺卡写了 due'); assert.equal(row.owner, 'Cary Luo'); assert.ok(JSON.parse(row.source_refs).includes('https://example.test/task/g-1')); }
   calls = [];
   r = await IA.setDate({ card, args: { owner: '不存在的人', due: '2026-10-01' }, session: { id: 's1', title: '硬件周会' }, db: null, execImpl: fakeExec(calls) });
   a = calls.find(x => x[1] === '+create');
-  assert.equal(a[a.indexOf('--assignee') + 1], IA.SELF_OPEN_ID, '解析不到建给本人'); assert.ok(a[a.indexOf('--description') + 1].includes('代办对象：不存在的人')); assert.equal(a[a.indexOf('--due') + 1], '2026-10-01');
+  assert.equal(a[a.indexOf('--assignee') + 1], IA.SELF_OPEN_ID, '解析不到建给本人'); assert.ok(a[a.indexOf('--description') + 1].includes('代办对象：不存在的人')); assert.equal(a[a.indexOf('--due') + 1], '2026-10-01T18:00:00+08:00');
   assert.equal(r.patch.task.note, '代办对象：不存在的人');
   calls = [];
   r = await IA.setDate({ card, args: {}, session: { id: 's1', title: '硬件周会' }, db: null, execImpl: fakeExec(calls) });
@@ -131,6 +131,7 @@ function stubCli(dir) {
   fs.writeFileSync(bin, `#!/bin/bash
 printf '%s' "$*" | tr '\\n' ' ' >> ${JSON.stringify(logFile)}; printf '\\n' >> ${JSON.stringify(logFile)}
 if [ -f ${JSON.stringify(mode)} ] && [ "$(cat ${JSON.stringify(mode)})" = "fail" ] && [ "$2" = "+create" ]; then echo '{"ok":false,"error":{"message":"飞书拒绝"}}'; exit 0; fi
+if [ -f ${JSON.stringify(mode)} ] && [ "$(cat ${JSON.stringify(mode)})" = "hang" ] && [ "$2" = "+create" ]; then sleep 5; echo '{"ok":true,"data":{"task":{"guid":"g-late","url":"https://example.test/task/g-late"}}}'; exit 0; fi
 case "$1 $2" in
   "task +create") echo '{"ok":true,"data":{"task":{"guid":"g-e2e","url":"https://example.test/task/g-e2e"}}}' ;;
   "drive +inspect") echo '{"ok":true,"data":{"url":"https://example.test/docx/'"$4"'","title":"决策板"}}' ;;
@@ -142,7 +143,7 @@ esac
   return { bin, mode: m => { if (m) fs.writeFileSync(mode, m); else fs.rmSync(mode, { force: true }); }, calls: () => { try { return fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean); } catch (e) { return []; } } };
 }
 async function startServer({ dir, port, cli, kb }) {
-  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ RELAY_TOKEN: TOKEN, ARCHIVE_TARGET: 'local', MEMORY_PROJECTION_DIR: path.join(dir, 'mem'), DECISION_BOARD_DIR: kb, INSIGHT_ACTION_GRACE_MS: 0, PHONE_TOKENS: ['p'.repeat(40)] }));
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ RELAY_TOKEN: TOKEN, ARCHIVE_TARGET: 'local', MEMORY_PROJECTION_DIR: path.join(dir, 'mem'), DECISION_BOARD_DIR: kb, INSIGHT_ACTION_GRACE_MS: 0, INSIGHT_ACTION_CLI_TIMEOUT_MS: 600, PHONE_TOKENS: ['p'.repeat(40)] }));
   const child = spawn(process.execPath, [path.join(root, 'app/server.js')], { env: { ...process.env, THT_DATA_DIR: dir, THT_PORT: String(port), THT_NO_OPEN: '1', THT_TEST: '1', THT_LARK_CLI: cli.bin }, stdio: 'ignore' });
   const base = 'http://127.0.0.1:' + port;
   for (let i = 0; i < 80; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch (e) {} await pause(100); }
@@ -202,7 +203,7 @@ test('POST /insight-action set_date：无 owner 建给本人；lark-cli 失败 �
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done');
     assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e'); assert.equal(r.j.card.task.due, '2026-10-08'); assert.equal(r.j.card.task.owner, '本人');
     const creates = cli.calls().filter(x => x.startsWith('task +create')); assert.equal(creates.length, 2);
-    assert.ok(creates[1].includes('--assignee ou_00c28e8ed0b15769a9a5f5e4ea36f7e8') && creates[1].includes('--due 2026-10-08') && creates[1].includes('--as user'), creates[1]);
+    assert.ok(creates[1].includes('--assignee ou_00c28e8ed0b15769a9a5f5e4ea36f7e8') && creates[1].includes('--due 2026-10-08T18:00:00+08:00') && creates[1].includes('--as user'), creates[1]);
     assert.ok(!cli.calls().some(x => x.startsWith('contact')), '没 owner 不搜人');
     r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: {}, confirmed: true });
     assert.equal(r.j.alreadySent, true); assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, 2, '重复点不重建');
@@ -215,5 +216,18 @@ test('POST /insight-action set_date：无 owner 建给本人；lark-cli 失败 �
     r = await p; assert.equal(r.status, 200); assert.equal(r.j.state.status, 'cancelled');
     assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, 2, '撤回的那次没建任务');
     const c2 = await S.post({ id: 'ia-e2e', cardId: cid2, do: 'cancel' }); assert.equal(c2.status, 409, '没有在等的动作，撤不了');
+    // 结果不明（命令被超时杀掉，飞书那边可能已经建了）：留 pending 收据；再点必须带 retryConfirmed，否则 409（Codex 1edd4fc4 初审要求有测试）
+    const st2 = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')); st2.INSIGHT_ACTION_GRACE_MS = 0; fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(st2));
+    const cid3 = await S.addCard({ type: 'recheck', claim: 'BOM 成本模型 09-17《硬件例会》已承诺过，记录里没看到落地', evidence: '成本模型我下周更新', source: '硬件例会 2026-09-17', why: '省他翻记录', action: { do: 'set_date', args: {} } });
+    cli.mode('hang');
+    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: {}, confirmed: true });
+    assert.equal(r.status, 400); assert.equal(r.j.state.status, 'failed'); assert.equal(r.j.uncertain, true, '被超时杀掉 = 结果不明'); assert.equal(r.j.state.uncertain, true);
+    cli.mode('');
+    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: {}, confirmed: true });
+    assert.equal(r.status, 409, '结果不明时普通 confirmed 不放行'); assert.match(r.j.error, /上次发送结果还没确认/); assert.equal(r.j.uncertain, true);
+    const before = cli.calls().filter(x => x.startsWith('task +create')).length;
+    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: {}, confirmed: true, retryConfirmed: true });
+    assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done'); assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e');
+    assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, before + 1, '带 retryConfirmed 才重来一次');
   } finally { try { S.ws.close(); } catch (e) {} S.child.kill(); }
 });
