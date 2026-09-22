@@ -6,7 +6,8 @@
 // 以前它自己认 claude / codex / DeepSeek 三个牌子，换一家模型要改代码。现在 Python 只管起这个进程，
 // 用哪家、降不降级、记多少账全由 settings 的 LLM_CHAIN 说了算，和服务端共用同一份 app/llm.js。
 //
-// 输入：{kind,system,user,maxTokens,noFallback,skip,sessionId,purpose,timeoutMs,temperature,context}
+// 输入：{kind,system,user,maxTokens,noFallback,skip,sessionId,purpose,timeoutMs,temperature,json,context}
+//   json:true —— 这次要的是一个 JSON 对象；接口类会带上 response_format，命令行忽略这个参数。
 //   context:{purpose,meetingId,memoryBlock} —— 带上它，本机资料由这边的 app/context-pack.js 拼好，
 //   替换 system / user 里的占位符。Python 一侧不再自己找文件读资料：资料是什么、给多少字、
 //   哪个用途能看什么，只由 context-pack 的那张表说了算，会中会后共用同一份。
@@ -75,6 +76,7 @@ function reasonOf(r) {
       skip: Number(req.skip) || 0,
       timeoutMs: Number(req.timeoutMs) || 0,
       temperature: req.temperature == null ? undefined : Number(req.temperature),
+      json: !!req.json,
     });
   } catch (e) {
     process.stdout.write(JSON.stringify({ ok: false, errorCode: 'ask_failed', error: String((e && e.message) || e).slice(0, 200) }) + '\n');

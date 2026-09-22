@@ -122,7 +122,7 @@ const llm = require('./llm');
 // 模型调用：优先用本机已登录的 AI 命令行（不用申请 Key），失败再退回 API。
 // tier='quick' 用会中那颗快模型（没配就用同一颗）。会中分诊每 40 秒一次，慢模型会拖住字幕。
 // 用量账本：所有花 token 的地方在花费那一刻记一笔，成本只从这本账汇总（不然子任务和收敛会被重复算）。
-// 记一笔的口径在 app/llm.js（noteUsage），会后管线经 app/llm-cli.js 写的是同一个文件、同一种行。
+// 记一笔的口径在 app/llm.js（noteUsage），会后管线经 app/llm-bridge.js 写的是同一个文件、同一种行。
 const USAGE_LOG = path.join(DATA, 'state', 'usage.jsonl');
 function usageBySession() {
   const out = {}; try {

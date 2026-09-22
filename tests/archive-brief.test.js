@@ -6,7 +6,7 @@ test('时间戳：mm:ss 和 h:mm:ss 都换成秒，乱写的给 0',()=>{assert.d
 test('模型输出：剥掉代码块围栏取 JSON；Markdown 标记不进页面',()=>{assert.deepEqual(py(`print(json.dumps([mp._json_out('\`\`\`json\\n{"a":1}\\n\`\`\`'),mp._plain('## **结论** | x')]))`),[{a:1},'结论  x']);});
 test('结构化总结：条数封顶、时间换秒、没说负责人的留空',()=>{
   const raw={meta:{scope:'范围'},overview:{topics:[{n:1,title:'议题一',from:'0:10',to:'5:00'},{n:2,title:'议题二',from:'5:00',to:'9:00'}],conclusions:['a','b','c','d'],todos:Array.from({length:7},(_,i)=>({what:'事'+i,owner:i?'':'甲',due:'',topic:2}))},topics:[{n:1,conclusion:'**定了**',points:Array.from({length:6},(_,i)=>({text:'点'+i,at:'1:0'+i})),open:[]},{n:2,conclusion:'',points:[{text:'x',at:'6:00'}],open:['未决']}]};
-  const b=py(`mp._ask=lambda *a,**k:${JSON.stringify(JSON.stringify(raw))}\nprint(json.dumps(mp.make_brief({'transcript':[{'t':'0:10','text':'大家好我们开始'}],'start':'2026-09-17T09:58:17.476Z','end':1789639697476,'summary':''})))`);
+  const b=py(`mp.ask_model=lambda *a,**k:{'text':${JSON.stringify(JSON.stringify(raw))}}\nprint(json.dumps(mp.make_brief({'transcript':[{'t':'0:10','text':'大家好我们开始'}],'start':'2026-09-17T09:58:17.476Z','end':1789639697476,'summary':''})))`);
   assert.equal(b.overview.conclusions.length,3);assert.equal(b.overview.todos.length,5);assert.equal(b.overview.todos[0].ownerSource,'meeting');assert.equal(b.overview.todos[1].owner,'');
   assert.equal(b.topics[0].points.length,4);assert.equal(b.topics[0].points[0].at,60);assert.equal(b.topics[0].conclusion,'定了');assert.equal(b.duration,600);assert.equal(b.overview.topics[1].from,300);});
 test('点评失败不拖垮总结：review 为空并记下原因',()=>{

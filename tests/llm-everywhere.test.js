@@ -1,6 +1,6 @@
 'use strict';
 // 换模型 = 改配置（Aaron 2026-09-22：「听会台用哪家模型，改一下配置就行，代码里不写死」）。
-// 全仓每一次模型调用都走 app/llm.js；会后那条 Python 管线自己不认厂商，只起 app/llm-cli.js 进到同一层。
+// 全仓每一次模型调用都走 app/llm.js；会后那条 Python 管线自己不认厂商，只起 app/llm-bridge.js 进到同一层。
 // 这里验三件事：
 //   ① 业务代码里没有厂商名、没有 chat/completions、没有读 DEEPSEEK_API_KEY
 //   ② settings 里只配一个本地假接口、连 LLM_PROVIDER 都不配，Python 管线照样跑出结果 —— 证明「只改配置就换了家」
@@ -11,7 +11,7 @@ const { spawn } = require('child_process');
 const root = path.join(__dirname, '..'), APP = path.join(root, 'app');
 
 // 允许出现厂商名的地方：适配层自己、设置页与安装引导。其余业务代码一个牌子都不许认。
-const BRAND_OK = new Set(['llm.js', 'llm-cli.js', 'cli-llm.js', 'config.js', 'setup-routes.js']);
+const BRAND_OK = new Set(['llm.js', 'llm-bridge.js', 'cli-llm.js', 'config.js', 'setup-routes.js']);
 // 09-22 之前 app/share.js 是唯一一处例外：分享到 Slack 要起一个无头命令行去用账号里的连接器。
 // 审查 X3 把它改成走本机 Slack token 之后，例外没有了——下面那条断言现在是真·全仓。
 
@@ -44,10 +44,10 @@ test('适配层之外一个命令行牌子都不剩（多一处就得先说明�
   assert.deepEqual(hits.sort(), []);
 });
 
-test('Python 只有一个模型入口：ask_model 起 llm-cli.js，自己不 spawn 任何命令行、不打 HTTP', () => {
+test('Python 只有一个模型入口：ask_model 起 llm-bridge.js，自己不 spawn 任何命令行、不打 HTTP', () => {
   const s = fs.readFileSync(path.join(APP, 'meeting-pipeline.py'), 'utf8');
   assert.match(s, /def ask_model\(/);
-  assert.match(s, /llm-cli\.js/);
+  assert.match(s, /llm-bridge\.js/);
   assert.doesNotMatch(s, /urllib\.request\.Request\([^)]*completions/);
   // 只该有这一个地方起子进程跑模型；起飞书 CLI 的那个不算
   assert.equal((s.match(/def cli_ask|CLI_NAMES|find_cli\(/g) || []).length, 0);

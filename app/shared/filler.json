@@ -1,0 +1,5 @@
+{
+  "_": "语气词正则的唯一真源。Python（app/meeting-pipeline.py 的 FILLER）和 Node（app/server.js 的 fillerASR）都读它；strip 是比对前先去掉的标点。纯语气词的行不进模型输入，归档原文不受影响。",
+  "pattern": "^(嗯|啊|哦|噢|呃|额|哎|唉|诶|欸|哈|呀|呵|um+|uh+|mm+|hmm+|ah+|oh+)+$",
+  "strip": "[\\s，。、,.!?！？…~—-]+"
+}
