@@ -127,6 +127,7 @@ const decEditing=new Set();
 // 名字只存一处：names 映射。以前这里还从「需要你定一下」的答案里二次推导，
 // 于是认人清单把一个名字清掉之后，旧答案又会把它顶回来。现在认人只走 /speaker-confirm，答案不再参与显示。
 function spkMap(s){const m={};(s.transcript||[]).forEach(r=>{const k=String(r.speaker??r.spk??r.who??'');if(k&&/^\w{1,12}$/.test(k)&&!m[k])m[k]=UNNAMED();});return {...m,...(s.names||{})};}
+function nmTxt(text,map){let t=String(text==null?'':text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),map[k]);});return t;}
 function nm(text,map){let t=esc(text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),()=>esc(map[k]));});return t;}
 // 时间胶囊 = 回到原句的入口。段落 id（seg）在就精确落到那一句；只有时间就按时间找最近的一句；
 // 两样都没有的条目不做成可点的样式，免得点了没反应。
@@ -328,8 +329,8 @@ function actRow(c,n){
   const owner=c.owner||d.assignee||'',due=c.due||d.due||'';
   return '<tr class="bf-act'+(c.state==='sent'?' done':'')+'" data-card="'+esc(c.id)+'"><td class="td-n">'+n+'</td>'
     +'<td><span class="bf-tag k-'+esc(c.kind)+'">'+esc(KIND_LABEL(c.kind))+'</span>'+nm(c.text,map)
-    +(c.reason?'<div class="bf-act-why">'+esc(c.reason)+'</div>':'')
-    +(c.advice&&c.advice!==c.text?'<div class="bf-act-why">'+T('建议做法：','Suggested: ')+esc(c.advice)+'</div>':'')
+    +(c.reason?'<div class="bf-act-why">'+nm(c.reason,map)+'</div>':'')
+    +(c.advice&&c.advice!==c.text?'<div class="bf-act-why">'+T('建议做法：','Suggested: ')+nm(c.advice,map)+'</div>':'')
     +(c.researchSkipped?'<div class="bf-act-why">'+esc(c.researchSkipped)+'</div>':'')
     +(c.sentNote?'<div class="bf-act-why">'+esc(c.sentNote)+'</div>':'')
     +(c.claimFailed&&c.claimNote?'<div class="bf-act-why">'+esc(c.claimNote)+'</div>':'')+'</td>'
@@ -361,7 +362,7 @@ async function saySend(text){
     const j=await r.json();
     if(!j.ok)throw Error(j.error||T('没改成','Failed'));
     actData=j.actions;actStatus='done';if(j.focus)actOpen.add(j.focus);
-    sayLog=(j.applied||[]).map(x=>'✓ '+esc(x)).join('<br>')+(j.by==='model'?' <span class="bf-sug">· '+esc(t('byModel'))+'</span>':'');sayDraft='';
+    sayLog=(j.applied||[]).map(x=>'✓ '+nm(x,spkMap(record||{}))).join('<br>')+(j.by==='model'?' <span class="bf-sug">· '+esc(t('byModel'))+'</span>':'');sayDraft='';
   }catch(e){
     // 取消 = 撤回这次请求；服务端可能已经改完，所以取消后重读一遍，页面上不留半截状态
     if(e&&e.name==='AbortError'){sayLog=esc(t('sayStop'));sayBad=false;clearTimeout(timer);sayBusy=false;sayAbort=null;loadActions();return;}
@@ -447,10 +448,10 @@ function meetingForm(d){
     +'<span class="bf-note">'+T('点这一下才真发，改完再点。','Nothing goes out until you click this.')+'</span></div>';
 }
 function delegateForm(d){
-  return '<label class="bf-f"><span>'+T('负责人','Assignee')+'</span><input type="text" data-f="assignee" value="'+esc(d.assignee||'')+'"></label>'
+  return '<label class="bf-f"><span>'+T('负责人','Assignee')+'</span><input type="text" data-f="assignee" value="'+esc(nmTxt(d.assignee||'',spkMap(record||{})))+'"></label>'
     +'<label class="bf-f"><span>'+T('截止','Due')+'</span><input type="date" data-f="due" value="'+esc(d.due||'')+'">'
     +(d.dueDefault?'<em class="bf-note">'+T('默认截止，可改','Default due date — change it')+'</em>':'')+'</label>'
-    +'<label class="bf-f"><span>'+T('说明','Description')+'</span><textarea data-f="description" rows="4">'+esc(d.description||'')+'</textarea></label>'
+    +'<label class="bf-f"><span>'+T('说明','Description')+'</span><textarea data-f="description" rows="4">'+esc(nmTxt(d.description||'',spkMap(record||{})))+'</textarea></label>'
     +'<label class="bf-f"><span>'+T('相关链接','Links')+'</span><textarea data-f="links" rows="2" placeholder="'+T('一行一个','One per line')+'">'+esc((d.links||[]).join('\n'))+'</textarea></label>'
     +'<div class="bf-send"><button type="button" data-do="send">'+T('派发','Assign')+'</button>'
     +'<span class="bf-note">'+T('点这一下才真建飞书任务。','No Feishu task is created until you click this.')+'</span></div>';
