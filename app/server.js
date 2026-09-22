@@ -1375,7 +1375,7 @@ async function handleRequest(req, res) {
   }
   if(p.startsWith('/sharing/slack') || p.startsWith('/asr-relay/sharing/slack')){if(await slackShareRoute(req,res,u,authed))return;}
   if(await workspaceRoute(req,res,u))return;
-  if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),localReason:()=>localReqReason(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>askModel(loadEnv(),'Reply exactly OK','OK',8,'live')}))return;
+  if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),localReason:()=>localReqReason(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>askModel(loadEnv(),'Reply exactly OK','OK',8,'live'),tokenOk:t=>tokenOk(loadEnv(),t)}))return;
   // ⚠️ 工作台这一段必须排在所有 p.endsWith('/xxx') 路由前面。
   // 它的子路径叫 /hub/update、/hub/session，会被下面的 endsWith('/update')（应用自更新）
   // 和 endsWith('/session')（存会议记录）抢走：改一条待办会去跑一次程序更新，

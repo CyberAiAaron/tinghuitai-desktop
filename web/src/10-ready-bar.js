@@ -49,7 +49,7 @@
   $('#rb-llm') && ($('#rb-llm').onclick = () => openSettings('llm'));
   // 设置页在另一个窗口改完，回到这里要能自己刷新状态
   async function refreshBoot(){
-    try { const r = await fetch('/setup', {cache:'no-store'}); if (r.ok) { boot = Object.assign({}, boot, await r.json()); } } catch(e){}
+    try { const r = await fetch('/setup', {cache:'no-store', headers:{'x-tht-token':cfg.relayToken||''}}); if (r.ok) { boot = Object.assign({}, boot, await r.json()); } } catch(e){}
     updateReadyBar();
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBoot(); });
