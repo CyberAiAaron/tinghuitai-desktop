@@ -1281,12 +1281,14 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     updateReadyBar();
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBoot(); });
+  // 手机 / 外网窗口拿不到 bootstrap.js（THT_BOOT 为空），开局就用口令读一次就绪状态，否则「开始听会」被当成没接转写（09-22）
+  if (!window.THT_BOOT) refreshBoot();
 
   function assistantIdentity(config,online){
     return 'MyAgent';
   }
   let serverModelIdentity='MyAgent';
-  fetch('/setup').then(r=>r.ok?r.json():null).then(c=>{if(c){serverModelIdentity=assistantIdentity({key:'server-held',model:c.model||'',provider:c.provider||''},true);updateAssistantIdentity();}}).catch(()=>{});
+  fetch('/setup',{cache:'no-store',headers:{'x-tht-token':cfg.relayToken||''}}).then(r=>r.ok?r.json():null).then(c=>{if(c){serverModelIdentity=assistantIdentity({key:'server-held',model:c.model||'',provider:c.provider||''},true);updateAssistantIdentity();}}).catch(()=>{});
   function updateAssistantIdentity(){const name=serverModelIdentity;$('#b-assistant').textContent=name;$('#assistant-name').textContent=name;$('#assistant-panel').setAttribute('aria-label',name);}
   const assistantPending=new Map();let assistantBusy=false,assistantUndo=null,assistantLastRule='',assistantTrigger=null;
   const A=window.LiveMateCore;
@@ -3135,6 +3137,7 @@ highlights：要点/决定，一句话一条（若与「项目核心记忆」里
   el.start.onclick = async () => {
     if(!await checkMac()){note(ui==='en'?'Recording service unavailable. Reopen the installed app.':'录音服务未连接，请重新打开听会台；无需重复填写模型 Key。',true);return;}
     await loadServerSettings();
+    if (!window.THT_BOOT) await refreshBoot();   // 远端窗口：boot 只能靠带口令的 /setup 拿，点开始前再确认一次（09-22）
     // 一把钥匙都没配的人，点开始时直接按本机转写起：不用注册、不用填任何东西。
     // 这一步也会顺带拉起系统的语音识别授权弹窗。这台机器用不了本机转写才去设置页。
     if (!boot.asrConfigured) {
