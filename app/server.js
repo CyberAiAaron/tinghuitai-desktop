@@ -970,8 +970,8 @@ class Session {
       const memTimer = setTimeout(() => {
         const ops = require('./memory-ops');
         ops.ingest(DATA, sess, (sysP, userP) => askModel(loadEnv(), sysP, userP, 2000, 'post'), log)
-          .then(() => ops.project(DATA, path.join(MEMORY_PROJECTION_DIR, 'meeting-memory.md'), log))
-          .catch(e => log('memory ingest 失败 ' + e.message));
+          .then(r => { noteMemoryOutcome(this.id, r); return ops.project(DATA, path.join(MEMORY_PROJECTION_DIR, 'meeting-memory.md'), log); })
+          .catch(e => { log('memory ingest 失败 ' + e.message); scheduleAttentionCheck(); });
       }, 3000);
       if (memTimer.unref) memTimer.unref();
       if(this.transcript.length){workHub.hub.ingestSession(sess);workHub.hub.save();}
@@ -1209,8 +1209,8 @@ function afterArchive(sid){
     const sess=JSON.parse(fs.readFileSync(f,'utf8'));
     const ops=require('./memory-ops');
     ops.ingest(DATA,sess,(a,b)=>askModel(loadEnv(),a,b,2000,'post'),log)
-      .then(()=>ops.project(DATA,path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'),log))
-      .catch(e=>log('补齐会议记忆失败 '+sid+' '+e.message));
+      .then(r=>{noteMemoryOutcome(sid,r);return ops.project(DATA,path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'),log);})
+      .catch(e=>{log('补齐会议记忆失败 '+sid+' '+e.message);scheduleAttentionCheck();});
   }catch(e){log('补齐会议记忆没起来 '+sid+' '+e.message);}},2000).unref?.();
   // REQ-009：会后处理台的待办卡、草稿、预研究，归档跑完就在后台备好，不等他点开页面。
   setTimeout(()=>{try{ensureActionsFor(sid);}catch(e){log('会后处理台没起来 '+sid+' '+e.message);}},5000).unref?.();
@@ -1246,13 +1246,44 @@ const memRetryTimer=setInterval(()=>{
       if(!sess||!(sess.transcript||[]).length){ops.skipRetry(DATA,id,'没有转写');continue;}
       log('记忆补跑 '+id);
       ops.ingest(DATA,sess,(sysP,userP)=>askModel(loadEnv(),sysP,userP,2000,'post'),log)
-        .then(()=>ops.project(DATA,path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'),log))
-        .catch(e=>log('记忆补跑失败 '+id+' '+e.message));
+        .then(r=>{noteMemoryOutcome(id,r);return ops.project(DATA,path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'),log);})
+        .catch(e=>{log('记忆补跑失败 '+id+' '+e.message);scheduleAttentionCheck();});
       return;   // 一轮只补一场
     }
   }catch(e){log('记忆补跑调度出错 '+e.message);}
 },900000);
 if(memRetryTimer.unref)memRetryTimer.unref();
+// THT-R2（2026-09-22）：归档失败、记忆写入失败以前只在 /health 里数一下（archiveNeedsAttention），会中页面一个字不提；
+// 记忆抽卡没成还被 .then 当成功吞掉。现在三类失败合成一份「待处理」账：
+//   archive  = 归档 job 处于 error 的场次；分「还会自动重试」（attempts<4）和「已停止重试」两档
+//   memory   = 记忆库里 ingested.status='failed' 的场次；同样分两档（memory-ops.MAX_TOTAL_ATTEMPTS）
+// 账变了就推给所有在开的会（type:'attention'），/health 也带同一份，页面刷新后靠它把条挂回来。
+// 计数是全局的，不按场次——新开一场也要看得到已经在发生的故障。
+const ATTENTION_POLL_MS=(process.env.THT_TEST&&Number(process.env.THT_ATTENTION_MS)>0)?Number(process.env.THT_ATTENTION_MS):30000;
+let attentionSig='';
+function attentionSummary(){
+  const jobs=meetingPipeline.list();
+  const err=jobs.filter(j=>j.status==='error');
+  const mem=require('./memory-ops').failedSummary(DATA);
+  const a={archiveRetrying:err.filter(j=>(j.attempts||0)<4).length,archiveGivenUp:err.filter(j=>(j.attempts||0)>=4).length,
+    memoryRetrying:mem.retrying,memoryGivenUp:mem.givenUp,memoryLedgerError:mem.error||''};
+  // 记忆失败账读不出来也算一件待处理的事：不然账本坏了红条反而消失
+  a.total=a.archiveRetrying+a.archiveGivenUp+a.memoryRetrying+a.memoryGivenUp+(a.memoryLedgerError?1:0);
+  return a;
+}
+function checkAttention(){
+  try{const a=attentionSummary();const sig=JSON.stringify(a);if(sig===attentionSig)return a;attentionSig=sig;
+    if(a.total)log('待处理：归档失败 '+(a.archiveRetrying+a.archiveGivenUp)+'（已停止重试 '+a.archiveGivenUp+'）· 记忆失败 '+(a.memoryRetrying+a.memoryGivenUp)+'（已停止重试 '+a.memoryGivenUp+'）'+(a.memoryLedgerError?' · 记忆失败账读不出来（'+a.memoryLedgerError+'）':''));
+    broadcastAll({type:'attention',attention:a});return a;}catch(e){log('待处理账算不出来 '+e.message);return null;}
+}
+let attentionSoon=null;
+function scheduleAttentionCheck(){if(attentionSoon)return;attentionSoon=setTimeout(()=>{attentionSoon=null;checkAttention();},300);attentionSoon.unref?.();}
+// 记忆抽卡的结果：没抛错不等于成功——memory-ops 把「模型没返回」「返回不是 JSON」当 skipped 返回。这里把它们记成失败并当场重算账。
+function noteMemoryOutcome(sid,r){
+  if(r&&r.skipped&&['no-model','bad-json'].includes(r.reason))log('记忆写入失败 '+sid+'（'+r.reason+'）');
+  scheduleAttentionCheck();
+}
+const attentionTimer=setInterval(checkAttention,ATTENTION_POLL_MS);if(attentionTimer.unref)attentionTimer.unref();
 const startupRecoveryDir=path.join(DATA,'state','live-sessions');
 // R10（2026-09-22）：上一次进程没收尾的会（journal 还是 !complete、浏览器也没再连回来）以前只在 /health 里数一下，
 // 谁也不去收，pending 里没有这场、归档也永远排不上。现在启动后延迟一会儿把「超过 30 分钟没更新、当前没有连接」的
@@ -1689,7 +1720,8 @@ async function handleRequest(req, res) {
       let sess=journal.read(file);
       if(!sess)throw Error('找不到完整会议记录');
       if(needsReplay){
-          const result=await require('./replay-triage').replay(sess,(system,user)=>askModel(loadEnv(),system,user,2000,'post',{sessionId:rid,purpose:'replay'}));
+          const result=await require('./replay-triage').replay(sess,(system,user)=>askModel(loadEnv(),system,user,2000,'post',{sessionId:rid,purpose:'replay'}),
+            (k,n)=>replayStates.set(rid,{state:'running',phase:'正在按逐字稿补跑要点（第 '+k+' / '+n+' 段）'}));   // THT-R3：进度按段给，页面能看到走到哪了
           if(result.session){
             if(JSON.stringify(journal.read(file))!==JSON.stringify(sess))throw Error('内容已有更新，请重新整理');
             journal.write(file,result.session);sess=result.session;
@@ -2524,6 +2556,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     // 工具权限层：接上了几个、没接的缺什么。只给名字和原因，不给任何密钥。
     ...(t => ({ tools: { total: t.length, available: t.filter(x => x.available).length, unavailable: t.filter(x => !x.available).map(x => ({ name: x.name, reason: x.reason })) } }))(require('./tools').list(loadEnv(), { dataDir: DATA })),
     // 模型健康：页面刷新后靠这两个字段把红条重新挂上（N-01）
+    attention: attentionSummary(),   // THT-R2：归档 / 记忆失败的待处理账，和会中广播的是同一份
     llmDown: LLM_HEALTH.down, llmReason: LLM_HEALTH.down ? LLM_HEALTH.reason : '', llmDegraded: LLM_HEALTH.degraded && !LLM_HEALTH.down, llmDegradedReason: LLM_HEALTH.degraded ? LLM_HEALTH.degradedReason : '', llmFailStreak: LLM_HEALTH.failStreak, llmLastOkAt: LLM_HEALTH.lastOkAt || 0, llmTimeouts: LLM_HEALTH.timeouts,
     ...(c => ({ llmModelLive: c[0] ? llm.pickModel(c[0], 'live') : '', llmModelPost: c[0] ? llm.pickModel(c[0], 'post') : '', llmChain: c.map(x => x.label) }))(llm.chainOf(loadEnv())),
     // 这三个字段是为了能一眼看出「现在跑的到底是哪份代码」。

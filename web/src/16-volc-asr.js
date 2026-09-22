@@ -195,6 +195,7 @@
       else if (m.type === 'stall') note(m.message || (T('stall_relay')||'中转报告采音异常。'), true);
       else if (m.type === 'llm_down') setLlmDown(true, m.message||'');
       else if (m.type === 'llm_degraded') setLlmDegraded(!!m.on, m.message||'');
+      else if (m.type === 'attention') { try { setAttention(m.attention); } catch(e){} }
       else if (m.type === 'llm_up') { setLlmDown(false); note(ui==='en'?'Model is back; analysis resumes.':'模型已恢复，分析继续'); }
       else if (m.type === 'error') note('中转报错：' + (m.message||''), true);
     };
