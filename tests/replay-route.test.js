@@ -40,7 +40,7 @@ test('零要点场补跑：首次 / 并发 / 再次，进度可见，结果带�
   // 结果：要点落盘、带 sourceRefs、标了 replay；重复文本只留一条
   const sess=JSON.parse(fs.readFileSync(file,'utf8'));
   assert.ok(sess.highlights.length>=2,'要点没补出来：'+sess.highlights.length);
-  for(const h of sess.highlights){assert.ok(h.replay,'补出来的要点要标 replay');assert.ok(Array.isArray(h.sourceRefs)&&h.sourceRefs[0]?.segId,'要点要能追到转写片段');assert.ok(sess.transcript.some(r=>r.id===h.sourceRefs[0].segId),'segId 要真存在');}
+  for(const h of sess.highlights){assert.ok(h.replay,'补出来的要点要标 replay');assert.ok(Array.isArray(h.sourceRefs)&&h.sourceRefs.length>0,'要点要能追到转写片段');for(const ref of h.sourceRefs){assert.ok(ref&&ref.segId,'每条出处都要有 segId：'+JSON.stringify(ref));assert.ok(sess.transcript.some(r=>r.id===ref.segId),'segId 要真存在：'+ref.segId);}}
   assert.equal(sess.todos.length,1,'同一条待办两段都回了，只能留一条');
   assert.ok(sess.replay?.doneAt&&sess.replay.chunks===2,'replay 收据不对：'+JSON.stringify(sess.replay));
   // 再次点：已经补跑过，不再补跑；接受但 note 不再是「按逐字稿补跑」

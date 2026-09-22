@@ -34,6 +34,7 @@
     };
     one(en ? 'Archive failed' : '归档失败', a.archiveRetrying, a.archiveGivenUp);
     one(en ? 'Memory write failed' : '记忆写入失败', a.memoryRetrying, a.memoryGivenUp);
+    if (a.memoryLedgerError) parts.push(en ? `Memory failure ledger unreadable (${a.memoryLedgerError})` : `记忆失败账读不出来（${a.memoryLedgerError}）`);
     return parts.join(en ? ' · ' : '；') + (en ? '. Recording and transcript are unaffected.' : '。录音和转写不受影响。');
   }
   function setAttention(a){

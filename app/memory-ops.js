@@ -373,6 +373,9 @@ function failedSummary(dataDir) {
     const db = mem.open(dataDir); if (!db) return { retrying: 0, givenUp: 0 };
     const rows = db.prepare("SELECT COALESCE(attempts,0) AS attempts FROM ingested WHERE status='failed'").all();
     return { retrying: rows.filter(r => r.attempts < MAX_TOTAL_ATTEMPTS).length, givenUp: rows.filter(r => r.attempts >= MAX_TOTAL_ATTEMPTS).length };
-  } catch (e) { return { retrying: 0, givenUp: 0 }; }
+  } catch (e) {
+    // 账本本身读不出来（文件损坏、锁死）不能报成 0 / 0——那等于把「不知道」说成「没事」；带 error 让 /health 和红条把它说出来
+    return { retrying: 0, givenUp: 0, error: String(e && e.message || e).slice(0, 120) };
+  }
 }
 module.exports = { ingest, retrieve, toPromptBlock, project, terms, sessionText, failedMeetings, failedSummary, skipRetry, EXTRACT_PROMPT, MAX_TOTAL_ATTEMPTS };

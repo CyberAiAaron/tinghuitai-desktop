@@ -21,6 +21,16 @@ test('failedSummary：还会重试的和已停止重试的分开数；没有失�
 
 // Codex 初审（f679ecb3）指出：要证明「模型没返回 / 返回不是 JSON」不会被当成功，得真跑一次 ingest，不能只手插 failed 行。
 // memory-ops.ingest 的 finally{finish()} 在 ok 没置真时把这场写成 status='failed'、attempts+1——这里就是钉住这条路。
+test('failedSummary：账本文件损坏时带 error，不把「不知道」报成 0 / 0',(t)=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'livemate-attn-bad-'));
+ try{
+  if(!mem.open(fs.mkdtempSync(path.join(os.tmpdir(),'livemate-attn-probe-')))){t.skip('本机 node 没有 sqlite，记忆功能整体关闭');return;}
+  fs.mkdirSync(path.join(dir,'state'),{recursive:true});fs.writeFileSync(path.join(dir,'state/memory.db'),'这不是 sqlite 文件'.repeat(64));
+  const s=ops.failedSummary(dir);
+  assert.equal(s.retrying,0);assert.equal(s.givenUp,0);assert.ok(typeof s.error==='string'&&s.error.length>0,'要带 error：'+JSON.stringify(s));
+ }finally{mem.closeAll?.();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
 test('ingest 真跑：模型没返回、返回不是 JSON 两种结果都进失败账（还会重试档）；成功一次就出账',async(t)=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'livemate-attn-ingest-'));
  try{
@@ -83,9 +93,10 @@ test('页面接得住：有 attn-bar、健康检查和广播两条路都会更�
  assert.match(html,/m\.type === 'attention'[\s\S]{0,80}setAttention\(m\.attention\)/,'会中广播要接');
  assert.ok((html.match(/m\.type === 'attention'\) \{ try \{ setAttention\(m\.attention\); \} catch\(e\)\{\} /g)||[]).length>=2,'会中（录音）和旁听（role=view）两条 WS 都要接 attention');
  assert.match(html,/const on = !!\(a && a\.total > 0\);\s*bar\.hidden = !on;/,'total 为 0 时隐藏');
- assert.match(html,/已停止重试，要你来点/);assert.match(html,/会自动重试/);
+ assert.match(html,/已停止重试，要你来点/);assert.match(html,/会自动重试/);assert.match(html,/记忆失败账读不出来/,'账本读不出来要单独说');
  assert.match(html,/#attn-open'\)\.onclick = \(\) => \{ const b = \$\('#b-hist'\)/,'唯一动作是去会议列表');
  const srv=fs.readFileSync(path.join(root,'app/server.js'),'utf8');
+ assert.match(srv,/memoryLedgerError:mem\.error\|\|''/,'账本 error 要进 /health.attention');assert.match(srv,/\+\(a\.memoryLedgerError\?1:0\)/,'账本读不出来要计入 total，红条不能消失');
  assert.match(srv,/function checkAttention\(\)[\s\S]{0,600}broadcastAll\(\{type:'attention',attention:a\}\)/,'账变了要推给所有在开的会');
  for(const site of ['noteMemoryOutcome(this.id, r)','noteMemoryOutcome(sid,r)','noteMemoryOutcome(id,r)'])assert.ok(srv.includes(site),'记忆抽卡三处都要把结果记账：'+site);
 });

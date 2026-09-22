@@ -1266,13 +1266,14 @@ function attentionSummary(){
   const err=jobs.filter(j=>j.status==='error');
   const mem=require('./memory-ops').failedSummary(DATA);
   const a={archiveRetrying:err.filter(j=>(j.attempts||0)<4).length,archiveGivenUp:err.filter(j=>(j.attempts||0)>=4).length,
-    memoryRetrying:mem.retrying,memoryGivenUp:mem.givenUp};
-  a.total=a.archiveRetrying+a.archiveGivenUp+a.memoryRetrying+a.memoryGivenUp;
+    memoryRetrying:mem.retrying,memoryGivenUp:mem.givenUp,memoryLedgerError:mem.error||''};
+  // 记忆失败账读不出来也算一件待处理的事：不然账本坏了红条反而消失
+  a.total=a.archiveRetrying+a.archiveGivenUp+a.memoryRetrying+a.memoryGivenUp+(a.memoryLedgerError?1:0);
   return a;
 }
 function checkAttention(){
   try{const a=attentionSummary();const sig=JSON.stringify(a);if(sig===attentionSig)return a;attentionSig=sig;
-    if(a.total)log('待处理：归档失败 '+(a.archiveRetrying+a.archiveGivenUp)+'（已停止重试 '+a.archiveGivenUp+'）· 记忆失败 '+(a.memoryRetrying+a.memoryGivenUp)+'（已停止重试 '+a.memoryGivenUp+'）');
+    if(a.total)log('待处理：归档失败 '+(a.archiveRetrying+a.archiveGivenUp)+'（已停止重试 '+a.archiveGivenUp+'）· 记忆失败 '+(a.memoryRetrying+a.memoryGivenUp)+'（已停止重试 '+a.memoryGivenUp+'）'+(a.memoryLedgerError?' · 记忆失败账读不出来（'+a.memoryLedgerError+'）':''));
     broadcastAll({type:'attention',attention:a});return a;}catch(e){log('待处理账算不出来 '+e.message);return null;}
 }
 let attentionSoon=null;
