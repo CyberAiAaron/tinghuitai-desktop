@@ -9,7 +9,7 @@ const fs = require('fs'), path = require('path'), os = require('os');
 const G = require(path.join(__dirname, '..', 'app', 'jev-gate.js'));
 
 const args = process.argv.slice(2); const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i + 1] : d; };
-let file = ''; for (let i = 0; i < args.length; i++) { if (args[i].startsWith('--')) { i++; continue; } file = args[i]; }
+let file = ''; for (let i = 0; i < args.length; i++) { if (args[i] === '--reuse') continue; if (args[i].startsWith('--')) { i++; continue; } file = args[i]; }
 if (!file) { console.error('用法: replay-jev.js <场次JSON> [--out f] [--settings f] [--gap 秒] [--threshold x] [--concurrency n]'); process.exit(2); }
 const settingsPath = opt('settings', path.join(os.homedir(), 'Library/Application Support/TinghuitaiAaron/settings.json'));
 const gapSec = Number(opt('gap', 8)), conc = Math.max(1, Number(opt('concurrency', 4)));
