@@ -178,7 +178,7 @@ async function call(name, args, ctx = {}) {
 
   const ms = Math.max(1000, Number(ctx.timeoutMs) || Number(def.timeoutMs) || DEFAULT_TIMEOUT);
   let timer = null;
-  const timeout = new Promise(res => { timer = setTimeout(() => res({ ok: false, error: '工具超时（' + ms + ' 毫秒）：' + name, _timeout: true }), ms); });
+  const timeout = new Promise(res => { timer = setTimeout(() => res({ ok: false, error: '工具超时（' + ms + ' 毫秒）：' + name, _timeout: true, uncertain: true }), ms); });
   let r;
   try { r = await Promise.race([Promise.resolve(def.run(v.value, { ...ctx, env })), timeout]); }
   catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 200) }; }

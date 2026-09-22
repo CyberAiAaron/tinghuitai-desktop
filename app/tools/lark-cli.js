@@ -22,7 +22,9 @@ const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
 function runCli(args, { execImpl = execFile, log = () => {}, timeout = 60000 } = {}) {
   return new Promise(resolve => {
     execImpl(binPath(), args, { timeout, maxBuffer: 8e6 }, (err, out, errOut) => {
-      if (err) return resolve({ ok: false, error: clip(String((errOut || err.message || '')), 200) || 'lark-cli 没跑起来' });
+      // uncertain（第 9 条，2026-09-22）：命令是被超时 / 信号杀掉的，飞书那边可能已经建了 —— 外发门禁看这个标志决定要不要留 pending 收据。
+      // 命令自己退出并报错、或回了非 JSON / 带 error 的 JSON，都算确定没发成。
+      if (err) return resolve({ ok: false, error: clip(String((errOut || err.message || '')), 200) || 'lark-cli 没跑起来', uncertain: !!(err.killed || err.signal) });
       let j = null; try { j = JSON.parse(String(out).trim()); } catch (e) {}
       if (!j) return resolve({ ok: false, error: 'lark-cli 返回的不是 JSON' });
       if (j.ok === false || j.error) return resolve({ ok: false, error: clip((j.error && (j.error.message || j.error)) || '飞书拒绝了这次请求', 200) });

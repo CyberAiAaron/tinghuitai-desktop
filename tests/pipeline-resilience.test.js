@@ -213,14 +213,20 @@ test('S8 Python 的配置由 Node 给：THT_CFG_JSON 压过裸读 settings.json�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('S8 语气词正则只有一份：Python 读 app/shared/filler.json；server.js 里那份必须和它一字不差', () => {
+test('S8 语气词正则只有一份：Python 和 Node 都读 app/shared/filler.json，同一批句子两边判得一样', () => {
   const spec = JSON.parse(fs.readFileSync(path.join(APP, 'shared', 'filler.json'), 'utf8'));
   assert.match(fs.readFileSync(path.join(APP, 'meeting-pipeline.py'), 'utf8'), /shared'\s*\/\s*'filler\.json'/, 'Python 没在读单源');
   const server = fs.readFileSync(path.join(APP, 'server.js'), 'utf8');
-  const m = /function fillerASR\(text\)\{return typeof text==='string'&&\/(.+?)\/i\.test\(text\.replace\(\/(.+?)\/g,''\)\)/.exec(server);
-  assert.ok(m, 'server.js 里的 fillerASR 变样了，这条对照失效，去核一遍');
-  assert.equal(m[1], spec.pattern, 'server.js 和 filler.json 的语气词正则已经不一样了——同一句话会中被滤、会后不被滤');
-  assert.equal(m[2], spec.strip, 'server.js 和 filler.json 的去标点规则已经不一样了');
+  assert.match(server, /require\('\.\/filler'\)\.isFiller/, 'server.js 的 fillerASR 没走 app/filler.js');
+  assert.ok(!/嗯\|啊\|哦/.test(server), 'server.js 里还留着一份自己的语气词正则');
+  const filler = require('../app/filler');
+  assert.equal(filler.pattern, spec.pattern); assert.equal(filler.strip, spec.strip);
+  // 行为对照：同一批句子，Node 的 isFiller 和 Python 的 is_filler 逐条一致（含边界：空串、带标点、表态词、混合句）
+  const samples = ['嗯嗯。', '啊，啊……', 'um uh', 'Hmm...', '呃 额 哎', '对', '好的', '嗯，我觉得可以', '', 'oh no'];
+  const node = samples.map(t => filler.isFiller(t));
+  assert.deepEqual(node, [true, true, true, true, true, false, false, false, false, false]);
+  const got = py(`import json\nS=json.loads(${JSON.stringify(JSON.stringify(samples))})\nprint(json.dumps([mp.is_filler(t) for t in S]))`);
+  assert.deepEqual(got, node, 'Python 和 Node 对同一批句子的语气词判定不一致');
 });
 
 test('12 兜底超时按链长算，不再写死乘 2', () => {

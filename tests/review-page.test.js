@@ -151,3 +151,24 @@ test('中英文都有：新加的文案两种语言各一份，没有只写中�
   assert.match(archiveJs,/uiLang==='en'\?1:0/);
   assert.equal((archiveJs.match(/DEC=\[\['已一致','Agreed'/g)||[]).length,1);
 });
+
+test('R3 显示侧：转写缺口（gapWarning）在回看页和归档列表都显示，和说话人存疑（speakerWarning）并存不互相顶掉',()=>{
+  // 回看页：两条各自 push 一段，缺口那条不带任何抹名字的逻辑
+  const meta=archiveJs.slice(archiveJs.indexOf('if(s.speakerWarning)parts.push'),archiveJs.indexOf('$(\'#meta\').innerHTML'));
+  assert.match(meta,/if\(s\.speakerWarning\)parts\.push\('<span>'\+esc\(s\.speakerWarning\)/);
+  assert.match(meta,/if\(s\.gapWarning\)parts\.push\('<span>'\+esc\(s\.gapWarning\)/,'回看页没把 gapWarning 显示出来');
+  // 归档列表（主页面「会议档案」那块）：说话人存疑和缺口各一行；源文件和构建产物都要有，漏了构建就是没上线
+  const share=fs.readFileSync(path.join(root,'web/src/24-share.js'),'utf8'),built=fs.readFileSync(path.join(root,'web/index.html'),'utf8');
+  for(const [name,src] of [['web/src/24-share.js',share],['web/index.html',built]]){
+    const row=src.slice(src.indexOf("$('#archive-jobs').innerHTML="),src.indexOf("$('#archive-jobs').addEventListener"));
+    assert.match(row,/j\.speakerWarning\?`<small>/,name+' 里说话人存疑那行没了');
+    assert.match(row,/j\.gapWarning\?`<small>\$\{esc\(en\?'[^']+':j\.gapWarning\)\}<\/small>`/,name+' 里没显示 gapWarning');
+  }
+  // 服务端：归档完成回填工作台那份会议源时，gapWarning 跟 speakerWarning 一起带过去；抹名字仍只看 speakerWarning
+  const server=fs.readFileSync(path.join(root,'app/server.js'),'utf8');
+  assert.match(server,/source\.speakerWarning=job\.speakerWarning\|\|'';source\.gapWarning=job\.gapWarning\|\|'';/);
+  assert.match(server,/if\(job\.speakerWarning\)\{result\.names=\{\};/);
+  assert.ok(!/if\(job\.gapWarning\)\{result\.names/.test(server),'缺口不该触发抹名字');
+  // 回看页脚本改了，缓存串要跟着加一
+  assert.match(archiveHtml,/archive\.js\?v=16"/,'archive.js 改了，archive.html 的 ?v= 要加一');
+});

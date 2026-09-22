@@ -55,11 +55,11 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   if(fs.existsSync(cur)||!fs.existsSync(prev))return;
   try{fs.copyFileSync(prev,cur);log('这次没跑成，已把上一版整理结果放回 '+key);}catch(e){}
  }
- let nextPump=null;
+ let nextPump=null,stopped=false;
  // 下一次 pump 的句柄：stop() 要能连它一起停，不然关掉的管线还会再醒一次（测试里表现为对着已删目录 readdir）
- const later=ms=>{clearTimeout(nextPump);nextPump=setTimeout(pump,ms);nextPump.unref();};
+ const later=ms=>{clearTimeout(nextPump);if(stopped)return;nextPump=setTimeout(pump,ms);nextPump.unref();};
  function pump(){
-  if(child||!idle())return;
+  if(stopped||child||!idle())return;
   // P-03：以前只有 error 会自动重试，「归档完成但总结没出来」的那些就永远停在那儿，
   // 界面还显示「已归档」。现在这类自动补跑一次（只一次，空会和坏数据不会无限重跑）。
   // R8：partial（总结缺段、说话人存疑）以前永远停在那儿，只有他自己点「重新整理」才动。现在也自动补跑，上限 2 次。
@@ -144,5 +144,5 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
  // 认人（会后一屏）把名字写进归档结果的 names。空串 = 清掉这个名字，认错了要能改回来。
  function setNames(id,patch){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))return null;
   return patchEnhanced(p.enhanced,{names:patch||{}});}
- const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
+ const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{stopped=true;clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
 };

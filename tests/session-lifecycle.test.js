@@ -29,7 +29,8 @@ async function setup(extraEnv){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'livemate-life-')),port=await freePort();
  fs.writeFileSync(path.join(dir,'settings.json'),JSON.stringify({RELAY_TOKEN:TOKEN,ARCHIVE_TARGET:'local',MEMORY_PROJECTION_DIR:path.join(dir,'mem')}));
  const child=boot(dir,port,extraEnv);await ready(port);
- return {dir,port,child,done(){try{child.kill('SIGTERM');}catch(e){}fs.rmSync(dir,{recursive:true,force:true});}};
+ // 服务收到 SIGTERM 会先把欠着的 journal 写掉再退（R9），删目录要等它退完，不然撞上 ENOTEMPTY
+ return {dir,port,child,async done(){const exited=new Promise(r=>{if(child.exitCode!==null||child.signalCode)return r();child.once('exit',r);});try{child.kill('SIGTERM');}catch(e){}await Promise.race([exited,pause(1500)]);fs.rmSync(dir,{recursive:true,force:true});}};
 }
 
 test('R2 旧连接断开时这场还有在线的说话人，不装收尾定时器；全断了才收尾',async()=>{
@@ -41,7 +42,7 @@ test('R2 旧连接断开时这场还有在线的说话人，不装收尾定时�
   assert.equal(await active(t.port),1,'还有 b 在线，300ms 宽限过了也不该收尾');
   b.close();await pause(900);
   assert.equal(await active(t.port),0,'最后一条说话人连接断了，宽限到期就收尾');
- }finally{t.done();}
+ }finally{await t.done();}
 });
 
 test('R1 长时间没音频但说话人还连着不收尾；观众连接不算说话人',async()=>{
@@ -54,5 +55,5 @@ test('R1 长时间没音频但说话人还连着不收尾；观众连接不算�
   a.close();await pause(900);
   assert.equal(await active(t.port),0,'只剩观众连接时，宽限到期照常收尾');
   v.close();
- }finally{t.done();}
+ }finally{await t.done();}
 });

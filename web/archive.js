@@ -39,6 +39,8 @@ function render(s){
   const ppl=Array.isArray(s.participants)?s.participants.filter(Boolean):[];
   if(ppl.length)parts.push('<span>参会人 <b>'+esc(ppl.join('、'))+'</b></span>');
   if(s.speakerWarning)parts.push('<span>'+esc(s.speakerWarning)+'</span>');
+  // 转写缺口和说话人存疑是两件事（R3）：缺口只提示、不抹名字，两条并存各显各的
+  if(s.gapWarning)parts.push('<span>'+esc(s.gapWarning)+'</span>');
   // 降级要看得见：首选模型没回应、备用顶上了，这一行说清这场是谁写的（会中那条黄条的会后版）
   if(s.modelNote||(s.brief&&s.brief.modelNote))parts.push('<span>'+esc(s.modelNote||s.brief.modelNote)+'</span>');
   $('#meta').innerHTML=parts.join('');
@@ -256,6 +258,7 @@ const T=(zh,en)=>uiLang==='en'?en:zh;
 const KIND_LABEL=k=>({meeting:T('我要组织的会','Meeting to set up'),research:T('让我做的研究','Research for me'),
   delegate:T('派给别人','Delegate'),self:T('我自己做',"I'll do it")}[k]||k);
 let actData=null,actStatus='',actTimer=null,actOpen=new Set(),actNote=new Map(),actFocus=null;
+const actUncertain=new Set();   // 第 9 条：上次「发」没弄清发没发出去的卡；再点先问一句，带 retryConfirmed 才让服务端重发
 const actTok=()=>encodeURIComponent(settings.relayToken||'');
 
 async function loadActions(){
@@ -437,15 +440,20 @@ function readDraft(card){
   return d;
 }
 async function actDo(cardId,action,draft){
+  const body={id,cardId,do:action,draft,confirmed:action==='send'};
+  if(action==='send'&&actUncertain.has(cardId)){
+    if(!confirm(T('上次没确认发没发出去，确定再发？','Last attempt may or may not have gone out. Send again?')))return;
+    body.retryConfirmed=true;
+  }
   actNote.set(cardId,action==='send'?T('正在发…','Sending…'):T('处理中…','Working…'));
   paintActions();
   try{
     const r=await fetch('/asr-relay/meeting-action?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({id,cardId,do:action,draft,confirmed:action==='send'}),signal:AbortSignal.timeout(120000)});
+      body:JSON.stringify(body),signal:AbortSignal.timeout(120000)});
     const j=await r.json();
-    if(!j.ok)throw Error(j.error||T('没成','failed'));
+    if(!j.ok){if(j.uncertain)actUncertain.add(cardId);throw Error(j.error||T('没成','failed'));}
     actData=j.actions;
-    if(action==='send'){actOpen.delete(cardId);actNote.set(cardId,'');}
+    if(action==='send'){actOpen.delete(cardId);actUncertain.delete(cardId);actNote.set(cardId,j.alreadySent?T('这份早发过了，没再发','Already sent earlier; not sent again'):'');}
     else if(action==='claim')actNote.set(cardId,j.card.claimNote||'');
     else if(action==='save-draft')actNote.set(cardId,T('草稿已存','Draft saved'));
     else actNote.set(cardId,'');

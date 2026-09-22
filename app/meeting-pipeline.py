@@ -324,7 +324,7 @@ NOTE_SLOT = '\x00CONTEXT_NOTE\x00'
 def summarize(session, on_phase=None, context_purpose='post-summary'):
     source=json.loads(json.dumps(session));apply_word_fixes(source)
     # 纯语气词的行不进总结输入（归档的原文不受影响）；与 server.js 的 fillerASR 同一集合。
-    source['transcript']=[r for r in source.get('transcript',[]) if not FILLER.match(re.sub(r'[\s，。、,.!?！？…~—-]+','',r.get('text','') or '') or 'x')]
+    source['transcript']=[r for r in source.get('transcript',[]) if not is_filler(r.get('text',''))]
     for row in source.get('transcript', []):
         value = row.get('text', '')
         if len(value) >= 80 and re.search(r'(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}', value):
@@ -739,7 +739,12 @@ def full_title(session, summary_text=''):
 
 # 语气词正则的唯一真源：app/shared/filler.json。以前 Python 一份、server.js 一份，
 # 改一处另一处不动，同一句话会中被滤、会后不被滤（审查 S8）。
-FILLER=re.compile(json.loads((CODE_ROOT/'shared'/'filler.json').read_text())['pattern'],re.I)
+_FILLER_SPEC=json.loads((CODE_ROOT/'shared'/'filler.json').read_text())
+FILLER=re.compile(_FILLER_SPEC['pattern'],re.I)
+FILLER_STRIP=re.compile(_FILLER_SPEC['strip'])
+def is_filler(text):
+    """和 Node 的 fillerASR（app/filler.js）同一判定：去掉 strip 里的标点后整行只剩语气词。"""
+    return bool(FILLER.match(FILLER_STRIP.sub('',text or '') or 'x'))
 INDEX_HEAD='# 会议索引（每场一行，自动维护；事实以整理结果为准）\n\n| 日期 | 主题 | id | 一句话结论 |\n|---|---|---|---|\n'
 def index_one_liner(summary):
     """从总结里取一句话结论：先找显式的「一句话结论/核心结论」，没有就取第一段正文。不另外调模型。"""
