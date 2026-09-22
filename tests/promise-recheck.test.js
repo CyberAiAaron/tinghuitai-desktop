@@ -40,6 +40,7 @@ test('toPromptBlock 不依赖 sqlite：日期按真实日历校验才带，缺�
     { kind: 'promise', text: 'D', meeting_title: '会4', recorded_at: '2026-99-99T00:00:00.000Z' },
     { kind: 'promise', text: 'E', meeting_title: '会5', recorded_at: '2026-09-12T02:00:00.000Z', due: '2099-01-01' },
     { kind: 'promise', text: 'F', meeting_title: '会6', recorded_at: '2026-09-12T02:00:00.000Z', due: '2020-01-01' },
+    { kind: 'promise', text: 'G', meeting_title: '会7', recorded_at: '2026-09-12T02:00:00.000Z', due: '2099-99-99' },
     { kind: 'promise', text: 'C', meeting_title: '会3', recorded_at: '昨天' },
   ]);
   assert.match(b, /- \[承诺\] A　来自《会1》 2026-09-12\n/, '合法日期要带：' + b);
@@ -47,6 +48,7 @@ test('toPromptBlock 不依赖 sqlite：日期按真实日历校验才带，缺�
   assert.match(b, /- \[承诺\] D　来自《会4》\n/, '格式对但不是真实日历日期（99 月）也不带：' + b);
   assert.match(b, /- \[承诺\] E 截止 2099-01-01（截止未到）　来自《会5》 2026-09-12\n/, '截止日还没到要标出来：' + b);
   assert.match(b, /- \[承诺\] F 截止 2020-01-01　来自《会6》 2026-09-12\n/, '已过截止日不标：' + b);
+  assert.match(b, /- \[承诺\] G 截止 2099-99-99　来自《会7》 2026-09-12\n/, '截止日不是真实日历日期就不标「截止未到」：' + b);
   assert.match(b, /- \[承诺\] C　来自《会3》$/, '非法日期不带：' + b);
-  assert.ok(!/undefined|昨天|99-99/.test(b), '不能把脏字符串当日期：' + b);
+  assert.ok(!/undefined|昨天|》 2026-99-99/.test(b) && !/2099-99-99（截止未到）/.test(b), '不能把脏字符串当日期（截止日原样显示可以，但不许当成记录日期或判成「截止未到」）：' + b);
 });

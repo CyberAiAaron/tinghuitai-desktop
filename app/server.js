@@ -111,7 +111,22 @@ const VIEW_KINDS = new Set(['fix', 'link', 'add', 'know', 'doubt', 'ok', 'other'
 // 复述别人的话 + 「无法核实」= 无效信息（Aaron 2026-09-17 截图指出），服务端直接丢，不给前端。
 const VIEW_JUNK = /无法核实|未给出(原文)?依据|不可核实|无从核实|无法验证|cannot (be )?verif|no verbatim evidence|not verifiable/i;
 // 模型输出被 max_tokens 截断时，砍到最后一个完整对象再补上括号，保住已经完整的条目。
-function salvageJson(text) { const s = String(text || ''); for (let cut = s.lastIndexOf('}'); cut > 0; cut = s.lastIndexOf('}', cut - 1)) { let head = s.slice(0, cut + 1); let depthA = 0, depthO = 0, inStr = false; for (let i = 0; i < head.length; i++) { const ch = head[i]; if (inStr) { if (ch === '\\') i++; else if (ch === '"') inStr = false; continue; } if (ch === '"') inStr = true; else if (ch === '{') depthO++; else if (ch === '}') depthO--; else if (ch === '[') depthA++; else if (ch === ']') depthA--; } if (inStr || depthO < 0 || depthA < 0) continue; try { return JSON.parse(head + ']'.repeat(depthA) + '}'.repeat(depthO)); } catch (e) { try { return JSON.parse(head + '}'.repeat(depthO) + ']'.repeat(depthA)); } catch (e2) {} } if (cut < s.length - 4000) break; } return null; }
+// 模型偶尔在字符串值里直接写英文双引号（09-22 实测：owner 写成 S1（自称"我"…）），JSON.parse 一失败整轮分诊结果就丢了。
+// 只把「后面紧跟的不是 , } ] : 这些结构符」的引号当正文引号转义掉；结构性引号一律不动。修不好的照旧走下面的截断抢救。
+function repairJsonQuotes(text) {
+  const s = String(text || ''); let out = '', inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (!inStr) { if (ch === '"') inStr = true; out += ch; continue; }
+    if (ch === '\\') { out += ch + (s[i + 1] || ''); i++; continue; }
+    if (ch !== '"') { out += ch; continue; }
+    let k = i + 1; while (k < s.length && /\s/.test(s[k])) k++;
+    const next = s[k];
+    if (next === undefined || next === ',' || next === '}' || next === ']' || next === ':') { inStr = false; out += ch; } else out += '\\"';
+  }
+  return out;
+}
+function salvageJson(text) { const s = repairJsonQuotes(text); try { return JSON.parse(s); } catch (e) {} for (let cut = s.lastIndexOf('}'); cut > 0; cut = s.lastIndexOf('}', cut - 1)) { let head = s.slice(0, cut + 1); let depthA = 0, depthO = 0, inStr = false; for (let i = 0; i < head.length; i++) { const ch = head[i]; if (inStr) { if (ch === '\\') i++; else if (ch === '"') inStr = false; continue; } if (ch === '"') inStr = true; else if (ch === '{') depthO++; else if (ch === '}') depthO--; else if (ch === '[') depthA++; else if (ch === ']') depthA--; } if (inStr || depthO < 0 || depthA < 0) continue; try { return JSON.parse(head + ']'.repeat(depthA) + '}'.repeat(depthO)); } catch (e) { try { return JSON.parse(head + '}'.repeat(depthO) + ']'.repeat(depthA)); } catch (e2) {} } if (cut < s.length - 4000) break; } return null; }
 function normalizeView(f) { if (!f || typeof f !== 'object') return f; let k = String(f.kind || '').toLowerCase(); if (k === 'view' || k === 'note') k = 'other'; if (!VIEW_KINDS.has(k)) k = (f.verdict === 'false' ? 'doubt' : (f.verdict === 'true' ? 'ok' : 'other')); f.kind = k; f.label = String(f.label || '').replace(/\s+/g, '').slice(0, 6); if (k === 'other' && !f.label) f.label = '提醒'; if (k === 'doubt') { if (f.verdict !== 'unsure') f.verdict = 'false'; } else if (k === 'ok' || k === 'fix') f.verdict = 'true'; else if (!f.verdict || f.verdict === 'false') f.verdict = 'unsure'; return f; }
 // 看法必须带一句能在最新转写里找到的原话；找不到就整条丢掉（Aaron：说不准的不说）。
 function viewNorm(s) { return String(s || '').replace(/[\s“”"'‘’「」『』（）()，。、,.!?！？：:；;…—\-]/g, ''); }
