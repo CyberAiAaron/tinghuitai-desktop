@@ -220,4 +220,6 @@ async function probe(kind, dataDir) {
   return { ok: /READY/i.test(t), reason: /READY/i.test(t) ? '' : 'unexpected_reply', bin, sample: t.slice(0, 80) };
 }
 
-module.exports = { detect, findBin, codexHome, ask, askDetailed, probe, mainModel };
+// 卡片对话框（app/card-thread.js）要起的是能用工具的那家命令行；牌子只在这里认，那边不写厂商名。
+const agentBin = () => findBin('claude');
+module.exports = { detect, findBin, codexHome, ask, askDetailed, probe, mainModel, agentBin };

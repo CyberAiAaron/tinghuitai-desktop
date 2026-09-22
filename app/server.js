@@ -1240,9 +1240,9 @@ const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,
 const shareBundles=require('./share-bundles')({settings});
 const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
 // 卡片对话框（第③批）：每条消息起一次本机 claude -p。开着的场次改内存对象，结束的场次改 pending 文件。
-const cardThread=require('./card-thread').create({dataDir:DATA,log,findBin:()=>require('./cli-llm').findBin('claude'),getLive:id=>{const s=SESSIONS.get(id);return s&&!s.finalized?s:null;},
+const cardThread=require('./card-thread').create({dataDir:DATA,log,getLive:id=>{const s=SESSIONS.get(id);return s&&!s.finalized?s:null;},
   readFile:id=>{const f=pendingFileFor(id);return f?journal.read(f):null;},writeFile:(id,obj)=>{const f=pendingFileFor(id);if(f)journal.write(f,obj);},
-  model:process.env.THT_THREAD_MODEL||'sonnet',timeoutMs:Number(process.env.THT_THREAD_TIMEOUT_MS)||120000,maxConcurrent:Number(process.env.THT_THREAD_CONCURRENCY)||2,mcp:process.env.THT_THREAD_MCP||loadEnv().THREAD_MCP||''});
+  model:process.env.THT_THREAD_MODEL||'sonnet',timeoutMs:Number(process.env.THT_THREAD_TIMEOUT_MS)||120000,maxConcurrent:Number(process.env.THT_THREAD_CONCURRENCY)||2,mcp:process.env.THT_THREAD_MCP||(()=>{try{return loadEnv().THREAD_MCP||'';}catch(e){return '';}})()});   // 配置不完整时也要能起来（tests/request-error.test.js）
 // 任何一条路由里抛出的异常都在这里兜住：以前异常变成未处理的 Promise，请求永远不回包、页面一直转圈。
 const server = http.createServer((req, res) => {
   handleRequest(req, res).catch(e => {
