@@ -18,6 +18,8 @@ async function fromMac(){const r=await fetch('/asr-relay/meeting-result?id='+enc
 
 function spkName(s,names){if(!s)return '';return (names&&names[s])||({me:'我',them:'对方'})[s]||('S'+s);}
 let hasAudio=false;
+let audioGone='';   // 'retention' = 录音已按保留期清理（服务端 X-Audio-Gone 头），回看页据此显示说明而不是空白
+let audioRetentionDays=30;
 // 点任何一个时间戳都跳到播放器的那一刻。录音不存在时整套回听不出现。
 function seekTo(sec){const a=$('#player');if(!a)return;const t=Math.max(0,Number(sec)||0);
   const go=()=>{try{a.currentTime=t;a.play().catch(()=>{});}catch(e){}};
@@ -575,11 +577,15 @@ function audioUrl(){return '/asr-relay/audio?id='+encodeURIComponent(id)+'&token
 async function probeAudio(){
   hasAudio=false;
   if(source!=='mac')return;                       // 本机记录没有录音文件
-  try{const r=await fetch(audioUrl(),{method:'HEAD',cache:'no-store',signal:AbortSignal.timeout(4000)});hasAudio=r.ok;}catch(e){hasAudio=false;}
+  audioGone='';
+  try{const r=await fetch(audioUrl(),{method:'HEAD',cache:'no-store',signal:AbortSignal.timeout(4000)});hasAudio=r.ok;if(!r.ok){audioGone=r.headers.get('X-Audio-Gone')||'';audioRetentionDays=Number(r.headers.get('X-Audio-Retention-Days'))||30;}}catch(e){hasAudio=false;}
 }
 function mountPlayer(){
   const host=$('#player-box'); if(!host)return;
-  if(!hasAudio){host.hidden=true;host.innerHTML='';return;}
+  if(!hasAudio){
+    if(audioGone==='retention'){host.hidden=false;host.innerHTML='<span class="ph">'+(uiLang==='en'?'Recording removed under the '+audioRetentionDays+'-day retention policy · transcript kept':'录音已按 '+audioRetentionDays+' 天保留期清理 · 文字记录仍在')+'</span>';return;}
+    host.hidden=true;host.innerHTML='';return;
+  }
   host.hidden=false;
   host.innerHTML='<span class="ph">'+(uiLang==='en'?'Replay this meeting · click any timestamp to jump there':'回听本场录音 · 点任意时间戳跳到那一刻')+'</span><audio id="player" controls preload="metadata" src="'+audioUrl().replace(/"/g,'&quot;')+'"></audio>';
 }
