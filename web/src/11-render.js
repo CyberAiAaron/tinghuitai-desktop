@@ -176,10 +176,20 @@
     if(s==='failed') return `<div class="v ins-state err">${en?'Failed: ':'没成：'}${esc(st.error||'')}</div>${btn(en?'Retry':'重试',`data-retry="${st.uncertain?'confirm':'1'}"`)}`;
     if(s==='cancelled') return `<div class="v ins-state">${en?'Undone':'已撤回'}</div>${btn(label)}`;
     if(s==='done'){
-      if(d==='open_source'){ const doc=x.doc||{}; return `<div class="v ins-res">${esc(x.correction||'')}</div>${x.quote?`<div class="v src">${en?'Quote':'原文'}：「${esc(x.quote)}」</div>`:''}${doc.url?`<button class="btn sm insight-open" type="button" data-url="${esc(doc.url)}" title="${esc(doc.title||'')}">${en?'Open document':'打开文档'}</button>`:(doc.title?`<div class="v src">${esc(doc.title)}${doc.linkError?`（${en?'no link':'链接没取到'}）`:''}</div>`:'')}`; }
-      const task=x.task||{}; return `<div class="v ins-res">${en?'Task':'任务'}：${esc(task.owner||'')} · ${en?'due ':'截止 '}${esc(task.due||'')}${task.note?`（${esc(task.note)}）`:''}</div>${task.url?`<button class="btn sm insight-open" type="button" data-url="${esc(task.url)}">${en?'Open task':'打开任务'}</button>`:''}`;
+      if(d==='open_source'){ const doc=x.doc||{}; return `<div class="v ins-res">${esc(x.correction||'')}</div>${x.quote?`<div class="v src">${en?'Quote':'原文'}：「${esc(x.quote)}」</div>`:''}${doc.url?`<button class="btn sm insight-open" type="button" data-url="${esc(doc.url)}" title="${esc(doc.title||'')}">${en?'Open document':'打开文档'}</button>`:(doc.title?`<div class="v src">${esc(doc.title)}${doc.linkError?`（${en?'no link':'链接没取到'}）`:''}</div>`:'')}${onePagerHtml(x)}`; }
+      const task=x.task||{}; return `<div class="v ins-res">${en?'Task':'任务'}：${esc(task.owner||'')} · ${en?'due ':'截止 '}${esc(task.due||'')}${task.note?`（${esc(task.note)}）`:''}</div>${task.url?`<button class="btn sm insight-open" type="button" data-url="${esc(task.url)}">${en?'Open task':'打开任务'}</button>`:''}${onePagerHtml(x)}`;
     }
     return btn(label);
+  }
+  // 批 4：第二个按钮 one_pager，只在上一动作 done 之后出现（这个函数只在 done 分支被调）。执行态在 x.onePager；做完是「打开纠错单」（带口令的本机链接，data-path 由点击处拼）。
+  function onePagerHtml(x){
+    const en=ui==='en', op=x.onePager||{}, s=op.status||'';
+    const btn=(txt,extra='')=>`<button class="btn sm insight-act" type="button" data-do="one_pager" ${extra}>${txt}</button>`;
+    if(s==='queued') return `<div class="v ins-state">${en?'Preparing one-pager…':'即将生成纠错单…'} <button class="btn sm insight-cancel" type="button" data-target="one_pager">${en?'Undo':'撤回'}</button></div>`;
+    if(s==='running') return `<div class="v ins-state">${en?'Writing one-pager…':'纠错单生成中…'}</div>`;
+    if(s==='failed') return `<div class="v ins-state err">${en?'One-pager failed: ':'纠错单没成：'}${esc(op.error||'')}</div>${btn(en?'Retry one-pager':'重试纠错单',`data-retry="${op.uncertain?'confirm':'1'}"`)}`;
+    if(s==='done'&&op.path) return `<button class="btn sm insight-open one-pager" type="button" data-path="${esc(op.path)}" title="${esc(op.title||'')}">${en?'Open one-pager':'打开纠错单'}</button>`;
+    return btn(en?'One-pager':'一页纠错单');
   }
   function viewListHtml(cks, first){
     if(!cks.length) return `<div class="empty">${T('e_ck')||'讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。'}</div>`;

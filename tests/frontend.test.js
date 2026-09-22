@@ -532,6 +532,22 @@ test('insight card action states: queued shows undo, running, failed shows retry
  const rc={id:'r1',type:'recheck',claim:'这件事 09-12《硬件例会》已承诺过，记录里没看到落地',source:'硬件例会 2026-09-12',why:'省他翻记录',evidence:'我下周再去要',action:{do:'set_date',args:{owner:'Cary Luo'}},at:2};
  html=c.viewListHtml([{...rc,actionState:{status:'done',do:'set_date'},task:{url:'https://example.test/task/1',owner:'Cary Luo',due:'2026-09-29',note:''}}],true);assert.ok(html.includes('任务：Cary Luo · 截止 2026-09-29')&&html.includes('data-url="https://example.test/task/1"')&&html.includes('打开任务'));
  html=c.viewListHtml([{...rc,actionState:{status:'done',do:'set_date'},task:{url:'',owner:'某人',due:'2026-09-29',note:'代办对象：某人'}}],true);assert.ok(html.includes('（代办对象：某人）')&&!html.includes('insight-open'));});
+// 主动智能批 4：第二个按钮 one_pager 只在上一动作 done 之后出现；执行态在 x.onePager（与 actionState 分开）；做完是「打开纠错单」（data-path，点击处拼口令链接）。
+test('insight card one_pager: appears only after the first action is done; queued / running / failed / done states; open uses data-path not data-url',()=>{const c=viewsCtx();
+ const base={id:'c1',type:'conflict',claim:'会上说流失率 4.1%；决策板 D3 记的是 6.3%',source:'决策板 D3',why:'省一次翻决策板',evidence:'流失率是 4.1%',action:{do:'open_source',args:{}},at:1};
+ let html=c.viewListHtml([base],true);assert.ok(!html.includes('one_pager'),'上一动作没做：没有纠错单按钮');
+ html=c.viewListHtml([{...base,actionState:{status:'failed',do:'open_source',error:'x'}}],true);assert.ok(!html.includes('one_pager'),'上一动作失败：没有纠错单按钮');
+ const done={...base,actionState:{status:'done',do:'open_source'},correction:'记录：6.3%（决策板 D3，2026-09-17）',quote:'D3 6.3%',doc:{title:'决策板',url:'https://example.test/docx/A2hQ'}};
+ html=c.viewListHtml([done],true);assert.ok(/<button class="btn sm insight-act" type="button" data-do="one_pager" >一页纠错单<\/button>/.test(html),'done 之后出第二个按钮');assert.ok(html.includes('data-do="open_source"')===false,'第一个按钮不再出现');
+ html=c.viewListHtml([{...done,onePager:{status:'queued',do:'one_pager'}}],true);assert.ok(html.includes('即将生成纠错单…')&&/insight-cancel" type="button" data-target="one_pager"/.test(html),'等待期能撤回');assert.ok(html.includes('打开文档'),'第一个按钮的产物还在');
+ html=c.viewListHtml([{...done,onePager:{status:'running',do:'one_pager'}}],true);assert.ok(html.includes('纠错单生成中…')&&!html.includes('data-do="one_pager"'));
+ html=c.viewListHtml([{...done,onePager:{status:'failed',do:'one_pager',error:'模型没有回应，可重试'}}],true);assert.ok(html.includes('纠错单没成：模型没有回应，可重试')&&/data-do="one_pager" data-retry="1">重试纠错单<\/button>/.test(html));
+ html=c.viewListHtml([{...done,onePager:{status:'done',do:'one_pager',path:'one-pager?id=s1&card=c1',title:'数字纠错：流失率'}}],true);
+ assert.ok(/<button class="btn sm insight-open one-pager" type="button" data-path="one-pager\?id=s1&amp;card=c1" title="数字纠错：流失率">打开纠错单<\/button>/.test(html),'做完：打开纠错单走 data-path');assert.ok(!html.includes('data-do="one_pager"'));assert.ok(!/window\.open|target="_blank"/.test(html));
+ const rc={id:'r1',type:'recheck',claim:'这件事 09-12《硬件例会》已承诺过，记录里没看到落地',source:'硬件例会 2026-09-12',why:'省他翻记录',evidence:'我下周再去要',action:{do:'set_date',args:{}},at:2,actionState:{status:'done',do:'set_date'},task:{url:'https://example.test/task/1',owner:'Cary Luo',due:'2026-09-29'}};
+ html=c.viewListHtml([rc],true);assert.ok(html.includes('打开任务')&&html.includes('data-do="one_pager"'),'recheck 做完也有第二个按钮');
+ const ans={id:'a1',type:'answer',claim:'CDCP 已延期',source:'决策板',why:'省一次问',at:3,actionState:{status:'done'}};html=c.viewListHtml([ans],true);assert.ok(!html.includes('one_pager'),'answer 卡没有');
+});
 test('insights merge keeps execution state and products (actionState / correction / quote / doc / task) from either side',()=>{const c=viewsCtx();const list=[{id:'a',claim:'会上说 CDCP 09-22；决策板记延期未定',type:'conflict',actionState:{status:'done'},correction:'记录：延期未定',at:1}];
  c.mergeInsights(list,[{id:'b',claim:'会上说 CDCP 09-22；决策板记延期未定（补）',type:'conflict',evidence:'原话',action:{do:'open_source',args:{}},source:'决策板 D1',why:'省'}],5);
  assert.equal(list.length,1);assert.deepEqual(list[0].actionState,{status:'done'});assert.equal(list[0].correction,'记录：延期未定','旧卡的产物保留');

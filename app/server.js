@@ -137,6 +137,8 @@ function viewNorm(s) { return String(s || '').replace(/[\s“”"'‘’「」�
 function viewGrounded(f, hay) { const ev = viewNorm(f && f.evidence); if (ev.length < 6 || !hay) return false; if (hay.includes(ev.slice(0, 10)) || hay.includes(ev.slice(0, 8))) return true; for (let i = 5; i + 10 <= ev.length; i += 5) if (hay.includes(ev.slice(i, i + 10))) return true; return false; }
 // 洞察（0.6.14）的服务端门槛在 app/insight-filter.js：claim ≤30 字、source 必须命中本场背景 / 名单 / 日期 / 决策编号 / 时间戳、why 必须说清省了哪一步。
 const { normalizeInsight } = require('./insight-filter');
+const feedbackWeight = require('./feedback-weight');   // 批 4（F5）：反馈按 type 计数，useless 多的那一类少给
+const sessionStats = require('./session-stats');       // 批 4（F5）：每场结束的四个数（Jev / Sonnet 调用、洞察、采纳），从 usage.jsonl 与场次算
 function viewIsJunk(f) { if (!f || typeof f !== 'object') return true; if (!String(f.claim || '').trim()) return true; return VIEW_JUNK.test(String(f.note || '')) || VIEW_JUNK.test(String(f.claim || '')); }
 
 
@@ -275,6 +277,7 @@ class Session {
     this.dedupSeen = new Map();   // final 幂等去重：key(见 isDuplicateFinal) -> 首次出现时间，8s 内重复的 final 只广播/入库一次（2026-09-04 0800 信 补2）
     this.spkMarks = [];   // 线上会说话人标记（页面 spk 帧：who=me|them），随 transcript 落场次；0800 信 task2，等页面上线
     this.triagePrompt = readTriagePrompt(); this.viewFeedback = [];
+    this.attachments = [];   // 批 4：会中产物（one_pager 纠错单）→ 场次文件 → 会后台附件区
     this.memoryBlock = '';
     try { const ops = require('./memory-ops');
       const q = [startMsg.title||'', Object.values(startMsg.names||{}).join(' '), startMsg.brief||''].join(' ');
@@ -346,7 +349,7 @@ class Session {
     if(complete||force){this.journalWrite.stop();return this.writeJournal(complete);}
     this.journalWrite.call();return true;
   }
-  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,threads:this.threads||{},notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
+  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,threads:this.threads||{},notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[],complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
   // 会中把要点分好的那棵议题树（web/src/12-grouping.js 的 hlGroups）。分组在浏览器里算，
   // 会后回看页要看到同一套议题划分，所以每排完一轮就送过来存一份，归档时跟着会话一起落盘。
   setOutline(groups) {
@@ -841,7 +844,8 @@ class Session {
         + '\n【洞察门槛】insights 每条必须带 type（conflict / recheck / answer 之一）、source（引用【本场背景】/ 决策板 / 项目记忆里的具体文档名、决策编号、会议日期或数字）和 why（省了本人哪一步）；conflict 还必须带 evidence（会上原话）和 refs，recheck 必须带 evidence；缺任一项的不要输出；不给建议、不纠听写、不写「无法核实 / 需确认」；每轮 ≤2 条，没有就 []。'
         + langTail;
       const fbLines = (this.viewFeedback || []).slice(-12).map(x => `- [${x.rating}] ${x.kind || ''}：${x.claim}${x.comment ? '（他说：' + x.comment + '）' : ''}`).join('\n');
-      const fbBlock = fbLines ? `\n\n【他对你之前看法的反馈（useless 的这类少给，useful/adopt 的这类多给，comment 是他的原话）】\n${fbLines}` : '';
+      // 批 4（F5）：按 type 的 useless 计数降权（app/feedback-weight.js：某类 useless ≥2 且多于 useful+adopt → 提示词明说「这一类最多 1 条」，归一化后再硬拦）
+      const fbBlock = (fbLines ? `\n\n【他对你之前看法的反馈（useless 的这类少给，useful/adopt 的这类多给，comment 是他的原话）】\n${fbLines}` : '') + feedbackWeight.promptBlock(this.viewFeedback || []);
       const userReminder = enUI ? '\n\n(Reminder: write all text/claim/note fields in English.)' : '';
       // 本机资料（项目状态 + 本场检索到的会议记忆 + 上次已发出的事）只从这一个入口出去，
       // 带了哪几份、哪一版会跟着这次调用记进用量账（app/context-pack.js）。
@@ -866,7 +870,7 @@ class Session {
         const stamp = a => { for (const x of a) { if (!x) continue; x.id = 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1); x.sourceRefs = segIds.map(id => ({ segId: id })); } return a; };
         // 置信度不采信模型自述：说「大概率对/可能有误」必须能在最新转写里指出依据；指不出就降成「拿不准」
         // 0.6.14 起模型输出 insights（洞察）；旧模型 / 回看旧场次仍可能是 factchecks，两路都收，统一存进 this.factchecks（存储字段名不改，日志 / 快照 / 回看全兼容）
-        if (Array.isArray(j.insights)) { const before = j.insights.length; const ictx = { brief: this.brief, names: [...this.attendeeNames(), ...this.rosterNames()] }; j.factchecks = j.insights.map(f => normalizeInsight(f, ictx)).filter(Boolean).slice(0, 2); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} insights without concrete source/why`); }
+        if (Array.isArray(j.insights)) { const before = j.insights.length; const ictx = { brief: this.brief, names: [...this.attendeeNames(), ...this.rosterNames()] }; j.factchecks = feedbackWeight.capDemoted(j.insights.map(f => normalizeInsight(f, ictx)).filter(Boolean), this.viewFeedback || []).slice(0, 2); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} insights without concrete source/why`); }
         else if (Array.isArray(j.factchecks)) { const hay = viewNorm(recent); const before = j.factchecks.length; j.factchecks = j.factchecks.filter(f => !viewIsJunk(f)).filter(f => { normalizeView(f); return viewGrounded(f, hay); }); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} views without verbatim evidence`); }
         const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage${gate ? '(jev)' : ''} ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`);
         try { const hit = this.pushGate ? this.pushGate.consider(fb) : []; if (hit.length) this.larkPush(hit); } catch (e) { log('push whitelist exc ' + e.message); } }
@@ -915,7 +919,9 @@ class Session {
     this.checkpoint(false,{force:true}); clearInterval(this.journalTimer); await this.closeAudio();
     let saved=false;
     try {
-      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null};
+      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[]};
+      // 批 4（F5）：四个数从 usage.jsonl（本场 sessionId 的行）和场次自己算，落进场次文件，会后台直接显示；算不出不影响这场
+      try { sess.stats = sessionStats.forSession(DATA, sess); log(`会后统计 ${this.id}：Jev ${sess.stats.jevCalls} 次，Sonnet ${sess.stats.sonnetCalls} 次，洞察 ${sess.stats.insights} 条，采纳 ${sess.stats.adopted} 条`); } catch (e) { log('会后统计失败（不影响这场）' + e.message); }
       // 这一场里，你纠正过的词有没有再错。这是「回流到底有没有用」的唯一证据。
       try {
         const mem = require('./memory');
@@ -1001,7 +1007,7 @@ function buildExportState() {
       if (!/^(sess|offline)-.*\.json(\.done)?$/.test(f)) continue;
       try {
         const s = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, f), 'utf8'));
-        sessions.push({ _fileUpdated:fs.statSync(path.join(PENDING_DIR,f)).mtimeMs,id: s.id || f, title: s.title || '', start: s.start || '', end: s.end || '', mode: s.mode || 'record', source: s.source || '', lang: s.lang || '', uiLang: s.uiLang || 'zh', notes:s.notes||'',fixes:s.fixes||[],recoveryStatus:s.recoveryStatus||'',names: s.names || {}, transcript: s.transcript || [], highlights: s.highlights || [], todos: s.todos || [], factchecks: s.factchecks || [], summary: s.summary || '', condensed: s.condensed || null, review: s.review || null, shareNote: s.shareNote || '', jev: s.jev || null });
+        sessions.push({ _fileUpdated:fs.statSync(path.join(PENDING_DIR,f)).mtimeMs,id: s.id || f, title: s.title || '', start: s.start || '', end: s.end || '', mode: s.mode || 'record', source: s.source || '', lang: s.lang || '', uiLang: s.uiLang || 'zh', notes:s.notes||'',fixes:s.fixes||[],recoveryStatus:s.recoveryStatus||'',names: s.names || {}, transcript: s.transcript || [], highlights: s.highlights || [], todos: s.todos || [], factchecks: s.factchecks || [], summary: s.summary || '', condensed: s.condensed || null, review: s.review || null, shareNote: s.shareNote || '', jev: s.jev || null, stats: s.stats || null, attachments: s.attachments || [] });
       } catch (e) { log('export-state skip bad file ' + f + ' ' + e.message); }
     }
   } catch (e) { log('export-state scan fail ' + e.message); }
@@ -1246,6 +1252,8 @@ const ORPHAN_AGE_MS=(process.env.THT_TEST&&Number(process.env.THT_ORPHAN_AGE_MS)
 function recoverOrphanJournal(s,file){
   const startTs=s.startTs||s.updated||Date.now(),endTs=s.updated||Date.now();
   const sess={id:s.id,title:s.title||'',start:new Date(startTs).toISOString(),end:new Date(endTs).toISOString(),mode:'online-火山',source:s.source||'',endReason:'启动时补收尾：上次进程没结束这场',names:s.names||{},brief:s.brief||'',fixes:s.fixes||[],lang:'auto',localLanguage:'auto',forceLocalTranscribe:false,transcriptionGapSeconds:s.transcriptionGapSeconds||0,browserGapSeconds:s.browserGapSeconds||0,notes:s.notes||'',hlGroups:s.hlGroups||null,recoveryStatus:'recovered-at-startup',transcript:Array.isArray(s.transcript)?s.transcript:[],highlights:s.highlights||[],todos:s.todos||[],factchecks:s.factchecks||[],summary:s.summary||'',uiLang:s.uiLang||'zh',audioPath:s.audioPath||'',audioSaveError:s.audioSaveError||''};
+  sess.attachments=Array.isArray(s.attachments)?s.attachments:[];   // 批 4：journal 里的纠错单附件跟着补收尾的场次走
+  try{sess.stats=sessionStats.forSession(DATA,sess);}catch(e){}
   const hasText=sess.transcript.some(x=>x&&x.text),hasAudio=!!(sess.audioPath&&fs.existsSync(sess.audioPath)&&fs.statSync(sess.audioPath).size>3200);
   let outcome='empty';
   if(hasText||hasAudio){
@@ -1897,26 +1905,35 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (!sess || sess.finalized) return reply(404, { ok: false, error: '这场会不在进行中' });
     const card = (sess.factchecks || []).find(x => x && x.id === cardId);
     if (!card) return reply(404, { ok: false, error: '找不到这张卡' });
-    const push = () => { try { sess.broadcast({ type: 'insightAction', cardId, state: card.actionState || null, card: { correction: card.correction, quote: card.quote, doc: card.doc, task: card.task } }); } catch (e) {} };
-    const pendingKey = sid + '/' + cardId;
+    // 批 4：第二个按钮 one_pager 有自己的执行态 card.onePager（不覆盖第一个按钮的 actionState）；等待期的 key 也分开
+    const isPager = act === 'one_pager';
+    const cardView = () => ({ correction: card.correction, quote: card.quote, doc: card.doc, task: card.task, onePager: card.onePager || null });
+    const getState = () => isPager ? (card.onePager || null) : (card.actionState || null);
+    const setState = s => { if (isPager) card.onePager = s; else card.actionState = s; };
+    const push = () => { try { sess.broadcast({ type: 'insightAction', cardId, state: getState(), card: cardView() }); } catch (e) {} };
+    const pendingKey = sid + '/' + cardId + (isPager ? '/one_pager' : '');
     if (act === 'cancel') {
-      const pend = INSIGHT_PENDING.get(pendingKey);
+      const pend = INSIGHT_PENDING.get(pendingKey) || INSIGHT_PENDING.get(pendingKey + '/one_pager');
       if (!pend) return reply(409, { ok: false, error: card.actionState && card.actionState.status === 'done' ? '已经执行完了，撤不回' : '没有在等待执行的动作' });
       pend.cancel(); return reply(200, { ok: true, state: 'cancelled' });
     }
     const { ACTION_OF } = require('./insight-filter');
-    if (!['open_source', 'set_date'].includes(act)) return reply(400, { ok: false, error: 'do 只能是 open_source / set_date / cancel' });
-    if (ACTION_OF[card.type || 'answer'] !== act) return reply(400, { ok: false, error: '这类卡没有这个动作' });
-    if (card.actionState && card.actionState.status === 'done') return reply(200, { ok: true, alreadySent: true, state: card.actionState, card: { correction: card.correction, quote: card.quote, doc: card.doc, task: card.task } });
-    if (INSIGHT_PENDING.has(pendingKey) || (card.actionState && ['queued', 'running'].includes(card.actionState.status))) return reply(409, { ok: false, error: '这条正在执行，请勿重复点击' });
+    if (!['open_source', 'set_date', 'one_pager'].includes(act)) return reply(400, { ok: false, error: 'do 只能是 open_source / set_date / one_pager / cancel' });
+    if (isPager) {
+      if (!['conflict', 'recheck'].includes(card.type)) return reply(400, { ok: false, error: '这类卡没有这个动作' });
+      if (!(card.actionState && card.actionState.status === 'done')) return reply(409, { ok: false, error: '先执行上一动作（核对并附文档 / 定日期），做完才能出纠错单' });
+    } else if (ACTION_OF[card.type || 'answer'] !== act) return reply(400, { ok: false, error: '这类卡没有这个动作' });
+    const cur = getState();
+    if (cur && cur.status === 'done') return reply(200, { ok: true, alreadySent: true, state: cur, card: cardView() });
+    if (INSIGHT_PENDING.has(pendingKey) || (cur && ['queued', 'running'].includes(cur.status))) return reply(409, { ok: false, error: '这条正在执行，请勿重复点击' });
     try { sendGate.requireConfirmed(j); } catch (e) { return reply(400, { ok: false, error: e.message }); }
     const args = j.args && typeof j.args === 'object' && !Array.isArray(j.args) ? j.args : {};
     // 等待期：点错了能撤回；测试把 INSIGHT_ACTION_GRACE_MS 设 0
     const grace = Math.max(0, Math.min(15000, Number(env0.INSIGHT_ACTION_GRACE_MS ?? 2500) || 0));
-    card.actionState = { status: 'queued', do: act, at: Date.now() }; push();
+    setState({ status: 'queued', do: act, at: Date.now() }); push();
     const waited = await new Promise(resolve => { let t = null; const pend = { cancel: () => { if (t) clearTimeout(t); INSIGHT_PENDING.delete(pendingKey); resolve(false); } }; INSIGHT_PENDING.set(pendingKey, pend); t = setTimeout(() => { INSIGHT_PENDING.delete(pendingKey); resolve(true); }, grace); });
-    if (!waited) { card.actionState = { status: 'cancelled', do: act, at: Date.now() }; push(); return reply(200, { ok: true, state: card.actionState }); }
-    card.actionState = { status: 'running', do: act, at: Date.now() }; push();
+    if (!waited) { setState({ status: 'cancelled', do: act, at: Date.now() }); push(); return reply(200, { ok: true, state: getState() }); }
+    setState({ status: 'running', do: act, at: Date.now() }); push();
     const insightActions = require('./insight-actions');
     let db = null; try { db = require('./memory').open(DATA); } catch (e) {}
     try {
@@ -1925,21 +1942,44 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
         key: ['insight-action', sid, cardId, act],
         run: async () => {
           const ctx = { card, args, session: { id: sess.id, title: sess.title }, env: env0, db, dataDir: DATA, log };
+          if (isPager) {
+            // post 档模型调 1 次，用量账 purpose 'one-pager'；HTML 落 exports/one-pager/，会后台附件区能打开
+            ctx.ask = (sysP, userP) => askModel(env0, sysP, userP, 1200, 'post', { sessionId: sess.id, purpose: 'one-pager' });
+            const r = await insightActions.onePager(ctx);
+            sess.attachments = (sess.attachments || []).filter(a => !(a.kind === 'one_pager' && a.cardId === cardId)); sess.attachments.push(r.attachment);
+            return { patch: r.patch, url: r.attachment.path, refId: '' };
+          }
           const r = act === 'open_source' ? await insightActions.openSource(ctx) : await insightActions.setDate(ctx);
           Object.assign(card, r.patch);
           if (r.highlight) { const h = { id: 'i' + sess.idTag + (sess.itemSeq = (sess.itemSeq || 0) + 1), at: Date.now(), text: r.highlight, sourceRefs: [] }; sess.highlights.push(h); try { sess.broadcast({ type: 'feedback', highlights: [h], todos: [], factchecks: [] }); } catch (e) {} }
           return { patch: r.patch, url: r.url || '', refId: r.refId || '' };
         },
       });
-      if (receipt.alreadySent && receipt.patch && !card.correction && !card.task) Object.assign(card, receipt.patch);   // 上次执行完没来得及写卡：按收据补
-      card.actionState = { status: 'done', do: act, at: Date.now(), ...(receipt.alreadySent ? { alreadySent: true } : {}) }; push();
+      if (isPager) {
+        const st = (receipt.patch && receipt.patch.onePager) || {};
+        card.onePager = { ...st, status: 'done', do: act, at: Date.now(), ...(receipt.alreadySent ? { alreadySent: true } : {}) };
+        if (receipt.alreadySent && st.path && !(sess.attachments || []).some(a => a.kind === 'one_pager' && a.cardId === cardId)) (sess.attachments = sess.attachments || []).push({ kind: 'one_pager', cardId, title: st.title || '', path: st.path, file: st.file || '', at: st.at || Date.now() });
+      } else {
+        if (receipt.alreadySent && receipt.patch && !card.correction && !card.task) Object.assign(card, receipt.patch);   // 上次执行完没来得及写卡：按收据补
+        card.actionState = { status: 'done', do: act, at: Date.now(), ...(receipt.alreadySent ? { alreadySent: true } : {}) };
+      }
+      push(); sess.checkpoint(false);
       log('insight-action ' + sid + ' ' + cardId + ' ' + act + (receipt.alreadySent ? '（已做过，未重做）' : ''));
-      return reply(200, { ok: true, state: card.actionState, card: { correction: card.correction, quote: card.quote, doc: card.doc, task: card.task }, ...(receipt.alreadySent ? { alreadySent: true } : {}) });
+      return reply(200, { ok: true, state: getState(), card: cardView(), ...(receipt.alreadySent ? { alreadySent: true } : {}) });
     } catch (e) {
-      card.actionState = { status: 'failed', do: act, at: Date.now(), error: String(e.message || e).slice(0, 200), ...(e.uncertain ? { uncertain: true } : {}) }; push();
+      setState({ status: 'failed', do: act, at: Date.now(), error: String(e.message || e).slice(0, 200), ...(e.uncertain ? { uncertain: true } : {}) }); push();
       log('insight-action failed ' + sid + ' ' + cardId + ' ' + act + ' ' + e.message);
-      return reply(e.code === 409 ? 409 : 400, { ok: false, error: card.actionState.error, state: card.actionState, ...(e.uncertain ? { uncertain: true } : {}) });
+      return reply(e.code === 409 ? 409 : 400, { ok: false, error: getState().error, state: getState(), ...(e.uncertain ? { uncertain: true } : {}) });
     }
+  }
+  // 批 4：一页纠错单（one_pager 的产物）。GET /one-pager?id=<sid>&card=<cardId>：只认 exports/one-pager/ 下按编号拼出的那一个文件，不接受路径
+  if (req.method === 'GET' && p.endsWith('/one-pager')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const sid = String(u.searchParams.get('id') || ''), cardId = String(u.searchParams.get('card') || '');
+    if (!/^[A-Za-z0-9_.:-]{1,100}$/.test(sid) || !/^[A-Za-z0-9_.:-]{1,80}$/.test(cardId)) { res.writeHead(400); return res.end('bad id'); }
+    const file = require('./insight-actions').onePagerFile(DATA, sid, cardId);
+    let html = ''; try { html = fs.readFileSync(file, 'utf8'); } catch (e) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('还没有这张纠错单'); }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); return res.end(html);
   }
   // 看法反馈：有用 / 没用 / 采纳 一击 + 一句话。写账本，并回流到这一场后续的 triage prompt（Aaron 2026-09-17：靠反馈收敛）。
   if (p.endsWith('/view-feedback')) {
@@ -1953,6 +1993,8 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (rating === null) return reply(400, { ok: false, error: 'rating 只能是 useful / useless / adopt / 空' });
     const rec = { at: new Date().toISOString(), sessionId: String(j.sessionId || '').slice(0, 80), id: String(j.id || '').slice(0, 80), kind: String(j.kind || '').slice(0, 10), claim: String(j.claim || '').slice(0, 300), rating, comment: String(j.comment || '').replace(/\s+/g, ' ').slice(0, 300) };
     if (!rec.claim && !rec.id) return reply(400, { ok: false, error: '缺 claim' });
+    // 批 4（F5）：记录加 type（conflict / recheck / answer）——请求带了就认，没带就从这场的卡上取；都没有就空，不猜
+    { const t = String(j.type || ''); const live = SESSIONS.get(rec.sessionId); const it = live && (live.factchecks || []).find(x => x && (rec.id ? x.id === rec.id : x.claim === rec.claim)); rec.type = ['conflict', 'recheck', 'answer'].includes(t) ? t : (it && ['conflict', 'recheck', 'answer'].includes(it.type) ? it.type : ''); }
     try { fs.mkdirSync(path.dirname(VIEW_FEEDBACK_LOG), { recursive: true }); logRotate.rotateIfBig(VIEW_FEEDBACK_LOG, { max: LOG_MAX_BYTES, everyMs: 0 }); fs.appendFileSync(VIEW_FEEDBACK_LOG, JSON.stringify(rec) + '\n'); } catch (e) { return reply(500, { ok: false, error: '账本写不进去：' + e.message }); }
     const sess = SESSIONS.get(rec.sessionId);
     if (sess) { const same = x => (rec.id && x.id) ? x.id === rec.id : x.claim === rec.claim; sess.viewFeedback = (sess.viewFeedback || []).filter(x => !same(x)); if (rating || rec.comment) sess.viewFeedback.push(rec); const it = (sess.factchecks || []).find(x => x && (rec.id ? x.id === rec.id : x.claim === rec.claim)); if (it) { it.rating = rating; it.comment = rec.comment; } }

@@ -12,26 +12,28 @@
   function applyInsightAction(m){
     if(!cur||!m||!m.cardId) return;
     const it=(cur.factchecks||[]).find(x=>x.id===m.cardId); if(!it) return;
-    if(m.state) it.actionState=m.state;
-    if(m.card){ for(const k of ['correction','quote','doc','task']) if(m.card[k]!==undefined&&m.card[k]!==null) it[k]=m.card[k]; }
+    if(m.state){ if(m.state.do==='one_pager') it.onePager=m.state; else it.actionState=m.state; }
+    if(m.card){ for(const k of ['correction','quote','doc','task','onePager']) if(m.card[k]!==undefined&&m.card[k]!==null) it[k]=m.card[k]; }
     persist(); resetSigs(); render();
   }
   async function insightRun(it, doAct, args, retry){
     if(!cur||!cur.id) return;
     const body={id:cur.id,cardId:it.id,do:doAct,args:args||{},confirmed:true};
     if(retry==='confirm') body.retryConfirmed=true;
-    it.actionState={status:'queued',do:doAct,at:Date.now()}; resetSigs(); render();
+    const pager=doAct==='one_pager'; const setSt=v=>{ if(pager) it.onePager=v; else it.actionState=v; };
+    setSt({status:'queued',do:doAct,at:Date.now()}); resetSigs(); render();
     try{
       const j=await insightPost(body);
-      if(j.state) it.actionState=j.state;
-      if(j.card){ for(const k of ['correction','quote','doc','task']) if(j.card[k]!==undefined&&j.card[k]!==null) it[k]=j.card[k]; }
-      if(!j.ok&&!j.state) it.actionState={status:'failed',do:doAct,at:Date.now(),error:j.error||'',uncertain:!!j.uncertain};
-    }catch(e){ it.actionState={status:'failed',do:doAct,at:Date.now(),error:e.message||String(e)}; }
+      if(j.state) setSt(j.state);
+      if(j.card){ for(const k of ['correction','quote','doc','task','onePager']) if(j.card[k]!==undefined&&j.card[k]!==null) it[k]=j.card[k]; }
+      if(!j.ok&&!j.state) setSt({status:'failed',do:doAct,at:Date.now(),error:j.error||'',uncertain:!!j.uncertain});
+    }catch(e){ setSt({status:'failed',do:doAct,at:Date.now(),error:e.message||String(e)}); }
     persist(); resetSigs(); render();
   }
   el.ck.addEventListener('click', async e=>{
     const b=e.target.closest('button'); if(!b) return;
-    if(b.classList.contains('insight-open')){ e.stopPropagation(); const url=b.dataset.url||''; if(!url) return; let abs=''; try{ abs=new URL(url,location.href).href; }catch(err){ return; } window.open(abs,'_blank','noopener'); return; }
+    // 批 4：纠错单是本机文件，链接 = relayBase()/one-pager?id&card + 口令（data-path），不是外网 URL
+    if(b.classList.contains('insight-open')){ e.stopPropagation(); const url=b.dataset.path?(relayBase()+'/'+b.dataset.path+'&token='+encodeURIComponent(cfg.relayToken||'')):(b.dataset.url||''); if(!url) return; let abs=''; try{ abs=new URL(url,location.href).href; }catch(err){ return; } window.open(abs,'_blank','noopener'); return; }
     if(b.classList.contains('insight-cancel')){ e.stopPropagation(); const it=insightCardOf(b); if(!it) return; try{ await insightPost({id:cur.id,cardId:it.id,do:'cancel'}); }catch(err){} return; }
     if(!b.classList.contains('insight-act')) return;
     e.stopPropagation();
