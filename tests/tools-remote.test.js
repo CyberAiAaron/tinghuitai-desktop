@@ -129,7 +129,7 @@ test('飞书写类：不带界面确认连命令行都不拼；带上确认才�
     assert.equal(task.data.url, 'https://example.invalid/task/tk_9');
     const tArgv = cli.calls().find(a => a[0] === 'task');
     assert.equal(tArgv[tArgv.indexOf('--summary') + 1], '把 D1 结论写进决策板', '标题取第一行');
-    assert.equal(tArgv[tArgv.indexOf('--due') + 1], 'date:2026-09-30');
+    assert.equal(tArgv[tArgv.indexOf('--due') + 1], '2026-09-30');
     assert.equal(tArgv[tArgv.indexOf('--assignee') + 1], 'ou_shawn');
     assert.match(tArgv[tArgv.indexOf('--description') + 1], /相关链接/);
   });

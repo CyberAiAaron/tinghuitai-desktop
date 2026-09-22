@@ -128,7 +128,7 @@ reg.register({
     const a = ['task', '+create', '--as', 'user', '--summary', summary, '--format', 'json'];
     const body = [args.description, args.links.length ? '相关链接：\n' + args.links.join('\n') : ''].filter(Boolean).join('\n\n');
     if (body) a.push('--description', body);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(args.due)) a.push('--due', 'date:' + args.due);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(args.due)) a.push('--due', args.due);   // lark-cli 1.0.96 的 date: 前缀会解析失败（09-22 真派发报错），裸 YYYY-MM-DD 建成全天截止
     let assigneeId = /^(?:ou_|cli_)[A-Za-z0-9]{1,64}$/.test(args.assigneeId) ? args.assigneeId : '';
     let miss = '';
     if (!assigneeId && args.assignee) { const got = await resolveIds([args.assignee], opts); assigneeId = (got.ids || [])[0] || ''; }
