@@ -82,10 +82,10 @@ const jsonUnsupported = (status, d) => {
 };
 
 const ADAPTERS = {
-  async cli(p, { model, system, user, dataDir, log, timeoutMs }) {
+  async cli(p, { model, system, user, dataDir, log, timeoutMs, maxTokens }) {
     // 本机命令行没有这道墙（它自己按上下文窗口处理），所以这条路永远 truncated:false。
-    // json 参数对命令行没意义（没有 response_format 这种开关），这条路直接忽略它。
-    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, custom: p.custom, timeoutMs: timeoutMs || CLI_TIMEOUT_MS });
+    // json 参数对命令行没意义（没有 response_format 这种开关），这条路直接忽略它。maxTokens 只有 claude 命令行认（环境变量），见 cli-llm.js。
+    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, custom: p.custom, timeoutMs: timeoutMs || CLI_TIMEOUT_MS, maxTokens });
     if (r.ok) return { ok: true, text: r.text, model: r.model || model, usage: r.usage || null, truncated: false, truncatedChars: 0 };
     return { ok: false, errorCode: p.kind + ':' + (r.reason || 'unknown'), truncated: false, truncatedChars: 0 };
   },

@@ -111,7 +111,8 @@ function args(kind, { model = '', system = '' } = {}) {
 
 // 返回 { ok, text, reason, usage, model }。reason 是失败原因码，给红条和日志用，不给用户看原文。
 // 失败原因码：not_installed / spawn_failed / timeout / proc_error / cli_exit_<码> / cli_is_error / empty / bad_json
-function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null } = {}) {
+// maxTokens：claude 命令行没有 max_tokens 参数，走 CLAUDE_CODE_MAX_OUTPUT_TOKENS 环境变量（批 5 提速：分诊 2000 → 700）；不给就不设，沿用命令行默认。
+function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null, maxTokens = 0 } = {}) {
   const spec = kind === 'custom' ? custom : null;
   if (kind === 'custom' && !spec) return Promise.resolve({ ok: false, reason: 'not_configured' });
   let bin = spec ? spec.bin : findBin(kind);
@@ -125,7 +126,8 @@ function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}
     const home = kind === 'codex' ? codexHome(dataDir) : '';
     try { p = spawn(bin, spec ? customArgs(spec, { prompt: full, model }) : args(kind, { model, system }),
       spec ? { cwd: dataDir || process.cwd(), env: customEnv() }
-           : { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}) } }); }
+           : { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}),
+               ...(kind === 'claude' && Number(maxTokens) > 0 ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(Math.floor(Number(maxTokens))) } : {}) } }); }
     catch (e) { log('cli-llm spawn 失败 ' + e.message); return finish({ ok: false, reason: 'spawn_failed' }); }
     let out = '', err = '';
     const timer = setTimeout(() => { log('cli-llm 超时 ' + kind); finish({ ok: false, reason: 'timeout' }); try { p.kill('SIGTERM'); } catch (e) {} setTimeout(() => { try { p.kill('SIGKILL'); } catch (e) {} }, 2000); }, timeoutMs);

@@ -105,6 +105,7 @@ function localReqReason(req) {
 }
 function loadEnv() { return settings.load(); }
 const jevGate = require('./jev-gate');   // 逐句门卫：命中才立刻分诊（主动智能 F1）
+const triageFast = require('./triage-fast');   // 批 5 提速：输出瘦身 / 已有条目摘要 / 门卫窗口 / 资料占位 / 兜底间隔
 const pushWhitelist = require('./push-whitelist');   // 会中飞书提醒白名单（THT-R4）：点名本人 / 冲突类 / 本人带截止承诺才推，MEETING_PUSH 默认 off
 const JEV_TOTALS = { calls: 0, hits: 0, failures: 0 };   // 进程级累计，给 /health；每场自己的在 session.jev.stats
 const SOURCE_HIT = { hit: 0, miss: 0 };                 // 洞察卡动作执行时出处 / 承诺卡命中与否（F5 第五个数），进程级给 /health；每场的从卡片 sourceHit 算（app/session-stats.js）
@@ -291,10 +292,11 @@ class Session {
     catch (e) { log('已发出的事没带上 ' + e.message); }
     this.rebuildNameTable();
     if (!(this.calendar && this.calendar.matchedAt)) setTimeout(() => { this.matchCalendar().catch(e => log('日历匹配失败（忽略） ' + e.message)); }, CALENDAR_MATCH_DELAY_MS);
-    // 逐句门卫（app/jev-gate.js）：JEV_GATE=on 且有密钥时，命中立刻分诊、定时器退为 60 秒兜底（仍要 ≥60 新字）；off 时一切照旧。
+    // 逐句门卫（app/jev-gate.js）：JEV_GATE=on 且有密钥时，命中立刻分诊、定时器退为 120 秒兜底只补漏（仍要 ≥60 新字）；off 时 25 秒全量，与门卫出现前一致。
     this.jev = new jevGate.Gate({ env, dataDir: DATA, sessionId: this.id, log, onTrigger: () => this.runTriage({ gate: true }) });
     if (this.jev.requested && !this.jev.available) log('JEV_GATE=on 但没有 JEV_API_KEY，门卫不启用 ' + this.id);
-    this.triageTimer = setInterval(() => this.runTriage(), this.jev.enabled ? 60000 : 25000);
+    this.triageTimer = setInterval(() => this.runTriage(), triageFast.triageInterval(this.jev.enabled));
+    this.packDelta = new triageFast.PackDelta();   // 批 5：项目背景一场只全量带一次，hash 不变就占位
     // 会中提醒白名单（app/push-whitelist.js）：分诊结果先过它，命中才 larkPush；默认 off = 零推送，分诊不受影响。
     this.pushGate = new pushWhitelist.Gate(env, { log });
     // 开场检索用的是会议标题和参会人，会开到一半议题往往已经变了。
@@ -825,13 +827,19 @@ class Session {
     try {
       const contextVersion=this.brief;const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
       const epochAtStart = this.editEpoch || 0;
-      const segIds = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).map(x=>x.id).filter(Boolean);
+      // 批 5：门卫命中触发的那一轮只带「命中句 ±5 句 + 没分诊过的增量」（app/triage-fast.js gateWindow）；定时轮沿用「上次游标 −3 起到末尾」。
+      const gateOn = !!(this.jev && this.jev.enabled);
+      const rows = (gate && gateOn)
+        ? triageFast.gateWindow({ marks: this.jev.marks, lastTriageIndex: this.lastTriageIndex, endIndex }).map(i => this.transcript[i]).filter(Boolean)
+        : this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex);
+      const segIds = rows.map(x=>x.id).filter(Boolean);
       segIdsForDeep = segIds; epochForDeep = epochAtStart;
-      let recent = this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex).filter(x=>!repeatedASR(x.text)&&!fillerASR(x.text)).map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n');
+      let recent = rows.filter(x=>!repeatedASR(x.text)&&!fillerASR(x.text)).map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n');
       // R4：分诊输入封顶。一次超时会让下一轮把没分诊的全带上，越积越长、越长越超时。只留最新的约 8000 字（按行切，不切半句）。
       if (recent.length > TRIAGE_RECENT_CAP) { const full = recent.length, cut = recent.slice(-TRIAGE_RECENT_CAP), nl = cut.indexOf('\n'); recent = nl >= 0 ? cut.slice(nl + 1) : cut; log('triage 输入 ' + full + ' 字，截到最新 ' + recent.length + ' 字 ' + this.id); }
       recentForDeep = recent;                 // 之前漏了这一行，深推理档一直没跑过
-      const notStale = a => a.filter(x => !x.stale); const existed = JSON.stringify({ highlights: notStale(this.highlights).slice(-20), todos: notStale(this.todos).slice(-20), factchecks: notStale(this.factchecks).slice(-20) });
+      // 批 5：已有条目只传 id + 前 20 字（给模型去重够了；原来整条回传，几千字进 prompt 又被原样回显撑爆 2000 输出上限）
+      const existed = triageFast.existedSummary(this);
       // 语言锁三重（实测：只在开头插一句会被后面的中文 triage prompt + 中文转写盖过 → 前置 + 末尾强指令 + user 提醒）
       const enUI = this.uiLang === 'en';
       const langHead = enUI
@@ -843,6 +851,7 @@ class Session {
       // 之前这一段写成了独立表达式（分号后 + '…'），依据要求从没进过 prompt（2026-09-17 修）
       const sys = langHead + this.buildBriefBlock() + (this.triagePrompt || '你是会议实时助手，从转写提取 highlights/todos/factchecks，只输出 JSON。')
         + '\n【洞察门槛】insights 每条必须带 type（conflict / recheck / answer 之一）、source（引用【本场背景】/ 决策板 / 项目记忆里的具体文档名、决策编号、会议日期或数字）和 why（省了本人哪一步）；conflict 还必须带 evidence（会上原话）和 refs，recheck 必须带 evidence；缺任一项的不要输出；不给建议、不纠听写、不写「无法核实 / 需确认」；每轮 ≤2 条，没有就 []。'
+        + triageFast.outputRules({ enUI, sweep: gateOn && !gate })   // 批 5：只输出新增 + 字段短句；门卫开着时的定时轮只补漏
         + langTail;
       const fbLines = (this.viewFeedback || []).slice(-12).map(x => `- [${x.rating}] ${x.kind || ''}：${x.claim}${x.comment ? '（他说：' + x.comment + '）' : ''}`).join('\n');
       // 批 4（F5）：按 type 的 useless 计数降权（app/feedback-weight.js：某类 useless ≥2 且多于 useful+adopt → 提示词明说「这一类最多 1 条」，归一化后再硬拦）
@@ -850,10 +859,11 @@ class Session {
       const userReminder = enUI ? '\n\n(Reminder: write all text/claim/note fields in English.)' : '';
       // 本机资料（项目状态 + 本场检索到的会议记忆 + 上次已发出的事）只从这一个入口出去，
       // 带了哪几份、哪一版会跟着这次调用记进用量账（app/context-pack.js）。
-      const pack = contextPack.build(this.env, { purpose: 'live', dataDir: DATA, session: this, meetingId: this.id });
+      // 批 5：一场会第一次分诊全量带资料，之后 hash 不变就换成一行占位（用量账 contextDelta = same / full，app/triage-fast.js PackDelta）
+      const pack = this.packDelta.apply(contextPack.build(this.env, { purpose: 'live', dataDir: DATA, session: this, meetingId: this.id }));
       const trace = { sessionId: this.id, purpose: 'triage', pack, skip: this.llmSkip || 0, timeoutMs: LIVE_LLM_TIMEOUT_MS };
-      const gateBlock = this.jev && this.jev.enabled ? this.jev.marksBlock(endIndex) : '';
-      const raw = await askModel(this.env, sys, `${pack.text}${fbBlock}\n\n【已有条目】${existed}${gateBlock}\n\n【最新转写】\n${recent}${userReminder}`, 2000, 'live', trace);
+      const gateBlock = gateOn ? this.jev.marksBlock(endIndex) : '';
+      const raw = await askModel(this.env, sys, `${pack.text}${fbBlock}\n\n【已有条目】${existed}${gateBlock}\n\n【最新转写】\n${recent}${userReminder}`, triageFast.MAX_OUTPUT_TOKENS, 'live', trace);
       // R4：同一场连续 2 次首选超时 → 这场后续都跳过首选（skip），别每 40 秒白等一次；超时那一段也算分诊过，游标照样前进，不越积越长。
       if (trace.timedOut) { this.llmTimeoutStreak++; if (this.llmTimeoutStreak >= 2 && !this.llmSkip) { this.llmSkip = 1; log('会中分诊连续 ' + this.llmTimeoutStreak + ' 次首选超时，本场后续跳过首选模型 ' + this.id); } }
       else if (raw) this.llmTimeoutStreak = 0;
