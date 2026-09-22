@@ -29,7 +29,9 @@ const QUESTIONS = {
 function settingsOf(env) {
   env = env || {};
   const apiKey = String(env.JEV_API_KEY || '').trim();
-  const on = String(env.JEV_GATE || '').trim().toLowerCase() === 'on';
+  // JEV_REALTIME 是 JEV_GATE 的别名（app/config.js 读文件时已换好；这里再兜一次，给直接传 env 的调用方）
+  const gateRaw = String(env.JEV_GATE || '').trim() || String(env.JEV_REALTIME || '').trim();
+  const on = gateRaw.toLowerCase() === 'on';
   let threshold = Number(env.JEV_THRESHOLD); if (!(threshold > 0 && threshold <= 1)) threshold = DEFAULT_THRESHOLD;
   let minGapMs = Number(env.JEV_MIN_GAP_MS); if (!(minGapMs >= 0)) minGapMs = DEFAULT_MIN_GAP_MS;
   return { apiKey, available: !!apiKey, enabled: on && !!apiKey, requested: on, threshold, minGapMs };

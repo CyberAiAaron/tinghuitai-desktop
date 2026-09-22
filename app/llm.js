@@ -82,10 +82,10 @@ const jsonUnsupported = (status, d) => {
 };
 
 const ADAPTERS = {
-  async cli(p, { model, system, user, dataDir, log, timeoutMs }) {
-    // 本机命令行没有这道墙（它自己按上下文窗口处理），所以这条路永远 truncated:false。
-    // json 参数对命令行没意义（没有 response_format 这种开关），这条路直接忽略它。
-    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, custom: p.custom, timeoutMs: timeoutMs || CLI_TIMEOUT_MS });
+  async cli(p, { model, system, user, dataDir, log, timeoutMs, thinking }) {
+    // 本机命令行没有这道墙（它自己按上下文窗口处理），所以这条路永远 truncated:false；maxTokens 也不传（原因见 cli-llm.js 头注）。
+    // json 参数对命令行没意义（没有 response_format 这种开关），这条路直接忽略它。thinking（思考预算，0 = 关）只有 claude 命令行认。
+    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, custom: p.custom, timeoutMs: timeoutMs || CLI_TIMEOUT_MS, thinking });
     if (r.ok) return { ok: true, text: r.text, model: r.model || model, usage: r.usage || null, truncated: false, truncatedChars: 0 };
     return { ok: false, errorCode: p.kind + ':' + (r.reason || 'unknown'), truncated: false, truncatedChars: 0 };
   },
@@ -128,8 +128,9 @@ const ADAPTERS = {
 // 第一家挂了还每块都等一遍，能白等几十分钟）。跳过也算降级，degraded 照样为真。
 // timeoutMs：每一家的等待上限（不是整条链的总预算）。不给就按适配器各自的默认值。
 // json：这一次要的是一个 JSON 对象。接口类带上 response_format（不收就去掉重发一次），命令行忽略。
+// thinking：claude 命令行的思考预算（0 = 关，批 5 会中分诊用；接口那条路忽略它）。
 async function ask(env, { kind = 'post', system = '', user = '', maxTokens, dataDir, log = () => {}, fetchImpl,
-  noFallback = false, skip = 0, timeoutMs = 0, temperature, json = false } = {}) {
+  noFallback = false, skip = 0, timeoutMs = 0, temperature, json = false, thinking } = {}) {
   const all = chainOf(env);
   if (!all.length) return { text: null, errorCode: 'no_provider', degraded: false, truncated: false, truncatedChars: 0, attempts: [] };
   const skipped = noFallback ? 0 : Math.max(0, Number(skip) || 0);
@@ -137,7 +138,7 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
   if (!chain.length) return { text: null, errorCode: 'chain_exhausted', degraded: false, truncated: false, truncatedChars: 0, attempts, skipped };
   for (const p of chain) {
     const model = pickModel(p, kind);
-    const r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json });
+    const r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking });
     // requestedModel = 配置里点名要的那个；model = 接口实际回的那个。两者会不一样
     // （09-22 实测：要 deepseek-chat，回 deepseek-flash），账本两个都记才查得清「那天跑的到底是谁」。
     if (r.ok) return { text: r.text, provider: p.label, usageProvider: p.usageProvider, model: r.model || model, requestedModel: model || '', usage: r.usage,
@@ -172,6 +173,7 @@ function noteUsage(dataDir, r, { system = '', user = '', tier = 'post', sessionI
   recordUsage(dataDir, { sessionId, provider: r.usageProvider, model: r.model || '', requestedModel: r.requestedModel || r.model || '',
     in: u ? u.in : Math.ceil((String(system).length + String(user).length) / 2), out: u ? u.out : Math.ceil(r.text.length / 2),
     est: !u, tier, purpose, ...ctx,
+    ...(u && Number.isFinite(u.thinking) ? { thinking: u.thinking } : {}), ...(u && u.turns > 0 ? { turns: u.turns } : {}),
     ...(r.truncated ? { truncated: true, truncatedChars: Number(r.truncatedChars) || 0 } : { truncated: false }) });
 }
 

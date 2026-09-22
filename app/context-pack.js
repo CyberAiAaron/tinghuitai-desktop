@@ -345,7 +345,10 @@ function build(env, { purpose, dataDir, session, meetingId, memoryBlock, budget 
 }
 
 // 用量账里只留 key 和 version 两列：够回答「那次整理用的是哪一版总纲」，又不会把账本撑大。
+// contextDelta（批 5 提速，app/triage-fast.js PackDelta）：'full' = 这次真带了全文；'same' = hash 没变、只给了一行占位。
+// 没经过 PackDelta 的调用不带这一列（不是漏记，是那条路每次都全量）。
 const stamp = pack => ({ contextHash: pack && pack.hash ? pack.hash : '',
-  contextParts: (((pack && pack.parts) || []).map(p => ({ key: p.key, version: p.missing ? 'missing' : (p.version || '') }))) });
+  contextParts: (((pack && pack.parts) || []).map(p => ({ key: p.key, version: p.missing ? 'missing' : (p.version || '') }))),
+  ...(pack && pack.delta ? { contextDelta: pack.delta } : {}) });
 
 module.exports = { build, roster, parseNames, memoryProjectionDir, stamp, sourceFiles, rosterFile, TABLE, PURPOSES };
