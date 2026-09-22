@@ -5,7 +5,9 @@ process.env.THT_DATA_DIR=dataDir;
 process.umask(0o077);fs.mkdirSync(dataDir,{recursive:true,mode:0o700});
 const file=path.join(dataDir,'settings.json');
 const defaults={PRESET_VERSION:'',ASR_PROVIDER:'',DEEPGRAM_API_KEY:'',MEMORY_PROJECTION_DIR:'',LLM_PROVIDER:'',VOLC_APP_KEY:'',VOLC_ACCESS_KEY:'',VOLC_RESOURCE_ID:'volc.seedasr.sauc.duration',DEEPSEEK_API_KEY:'',LLM_BASE_URL:'https://api.deepseek.com',LLM_MODEL:'deepseek-chat',LLM_MODEL_QUICK:'',LLM_MODEL_LIVE:'sonnet',LLM_MODEL_POST:'opus',ARCHIVE_TARGET:'local',THT_ARCHIVE_OWNER_ID:'',AUDIO_RETENTION_DAYS:'30',JEV_API_KEY:'',JEV_GATE:'off',JEV_THRESHOLD:'0.5',JEV_MIN_GAP_MS:'2000',DECISION_BOARD_DIR:'',MEETING_PUSH:'off',MEETING_PUSH_SELF_NAMES:'',MEETING_PUSH_MIN_GAP_MS:'120000',MEETING_PUSH_TO:''};   // DECISION_BOARD_DIR：决策板夜间导出目录（app/decision-board.js，默认 <PROJECT_CONTEXT_DIR>/kb_backup）；MEETING_PUSH*：会中飞书提醒白名单推送（app/push-whitelist.js，THT-R4：默认 off = 零推送，分诊照跑）   // JEV_*：逐句门卫（app/jev-gate.js），JEV_GATE=on 且有密钥才调；密钥只在 settings.json（2026-09-22 Aaron 确认上云链路）   // AUDIO_RETENTION_DAYS：录音保留天数，0 = 不清理；文字永不删（2026-09-22 Aaron 定）
-function load(){const j=JSON.parse(fs.readFileSync(file,'utf8'));if(!j.RELAY_TOKEN)throw Error('本机配置不完整，请恢复 settings.json');return {...defaults,...j};}
+// JEV_REALTIME 是 JEV_GATE 的别名（批 5，2026-09-22）：老设置 / 需求单里写的是 JEV_REALTIME，读进来当 JEV_GATE 用；两个都写了以 JEV_GATE 为准。
+function aliasJev(j){const out={...j};if(out.JEV_GATE===undefined||out.JEV_GATE==='') {if(out.JEV_REALTIME!==undefined&&out.JEV_REALTIME!=='') out.JEV_GATE=out.JEV_REALTIME;} return out;}
+function load(){const j=JSON.parse(fs.readFileSync(file,'utf8'));if(!j.RELAY_TOKEN)throw Error('本机配置不完整，请恢复 settings.json');return {...defaults,...aliasJev(j)};}
 function save(j){const temp=file+'.tmp';fs.writeFileSync(temp,JSON.stringify(j,null,2),{mode:0o600});fs.chmodSync(temp,0o600);fs.renameSync(temp,file);}
 // 首次启动：如果安装包里带了 preset.json（Aaron 给家人预配好的凭据），就用它开箱即用。
 // preset 只读一次，读完不删原文件（重装还能用），但凭据只会落进本机 settings.json（权限 600）。
@@ -40,4 +42,4 @@ if(!fs.existsSync(file)){
     if(patch) save({...cur,...patch});
   }catch(e){}
 }
-module.exports={dataDir,file,load,save,defaults};
+module.exports={dataDir,file,load,save,defaults,aliasJev};
