@@ -58,6 +58,8 @@ const STATE = '【项目状态】26191 现在卡在 D1 和 D3 两项，其余都
 const CORE = '【核心记忆】Chansey = 26191；Moneta 是歌尔侧代号。\n';
 const KB_MAIN = '【总纲】整机产品定义 v0.7。\n';
 const KB_CLAUDE = '【规则】真源在飞书，本机只是渲染源稿。\n';
+// 决策板夜间导出（最小样本，结构同真实文件）：live 资料包多一块【决策板当前口径】，金样把它钉住
+const KB_BOARD = 'v1.1 ｜ 2026-09-05\n\n# 二、CDCP D1–D8\n\n| # | 决策 | 要回答的问题 | 选项 | 当前倾向 | Owner | 门 | 期限 | 状态 |\n|-|-|-|-|-|-|-|-|-|\n| D1 | Pin 与手机的绑定关系 | 成不成立 | A ｜ B | B：Pin 退出 KO 转预研，手机先行 | Aaron | 单向 | 09-22 | [倾向→定] |\n| D3 | 新品类定义 | 一句话 | 三候选 | ①「不用喂的 AI」（推荐） | Shawn Liu | 单向 | 09-22 | [倾向] |\n';
 
 const SESSION = {
   id: 'golden-1', title: '资料包单一入口', start: '2026-09-22T01:00:00.000Z', end: '2026-09-22T01:20:00.000Z',
@@ -92,6 +94,8 @@ function stage(tag) {
   const ctx = path.join(dir, 'ctx'); fs.mkdirSync(path.join(ctx, 'kb_reorg'), { recursive: true });
   fs.writeFileSync(path.join(ctx, 'kb_reorg', '02_总纲.md'), KB_MAIN);
   fs.writeFileSync(path.join(ctx, 'CLAUDE.md'), KB_CLAUDE);
+  fs.mkdirSync(path.join(ctx, 'kb_backup'), { recursive: true });
+  fs.writeFileSync(path.join(ctx, 'kb_backup', '决策板D1-D8_2026-09-21.md'), KB_BOARD);
   fs.writeFileSync(path.join(dir, 'context.md'), CORE);
   fs.mkdirSync(path.join(dir, 'mem'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'mem', 'project-state.md'), STATE);

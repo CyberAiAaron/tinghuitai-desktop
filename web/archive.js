@@ -27,6 +27,28 @@ function seekTo(sec){const a=$('#player');if(!a)return;const t=Math.max(0,Number
 document.addEventListener('click',e=>{const b=e.target.closest('.play');if(!b)return;e.preventDefault();seekTo(b.dataset.sec);});
 document.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const b=e.target.closest&&e.target.closest('time.play');if(!b)return;e.preventDefault();seekTo(b.dataset.sec);});
 
+// 批 4（F5 / F4）：会后台那块小统计（四个数，服务端 finalize 时从 usage.jsonl 与场次算好，落在 s.stats）+ 附件区（one_pager 纠错单，s.attachments）。
+// 没有 stats 也没有附件（老场次）就整块不出现。纠错单链接带口令走 /asr-relay/one-pager。
+function renderPostStats(s){
+  const box=$('#post-stats'); if(!box) return;
+  const st=s.stats&&typeof s.stats==='object'?s.stats:null;
+  const att=Array.isArray(s.attachments)?s.attachments.filter(a=>a&&a.kind==='one_pager'&&a.path):[];
+  if(!st&&!att.length){box.hidden=true;box.innerHTML='';return;}
+  const en=(s.uiLang||'')==='en'; const n=v=>Number.isFinite(Number(v))?String(Number(v)):'—';
+  const parts=[];
+  if(st){
+    parts.push('<span title="usage.jsonl provider=jev">'+(en?'Jev calls':'Jev 调用')+' <b>'+n(st.jevCalls)+'</b></span>');
+    parts.push('<span title="usage.jsonl live 档">'+(en?'Sonnet calls':'Sonnet 调用')+' <b>'+n(st.sonnetCalls)+'</b></span>');
+    parts.push('<span>'+(en?'Insights':'洞察')+' <b>'+n(st.insights)+'</b></span>');
+    parts.push('<span title="adopt 反馈或按钮已执行">'+(en?'Adopted':'被采纳')+' <b>'+n(st.adopted)+'</b></span>');
+    if(st.sourceHit&&typeof st.sourceHit==='object') parts.push('<span title="按钮执行时出处 / 承诺卡查到没有">'+(en?'Source hit / miss':'出处命中 / 缺失')+' <b>'+n(st.sourceHit.hit)+'</b> / <b>'+n(st.sourceHit.miss)+'</b></span>');
+  }
+  for(const a of att){
+    const href='/asr-relay/'+String(a.path).replace(/^\/+/,'')+'&token='+encodeURIComponent(settings.relayToken||'');
+    parts.push('<span>📄 <a href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(a.title||(en?'One-pager':'一页纠错单'))+'</a></span>');
+  }
+  box.innerHTML=parts.join(''); box.hidden=false;
+}
 function render(s){
   record=s;
   const start=ts(s.start);const lastAt=(s.transcript&&s.transcript.length)?Number(s.transcript[s.transcript.length-1].at||0):0;
@@ -46,6 +68,7 @@ function render(s){
   // 降级要看得见：首选模型没回应、备用顶上了，这一行说清这场是谁写的（会中那条黄条的会后版）
   if(s.modelNote||(s.brief&&s.brief.modelNote))parts.push('<span>'+esc(s.modelNote||s.brief.modelNote)+'</span>');
   $('#meta').innerHTML=parts.join('');
+  renderPostStats(s);
   mountPlayer();
   mountMemoryLink();
   mountHead(s);

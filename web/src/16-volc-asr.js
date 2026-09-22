@@ -181,6 +181,7 @@
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
         else if (m.type === 'thread') applyThreadMsg(m);
+        else if (m.type === 'insightAction') applyInsightAction(m);
         else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
         else if (m.type === 'snapshot' && m.session) { cur.calendar = m.session.calendar || null; if (m.session.threads && typeof m.session.threads === 'object') cur.threads = m.session.threads; cur.nameFixCount = (m.session.nameFixes || []).length; persist(); renderCalendar(); }   // 续场 / 重连时把日历和纠名计数接回来
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }

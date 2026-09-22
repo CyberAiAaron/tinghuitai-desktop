@@ -161,7 +161,37 @@
   function kindLabel(k,en,x){if(k==='other'&&x&&x.label) return x.label; return ({ok:en?'Likely right':'可能正确',fix:en?'You meant':'你说的是',link:en?'Connects to':'联想',add:en?'Context':'补充',know:en?'Worth knowing':'值得知道',doubt:en?'May be wrong':'可能不对',legacy:en?'Old version':'旧版初判',other:en?'Note':'提醒'})[k]||(en?'Note':'提醒');}
   // 看法卡（0.6.14 减法版）：只有 claim + 一行灰字 source · why + 对话框占位；不带标签、不带有用/没用/采纳。最新 8 条平铺，更早的折进「更早 N 条」。
   const VIEW_SHOW = 8;
-  function viewCard(x, fresh){ const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); return `<div class="card ck${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div>${esc(tt(x.claim))}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  // 主动智能批 2：三类 type 徽标（对不上 / 空转 / 递答案）+ 一个按钮占位（批 3 接 POST /insight-action 才启用；answer 没有按钮）。
+  // 沿用 .card.ck .kind 的徽标样式，不开新窗口。旧场次没有 type 的按 answer 显示。
+  function insightType(x){ return ['conflict','recheck','answer'].includes(x&&x.type)?x.type:'answer'; }
+  function insightTypeLabel(t){ return ({conflict:ui==='en'?'Mismatch':'对不上',recheck:ui==='en'?'Stalled':'空转',answer:ui==='en'?'Answer':'递答案'})[t]||''; }
+  function insightActionLabel(t){ return ({conflict:ui==='en'?'Check & attach doc':'核对并附文档',recheck:ui==='en'?'Set a date':'定日期'})[t]||''; }
+  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  // 批 3：按钮 + 执行态 + 产物。点 = 批准（POST /insight-action，web/src/25b-insight-action.js）；等待期能撤回；失败能重试；资料里没这条（offer）出「照会上说的新建」（再点带 args.createIfMissing）；做完显示正确值 / 原文 / 「打开文档」或任务链接。
+  function insightActionHtml(x,t,label){
+    const st=x.actionState||{}, s=st.status||'', en=ui==='en', d=(x.action&&x.action.do)||({conflict:'open_source',recheck:'set_date'})[t]||'';
+    const btn=(txt,extra='')=>`<button class="btn sm insight-act" type="button" data-do="${esc(d)}" ${extra}>${txt}</button>`;
+    if(s==='queued') return `<div class="v ins-state">${en?'Starting…':'即将执行…'} <button class="btn sm insight-cancel" type="button">${en?'Undo':'撤回'}</button></div>`;
+    if(s==='running') return `<div class="v ins-state">${en?'Running…':'执行中…'}</div>`;
+    if(s==='failed') return `<div class="v ins-state err">${en?'Failed: ':'没成：'}${esc(st.error||'')}</div>${btn(en?'Retry':'重试',`data-retry="${st.uncertain?'confirm':'1'}"`)}`;
+    if(s==='cancelled') return `<div class="v ins-state">${en?'Undone':'已撤回'}</div>${btn(label)}`;
+    if(s==='offer') return `<div class="v ins-state">${esc(st.message||(en?'Not in the records. Create it as said in the meeting?':'资料里没这条，要我照会上说的新建吗？'))}</div>${btn(en?'Create as said':'照会上说的新建',`data-create="1"`)}`;
+    if(s==='done'){
+      if(d==='open_source'){ const doc=x.doc||{}; return `<div class="v ins-res">${esc(x.correction||'')}</div>${x.quote?`<div class="v src">${en?'Quote':'原文'}：「${esc(x.quote)}」</div>`:''}${doc.url?`<button class="btn sm insight-open" type="button" data-url="${esc(doc.url)}" title="${esc(doc.title||'')}">${en?'Open document':'打开文档'}</button>`:(doc.title?`<div class="v src">${esc(doc.title)}${doc.linkError?`（${en?'no link':'链接没取到'}）`:''}</div>`:'')}${onePagerHtml(x)}`; }
+      const task=x.task||{}; return `<div class="v ins-res">${en?'Task':'任务'}：${esc(task.owner||'')} · ${en?'due ':'截止 '}${esc(task.due||'')}${task.note?`（${esc(task.note)}）`:''}</div>${task.url?`<button class="btn sm insight-open" type="button" data-url="${esc(task.url)}">${en?'Open task':'打开任务'}</button>`:''}${onePagerHtml(x)}`;
+    }
+    return btn(label);
+  }
+  // 批 4：第二个按钮 one_pager，只在上一动作 done 之后出现（这个函数只在 done 分支被调）。执行态在 x.onePager；做完是「打开纠错单」（带口令的本机链接，data-path 由点击处拼）。
+  function onePagerHtml(x){
+    const en=ui==='en', op=x.onePager||{}, s=op.status||'';
+    const btn=(txt,extra='')=>`<button class="btn sm insight-act" type="button" data-do="one_pager" ${extra}>${txt}</button>`;
+    if(s==='queued') return `<div class="v ins-state">${en?'Preparing one-pager…':'即将生成纠错单…'} <button class="btn sm insight-cancel" type="button" data-target="one_pager">${en?'Undo':'撤回'}</button></div>`;
+    if(s==='running') return `<div class="v ins-state">${en?'Writing one-pager…':'纠错单生成中…'}</div>`;
+    if(s==='failed') return `<div class="v ins-state err">${en?'One-pager failed: ':'纠错单没成：'}${esc(op.error||'')}</div>${btn(en?'Retry one-pager':'重试纠错单',`data-retry="${op.uncertain?'confirm':'1'}"`)}`;
+    if(s==='done'&&op.path) return `<button class="btn sm insight-open one-pager" type="button" data-path="${esc(op.path)}" title="${esc(op.title||'')}">${en?'Open one-pager':'打开纠错单'}</button>`;
+    return btn(en?'One-pager':'一页纠错单');
+  }
   function viewListHtml(cks, first){
     if(!cks.length) return `<div class="empty">${T('e_ck')||'讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。'}</div>`;
     const older=cks.slice(0,Math.max(0,cks.length-VIEW_SHOW)), recent=cks.slice(-VIEW_SHOW);

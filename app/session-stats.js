@@ -1,0 +1,51 @@
+'use strict';
+// 主动智能批 4（需求单 F5）：每场结束会后台那块小统计——四个数，全部从账本和场次文件算出来，不另存一份计数器。
+//   jevCalls     = usage.jsonl 里 sessionId 相同且 provider === 'jev' 的行数（每次门卫调用记一行，失败也记；app/jev-gate.js）
+//   sonnetCalls  = usage.jsonl 里 sessionId 相同、provider !== 'jev'、tier 属于 live 档（live / triage / quick）的行数
+//                  ——「Sonnet」是会中分诊的 live 档模型（settings 的 LLM_MODEL_LIVE 默认 sonnet）；这里按档位数，换了模型也不用改
+//   insights     = 场次 factchecks（看法卡）条数
+//   adopted      = 看法卡里被采纳的：rating === 'adopt'，或者那一个按钮已经执行完（actionState.status === 'done'）——点按钮 = 批准 = 采纳
+//   sourceHit    = {hit, miss}：按钮执行时出处 / 承诺卡查到没有（卡片字段 sourceHit 'hit' | 'miss'，路由写；Aaron 2026-09-22 拍板用它量一周再决定要不要前置核对）
+// 账本只读一遍：先按 sessionId 子串粗筛再 JSON.parse，usage.jsonl.1（滚过的那份）一起看。
+const fs = require('fs'), path = require('path');
+
+const LIVE_TIERS = new Set(['live', 'triage', 'quick']);
+
+function readUsageRows(dataDir, sessionId) {
+  const sid = String(sessionId || '');
+  if (!dataDir || !sid) return [];
+  const needle = JSON.stringify(sid);
+  const rows = [];
+  for (const name of ['usage.jsonl.1', 'usage.jsonl']) {
+    let txt = '';
+    try { txt = fs.readFileSync(path.join(dataDir, 'state', name), 'utf8'); } catch (e) { continue; }
+    for (const line of txt.split('\n')) {
+      if (!line || !line.includes(needle)) continue;
+      try { const j = JSON.parse(line); if (j && String(j.sessionId || '') === sid) rows.push(j); } catch (e) {}
+    }
+  }
+  return rows;
+}
+
+function compute(sess, usageRows) {
+  const rows = Array.isArray(usageRows) ? usageRows : [];
+  // 同一张卡按 id（没 id 按 claim）只算一张：合并 / 重复回流 / 老数据里同卡出现两次，不多算（Codex 9f54c7ad 初审）
+  const byKey = new Map();
+  for (const c of Array.isArray(sess && sess.factchecks) ? sess.factchecks : []) {
+    if (!c || typeof c !== 'object') continue;
+    const key = c.id ? 'id:' + c.id : 'claim:' + String(c.claim || '');
+    const prev = byKey.get(key) || { adopted: false, sourceHit: '' };
+    prev.adopted = prev.adopted || c.rating === 'adopt' || !!(c.actionState && c.actionState.status === 'done');
+    if (!prev.sourceHit && (c.sourceHit === 'hit' || c.sourceHit === 'miss')) prev.sourceHit = c.sourceHit;
+    byKey.set(key, prev);
+  }
+  const jevCalls = rows.filter(r => r && r.provider === 'jev').length;
+  const sonnetCalls = rows.filter(r => r && r.provider !== 'jev' && LIVE_TIERS.has(String(r.tier || ''))).length;
+  const adopted = [...byKey.values()].filter(x => x.adopted).length;
+  const sourceHit = { hit: [...byKey.values()].filter(x => x.sourceHit === 'hit').length, miss: [...byKey.values()].filter(x => x.sourceHit === 'miss').length };
+  return { jevCalls, sonnetCalls, insights: byKey.size, adopted, sourceHit, at: Date.now() };
+}
+
+function forSession(dataDir, sess) { return compute(sess, readUsageRows(dataDir, sess && sess.id)); }
+
+module.exports = { compute, readUsageRows, forSession, LIVE_TIERS };

@@ -498,10 +498,10 @@ test('insights merge: overlapping phrase but different claims are NOT merged (no
  assert.equal(list.length,2,'短句只是长句里的一个片段，不能把长句吞掉');assert.equal(list[0].id,'a');assert.equal(list[1].id,'d');
  c.mergeInsights(list,[{id:'e',claim:'D1 Pin 与手机绑定还没定，卡着 D2',source:'决策板 D1',why:'省一轮讨论',at:5},{id:'f',claim:'D1 Pin 与手机绑定还没定（理由见 09-05 推演）',source:'09-05 推演',why:'省一次查找',at:6}],9);
  assert.equal(list.length,3,'去标点后前 12 字「D1Pin与手机绑定还没」相同 → 合并成一条');assert.equal(list[2].id,'f');});
-test('views pane shows latest 8 flat, folds earlier ones, no kind tag or rating buttons, has a thread input',()=>{const c=viewsCtx();const cks=Array.from({length:11},(_,i)=>({id:'i'+i,claim:'洞察 '+i,source:'S'+i,why:'W'+i,at:i+1}));const html=c.viewListHtml(cks,true);
+test('views pane shows latest 8 flat, folds earlier ones, type badge but no rating buttons, has a thread input',()=>{const c=viewsCtx();const cks=Array.from({length:11},(_,i)=>({id:'i'+i,claim:'洞察 '+i,source:'S'+i,why:'W'+i,at:i+1}));const html=c.viewListHtml(cks,true);
  assert.ok(html.startsWith('<details class="ck-older"><summary>更早 3 条</summary>'));assert.equal((html.match(/class="card ck/g)||[]).length,11);
  const fold=html.slice(0,html.indexOf('</details>'));assert.ok(fold.includes('洞察 0')&&fold.includes('洞察 2')&&!fold.includes('洞察 3'));
- assert.ok(!html.includes('data-fb=')&&!html.includes('class="kind"'));assert.ok(html.includes('<div class="thread" data-card-id="i10" data-card-kind="insight"'),'每张看法卡下面有对话框');assert.ok(html.includes('class="th-in"')&&!/<label/.test(html),'对话框只是一个输入框，没有标签');assert.ok(html.includes('<div class="v src">S10 · W10</div>'));
+ assert.ok(!html.includes('data-fb='));assert.equal((html.match(/<span class="kind">递答案<\/span>/g)||[]).length,11,'没有 type 的旧卡按 answer 显示徽标');assert.ok(!html.includes('insight-act'),'answer 没有按钮');assert.ok(html.includes('<div class="thread" data-card-id="i10" data-card-kind="insight"'),'每张看法卡下面有对话框');assert.ok(html.includes('class="th-in"')&&!/<label/.test(html),'对话框只是一个输入框，没有标签');assert.ok(html.includes('<div class="v src">S10 · W10</div>'));
  assert.ok(!c.viewListHtml(cks.slice(0,8),true).includes('ck-older'));});
 test('my-todos bar filters owner=self or ownerless-with-how, latest 5 then folds',()=>{const c=viewsCtx();const todos=[{text:'T1',owner:'本人',at:1},{text:'T2',owner:'Cary',at:2},{text:'T3',owner:'',how:'先发邮件',at:3},{text:'T4',owner:'',at:4},{text:'T5',owner:'我',at:5},{text:'T6',owner:'Me',at:6},{text:'T7',owner:'本人',at:7},{text:'T8',owner:'本人',at:8},{text:'T9',owner:'本人',done:true,at:9}];
  const html=c.myTodosHtml(todos);assert.ok(!html.includes('>T2<')&&!html.includes('>T4<')&&!html.includes('>T9<'));assert.equal((html.match(/class="my-todo"/g)||[]).length,6);
@@ -509,3 +509,59 @@ test('my-todos bar filters owner=self or ownerless-with-how, latest 5 then folds
 test('legacy session with factchecks and no insights still renders',()=>{const c=viewsCtx();const legacy=[{id:'f1',kind:'doubt',claim:'价格不是 599',note:'项目状态写的是 699',evidence:'我们定的 599',verdict:'false',at:1}];
  const html=c.viewListHtml(legacy,true);assert.ok(html.includes('价格不是 599'));assert.ok(html.includes('<div class="v src">项目状态写的是 699</div>'));assert.ok(!html.includes('data-fb='));
  const list=[];c.mergeInsights(list,legacy,5);assert.equal(list.length,1);assert.equal(list[0].why,'项目状态写的是 699');assert.equal(list[0].verdict,'false');});
+
+// 主动智能批 2：三类 type 徽标 + 按钮（批 3 起可点，POST /insight-action）；原话行；沿用 .card.ck .kind 样式、不开新窗口
+test('insight card: type badge (对不上 / 空转 / 递答案), evidence line, enabled action button with the right label',()=>{const c=viewsCtx();
+ const html=c.viewListHtml([{id:'c1',type:'conflict',claim:'会上说 CDCP 09-22；决策板记延期未定',source:'决策板 D1',why:'省一次翻决策板',evidence:'CDCP 就是 22 号评审',action:{do:'open_source',args:{}},at:1},{id:'r1',type:'recheck',claim:'这件事 09-12《硬件例会》已承诺过，记录里没看到落地',source:'承诺回查 硬件例会 2026-09-12',why:'省他翻记录',evidence:'我下周再去要',action:{do:'set_date',args:{}},at:2},{id:'a1',type:'answer',claim:'D5 以 Cary 成本模型为准',source:'决策板 D5',why:'省一次查找',action:{do:'none',args:{}},at:3}],true);
+ assert.ok(html.includes('class="card ck kind-conflict')&&html.includes('<span class="kind">对不上</span>'));assert.ok(html.includes('class="card ck kind-recheck')&&html.includes('<span class="kind">空转</span>'));assert.ok(html.includes('class="card ck kind-answer')&&html.includes('<span class="kind">递答案</span>'));
+ assert.ok(html.includes('原话：「CDCP 就是 22 号评审」')&&html.includes('原话：「我下周再去要」'));
+ assert.ok(/<button class="btn sm insight-act" type="button" data-do="open_source"[^>]*>核对并附文档<\/button>/.test(html),'conflict 按钮');assert.ok(!/insight-act[^>]*disabled/.test(html),'批 3 起按钮可点');
+ assert.ok(/<button class="btn sm insight-act" type="button" data-do="set_date"[^>]*>定日期<\/button>/.test(html),'recheck 按钮');
+ assert.equal((html.match(/insight-act/g)||[]).length,2,'answer 没有按钮');assert.ok(!/window\.open|target="_blank"/.test(html),'不开新窗口');});
+// 主动智能批 3：执行态 / 产物 / 失败重试 / 撤回，全在卡片里，不开新窗口
+test('insight card action states: queued shows undo, running, failed shows retry (uncertain → confirm), done shows correction + quote + open-doc / task link, not-found says so',()=>{const c=viewsCtx();
+ const base={id:'c1',type:'conflict',claim:'会上说流失率 4.1%；决策板 D3 记的是 6.3%',source:'决策板 D3',why:'省一次翻决策板',evidence:'流失率是 4.1%',action:{do:'open_source',args:{}},at:1};
+ let html=c.viewListHtml([{...base,actionState:{status:'queued',do:'open_source'}}],true);assert.ok(html.includes('即将执行…')&&html.includes('class="btn sm insight-cancel"'),'等待期能撤回');assert.ok(!html.includes('insight-act'),'等待期不再出主按钮');
+ html=c.viewListHtml([{...base,actionState:{status:'running',do:'open_source'}}],true);assert.ok(html.includes('执行中…')&&!html.includes('insight-act')&&!html.includes('insight-cancel'));
+ html=c.viewListHtml([{...base,actionState:{status:'failed',do:'open_source',error:'lark-cli 没跑起来'}}],true);assert.ok(html.includes('没成：lark-cli 没跑起来')&&/insight-act" type="button" data-do="open_source" data-retry="1">重试<\/button>/.test(html),'失败可重试');
+ html=c.viewListHtml([{...base,actionState:{status:'failed',do:'open_source',error:'超时',uncertain:true}}],true);assert.ok(/data-retry="confirm"/.test(html),'结果不明的重试要带 retryConfirmed');
+ html=c.viewListHtml([{...base,actionState:{status:'cancelled',do:'open_source'}}],true);assert.ok(html.includes('已撤回')&&/insight-act" type="button" data-do="open_source" >核对并附文档/.test(html),'撤回后按钮回来');
+ // 兜底 A（Aaron 2026-09-22 拍板）：offer 态 = 一行字 + 「照会上说的新建」按钮（data-create，点击带 args.createIfMissing），不出重试、不出主按钮
+ html=c.viewListHtml([{...base,actionState:{status:'offer',do:'open_source',offer:'create',message:'资料里没这条，要我照会上说的新建吗？'}}],true);assert.ok(html.includes('<div class="v ins-state">资料里没这条，要我照会上说的新建吗？</div>')&&/<button class="btn sm insight-act" type="button" data-do="open_source" data-create="1">照会上说的新建<\/button>/.test(html),'offer 出新建按钮');assert.equal((html.match(/insight-act/g)||[]).length,1);assert.ok(!html.includes('data-retry')&&!html.includes('insight-cancel'));
+ html=c.viewListHtml([{...base,type:'recheck',action:{do:'set_date',args:{}},actionState:{status:'offer',do:'set_date',offer:'create',message:'资料里没这条，要我照会上说的新建吗？',args:{owner:'Cary Luo',due:'2026-10-01'}}}],true);assert.ok(/data-do="set_date" data-create="1">照会上说的新建</.test(html),'recheck 的 offer 也是同一个按钮');
+ html=c.viewListHtml([{...base,actionState:{status:'done',do:'open_source'},correction:'记录：6.3%（决策板 D3，2026-09-17）',quote:'D3 流失率 6.3%',doc:{title:'决策板',url:'https://example.test/docx/A2hQ'}}],true);
+ assert.ok(html.includes('<div class="v ins-res">记录：6.3%（决策板 D3，2026-09-17）</div>')&&html.includes('原文：「D3 流失率 6.3%」')&&/<button class="btn sm insight-open" type="button" data-url="https:\/\/example.test\/docx\/A2hQ"[^>]*>打开文档<\/button>/.test(html),'做完：正确值 + 原文 + 打开文档');assert.ok(!/window\.open|target="_blank"/.test(html),'不开新窗口');
+ html=c.viewListHtml([{...base,actionState:{status:'done',do:'open_source'},correction:'资料里没有这个数',quote:'',doc:null}],true);assert.ok(html.includes('资料里没有这个数')&&!html.includes('insight-open'),'找不到就如实说，没有链接按钮');
+ const rc={id:'r1',type:'recheck',claim:'这件事 09-12《硬件例会》已承诺过，记录里没看到落地',source:'硬件例会 2026-09-12',why:'省他翻记录',evidence:'我下周再去要',action:{do:'set_date',args:{owner:'Cary Luo'}},at:2};
+ html=c.viewListHtml([{...rc,actionState:{status:'done',do:'set_date'},task:{url:'https://example.test/task/1',owner:'Cary Luo',due:'2026-09-29',note:''}}],true);assert.ok(html.includes('任务：Cary Luo · 截止 2026-09-29')&&html.includes('data-url="https://example.test/task/1"')&&html.includes('打开任务'));
+ html=c.viewListHtml([{...rc,actionState:{status:'done',do:'set_date'},task:{url:'',owner:'某人',due:'2026-09-29',note:'代办对象：某人'}}],true);assert.ok(html.includes('（代办对象：某人）')&&!html.includes('insight-open'));});
+// 主动智能批 4：第二个按钮 one_pager 只在上一动作 done 之后出现；执行态在 x.onePager（与 actionState 分开）；做完是「打开纠错单」（data-path，点击处拼口令链接）。
+test('insight card one_pager: appears only after the first action is done; queued / running / failed / done states; open uses data-path not data-url',()=>{const c=viewsCtx();
+ const base={id:'c1',type:'conflict',claim:'会上说流失率 4.1%；决策板 D3 记的是 6.3%',source:'决策板 D3',why:'省一次翻决策板',evidence:'流失率是 4.1%',action:{do:'open_source',args:{}},at:1};
+ let html=c.viewListHtml([base],true);assert.ok(!html.includes('one_pager'),'上一动作没做：没有纠错单按钮');
+ html=c.viewListHtml([{...base,actionState:{status:'failed',do:'open_source',error:'x'}}],true);assert.ok(!html.includes('one_pager'),'上一动作失败：没有纠错单按钮');
+ const done={...base,actionState:{status:'done',do:'open_source'},correction:'记录：6.3%（决策板 D3，2026-09-17）',quote:'D3 6.3%',doc:{title:'决策板',url:'https://example.test/docx/A2hQ'}};
+ html=c.viewListHtml([done],true);assert.ok(/<button class="btn sm insight-act" type="button" data-do="one_pager" >一页纠错单<\/button>/.test(html),'done 之后出第二个按钮');assert.ok(html.includes('data-do="open_source"')===false,'第一个按钮不再出现');
+ html=c.viewListHtml([{...done,onePager:{status:'queued',do:'one_pager'}}],true);assert.ok(html.includes('即将生成纠错单…')&&/insight-cancel" type="button" data-target="one_pager"/.test(html),'等待期能撤回');assert.ok(html.includes('打开文档'),'第一个按钮的产物还在');
+ html=c.viewListHtml([{...done,onePager:{status:'running',do:'one_pager'}}],true);assert.ok(html.includes('纠错单生成中…')&&!html.includes('data-do="one_pager"'));
+ html=c.viewListHtml([{...done,onePager:{status:'failed',do:'one_pager',error:'模型没有回应，可重试'}}],true);assert.ok(html.includes('纠错单没成：模型没有回应，可重试')&&/data-do="one_pager" data-retry="1">重试纠错单<\/button>/.test(html));
+ html=c.viewListHtml([{...done,onePager:{status:'done',do:'one_pager',path:'one-pager?id=s1&card=c1',title:'数字纠错：流失率'}}],true);
+ assert.ok(/<button class="btn sm insight-open one-pager" type="button" data-path="one-pager\?id=s1&amp;card=c1" title="数字纠错：流失率">打开纠错单<\/button>/.test(html),'做完：打开纠错单走 data-path');assert.ok(!html.includes('data-do="one_pager"'));assert.ok(!/window\.open|target="_blank"/.test(html));
+ const rc={id:'r1',type:'recheck',claim:'这件事 09-12《硬件例会》已承诺过，记录里没看到落地',source:'硬件例会 2026-09-12',why:'省他翻记录',evidence:'我下周再去要',action:{do:'set_date',args:{}},at:2,actionState:{status:'done',do:'set_date'},task:{url:'https://example.test/task/1',owner:'Cary Luo',due:'2026-09-29'}};
+ html=c.viewListHtml([rc],true);assert.ok(html.includes('打开任务')&&html.includes('data-do="one_pager"'),'recheck 做完也有第二个按钮');
+ const ans={id:'a1',type:'answer',claim:'CDCP 已延期',source:'决策板',why:'省一次问',at:3,actionState:{status:'done'}};html=c.viewListHtml([ans],true);assert.ok(!html.includes('one_pager'),'answer 卡没有');
+});
+test('insights merge keeps execution state and products (actionState / correction / quote / doc / task) from either side',()=>{const c=viewsCtx();const list=[{id:'a',claim:'会上说 CDCP 09-22；决策板记延期未定',type:'conflict',actionState:{status:'done'},correction:'记录：延期未定',at:1}];
+ c.mergeInsights(list,[{id:'b',claim:'会上说 CDCP 09-22；决策板记延期未定（补）',type:'conflict',evidence:'原话',action:{do:'open_source',args:{}},source:'决策板 D1',why:'省'}],5);
+ assert.equal(list.length,1);assert.deepEqual(list[0].actionState,{status:'done'});assert.equal(list[0].correction,'记录：延期未定','旧卡的产物保留');
+ c.mergeInsights(list,[{id:'s',claim:'快照来的一条',type:'recheck',source:'S',why:'W',actionState:{status:'failed',error:'x'},task:{url:'u'}}],6);assert.equal(list.length,2);assert.deepEqual(list[1].actionState,{status:'failed',error:'x'});assert.deepEqual(list[1].task,{url:'u'},'服务端快照带来的执行态和产物接回来');});
+test('insights merge keeps type / action / evidence and the actionState of the replaced card',()=>{const c=viewsCtx();const list=[{id:'a',claim:'会上说 CDCP 09-22；决策板记延期未定',type:'conflict',actionState:'done',at:1}];
+ c.mergeInsights(list,[{id:'b',claim:'会上说 CDCP 09-22；决策板记延期未定（补）',type:'conflict',evidence:'原话',action:{do:'open_source',args:{}},source:'决策板 D1',why:'省'},{id:'c',claim:'新的一条',type:'bogus',action:'open_source',source:'S',why:'W'}],5);
+ assert.equal(list.length,2);assert.equal(list[0].id,'b');assert.equal(list[0].type,'conflict');assert.equal(list[0].evidence,'原话');assert.deepEqual(JSON.parse(JSON.stringify(list[0].action)),{do:'open_source',args:{}});assert.equal(list[0].actionState,'done');
+ assert.equal(list[1].type,'answer','不认识的 type 按 answer');assert.deepEqual(JSON.parse(JSON.stringify(list[1].action)),{do:'none',args:{}});});
+
+test('insight offer button: click handler sends the same POST with args.createIfMissing=true and reuses the owner / due kept in actionState.args (source and build)', ()=>{
+ const src=fs.readFileSync(__dirname+'/../web/src/25b-insight-action.js','utf8'), built=html;
+ for(const s of [src,built]){ assert.ok(/b\.dataset\.create==='1'/.test(s),'认 data-create 按钮'); assert.ok(/actionState&&it\.actionState\.args\)\|\|\{\}\),createIfMissing:true\}/.test(s),'沿用 actionState.args 并加 createIfMissing'); }
+ assert.ok(src.indexOf("b.dataset.create==='1'")<src.indexOf("if(d==='set_date'){"),'新建分支在 set_date 弹两句之前，不再重问');
+});

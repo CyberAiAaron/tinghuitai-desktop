@@ -55,6 +55,12 @@ a.btn{display:inline-flex;align-items:center}
 .card.ck.kind-link .kind{background:#eef1fa;color:#2b4fb0}
 .card.ck.kind-add .kind{background:#f3eefa;color:#5b2ba0}
 .card.ck.kind-legacy .kind{background:#f1f1f3;color:var(--faint)}
+/* 主动智能批 2：三类洞察徽标 */
+.card.ck.kind-conflict .kind{background:#fdf3f4;color:var(--live)}
+.card.ck.kind-recheck .kind{background:#fff7e6;color:#8a5a00}
+.card.ck.kind-answer .kind{background:#eef1fa;color:#2b4fb0}
+.card.ck .insight-act{margin-top:4px}
+.card.ck .insight-act[disabled]{opacity:.55;cursor:not-allowed}
 .card.ck .v.ev{color:var(--faint);font-style:italic}
 .card.ck .fb{display:flex;gap:6px;margin-top:8px}
 .card.ck .fb button{font:11px var(--mono);padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer}

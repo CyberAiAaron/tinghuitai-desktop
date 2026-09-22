@@ -31,13 +31,17 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto');
 //   focus-files     项目重点文件（设置 PROJECT_FOCUS_FILES，可多份）。
 //   fact-files      事实源文件（设置 FACT_SOURCE_FILES，可多份）。
 //   context-files   项目背景目录（设置 PROJECT_CONTEXT_DIR + PROJECT_CONTEXT_FILES 通配）。
+//   decision-board  决策板 D1–D8 当前口径摘要（设置 DECISION_BOARD_DIR，默认 <PROJECT_CONTEXT_DIR>/kb_backup 里最新的
+//                   决策板D1-D8_YYYY-MM-DD.md，抽各一行 ≤1500 字；app/decision-board.js）。会中「对不上」只对照它。
 const TABLE = {
   // —— 会中 ——
   live: {
     title: '会中分析（分诊：要点 / 待办 / 看法）',
-    parts: [{ key: 'project-state', cap: 9000 }, { key: 'meeting-memory', cap: 0 }],
-    why: '会中判断「这句话和项目对不对得上」，只要凝练版状态 + 本场检索到的旧决定；背景目录那一堆太大，会拖住字幕。',
-    render: p => '【项目状态（凝练版，看法以此为准）】\n' + p['project-state'] + p['meeting-memory'],
+    parts: [{ key: 'project-state', cap: 9000 }, { key: 'decision-board', cap: 1500 }, { key: 'meeting-memory', cap: 0 }],
+    why: '会中判断「这句话和项目对不对得上」，只要凝练版状态 + 决策板 D1–D8 当前口径（有具体数字 / 日期，「对不上」只对照它）+ 本场检索到的旧决定；背景目录那一堆太大，会拖住字幕。',
+    render: p => '【项目状态（凝练版，看法以此为准）】\n' + p['project-state']
+      + (p['decision-board'] ? '\n\n【决策板当前口径（D1–D8 各一行，来自飞书夜间导出；「对不上」只对照这里和项目状态里有具体数字 / 日期的记录）】\n' + p['decision-board'] : '')
+      + p['meeting-memory'],
   },
   // —— 会后 ——
   'post-summary': {
@@ -293,6 +297,12 @@ function loadPart(spec, { env, dataDir, memoryBlock }) {
       const m = memoryMeta(dataDir);
       return { text, parts: [{ key: 'meeting-memory', title: '会议记忆卡 + 上次已发出的事', source: m.source,
         chars: text.length, truncated: false, version: m.version, syncedAt: null }] };   // 本机自己沉淀的，没有上游真源
+    }
+    case 'decision-board': {
+      // 决策板 D1–D8 当前口径（app/decision-board.js）：最新一份夜间导出抽成 ≤cap 字；版本 = mtime#hash 进用量账
+      const r = require('./decision-board').summarize(env, { maxChars: cap > 0 ? cap : undefined });
+      if (r.missing) return { text: '', parts: [{ key: 'decision-board', title: '决策板当前口径', missing: true, source: r.source, reason: r.reason }] };
+      return { text: r.text, parts: [{ key: 'decision-board', title: '决策板当前口径', source: r.source, chars: r.text.length, truncated: false, version: r.version, syncedAt: r.syncedAt }] };
     }
     case 'roster': { const r = roster(env); return { text: r.text, parts: [r.part] }; }
     case 'focus-files': { const r = loadFileGroup('focus', fileList(env.PROJECT_FOCUS_FILES), cap, perFile); return { text: r.text, parts: r.parts, configured: r.configured }; }

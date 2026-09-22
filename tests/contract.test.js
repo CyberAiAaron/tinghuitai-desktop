@@ -154,3 +154,22 @@ test('index.html is exactly the build output of web/src + template', ()=>{
   const built=tpl.replace('/*@@APP_JS@@*/',()=>js);
   assert.equal(fs.readFileSync(path.join(root,'index.html'),'utf8'), built, 'index.html 与构建产物不一致：请改 web/src 并运行 npm run build');
 });
+
+// ——— 8. 分诊提示词（TRIAGE）三类洞察与字段（主动智能批 2，需求单 §5.2 / F2）———
+// 服务端 readTriagePrompt 从构建产物 web/index.html 里抠 TRIAGE，所以源文件和产物都要有；缺一条规则就会退回「什么都出」。
+test('TRIAGE carries the three insight types, the F2 rules and the §5.2 schema, in source and build', ()=>{
+  const src=read('web/src/22-analysis.js');
+  const m=html.match(/const\s+TRIAGE\s*=\s*([`"'])([\s\S]*?)\1/); assert.ok(m,'构建产物里找不到 TRIAGE');
+  for (const [name,text] of [['源文件',src],['构建产物',m[2]]]) {
+    for (const s of ['conflict 对不上','recheck 空转','answer 递答案',
+      '会上说 X；《来源》（日期）记的是 Y','已承诺过，记录里没看到落地',
+      '每轮最多 2 条','没有出处','已做完的不出','截止未到的不 recheck','相近的事不硬凑','已有条目」里的不重复',
+      '"type":"conflict|recheck|answer"','"evidence":""','"refs":[]','"action":{"do":"open_source|set_date|none","args":{}}',
+      'action.do = "open_source"','action.do = "set_date"','action.do = "none"','有具体数字 / 日期'])
+      assert.ok(text.includes(s), name+' 缺：'+s);
+    assert.ok(!text.includes('至今未落地'), name+' 不许断言「至今未落地」');
+  }
+  // 服务端追加的【洞察门槛】也要点到 type / evidence / refs，否则模型只看它就把新字段省了
+  const gate=(server.match(/【洞察门槛】[^']*/)||[''])[0];
+  for (const s of ['type','conflict','recheck','answer','evidence','refs']) assert.ok(gate.includes(s),'server.js 洞察门槛缺：'+s);
+});
