@@ -2225,7 +2225,10 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const seenC = new Set(cur.factchecks.map(x=>x.claim));
     (m.highlights||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.highlights.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text}); n++; } });
     (m.todos||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.todos.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text, owner:x.owner||'', how:x.how||''}); n++; } });
-    (m.factchecks||[]).forEach(x=>{ if (x&&x.claim && !seenC.has(x.claim)) { seenC.add(x.claim); cur.factchecks.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, claim:x.claim, verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||'', kind:x.kind, label:x.label, evidence:x.evidence}); n++; } });
+    // 同一 claim 再来一次时补齐 kind/label/evidence（早期结果可能缺这三项，缺了就渲染成「旧版初判」）
+    (m.factchecks||[]).forEach(x=>{ if (!(x&&x.claim)) return;
+      if (seenC.has(x.claim)) { const o=cur.factchecks.find(f=>f.claim===x.claim); if (o) { if (!o.kind&&x.kind) o.kind=x.kind; if (!o.label&&x.label) o.label=x.label; if (!o.evidence&&x.evidence) o.evidence=x.evidence; } return; }
+      seenC.add(x.claim); cur.factchecks.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, claim:x.claim, verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||'', kind:x.kind, label:x.label, evidence:x.evidence}); n++; });
     if (n) { persist(); render(); buzz(); }
   }
 
