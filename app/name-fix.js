@@ -3,7 +3,7 @@
 // 只动名单里有的名字；别名 ≤1 字一律不收（会污染整场）；每条替换记 {seg, from, to}，页面一键撤销、撤销过的组合进 ignore 不再改。
 // 别名三个来源：
 //   ① 名单自动生成——拉丁名按读音键 + 编辑距离认近音（dearra→Daria）；中文名只认原样和去姓的名（中文同音要靠 ②③，这里没有拼音表）
-//   ② state/name-aliases.json（人手维护：{"aliases":{"新宇":"星宇","露娜":"Luna"},"ignore":["新余→星宇"]}）
+//   ② state/name-aliases.json（人手维护：{"aliases":{"星宇":"新宇","露娜":"Luna"},"ignore":["星余→新宇"]}）
 //   ③ 词表 lexicon 里 right 是名单名字的那些 wrong→right（服务端合并进来，这个文件不读库）
 const fs = require('fs');
 
