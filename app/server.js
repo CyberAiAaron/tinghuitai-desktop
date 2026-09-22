@@ -1168,6 +1168,69 @@ const server = http.createServer((req, res) => {
     } catch (x) {}
   });
 });
+// ===== 日历匹配：这场录音落在你飞书日历的哪个日程里 =====
+// 目的：纪要头上自动带「时间 / 地点 / 组织者 / 参会人」，不用事后手补。
+// 用 lark-cli（本人身份）查录音当天的日程，取与录音时间重叠最多的那一场；结果写回 pending 文件缓存，只查一次。
+// 参会人接口对群日历常常为空，读到就列、读不到就写「日历里读不到」，不编。普通用户机器上没 lark-cli 就整段跳过。
+async function calendarMatch(sess) {
+  if (!sess || !sess.start) return null;
+  if (sess.calendar && sess.calendar.checkedAt) return sess.calendar.event || null;
+  const cli = process.env.THT_LARK_CLI || 'lark-cli';
+  const run = (args, ms=25000) => new Promise(res => require('child_process').execFile(cli, args, { timeout: ms, maxBuffer: 4e6,
+    env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER:'1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER:'1' } }, (e, so) => res(e ? '' : String(so||''))));
+  const parse = t => { try { const i = t.indexOf('{'); return i >= 0 ? JSON.parse(t.slice(i)) : null; } catch (e) { return null; } };
+  const s0 = typeof sess.start === 'number' ? sess.start : Date.parse(sess.start), e0 = (typeof sess.end === 'number' ? sess.end : Date.parse(sess.end)) || (s0 + 3600e3);
+  const bj = t => new Date(t + 8*3600e3).toISOString().slice(0,10);
+  const day = bj(s0);
+  let event = null, reason = '';
+  try {
+    const j = parse(await run(['calendar','+agenda','--as','user','--start', day+'T00:00:00+08:00','--end', day+'T23:59:59+08:00']));
+    const items = j && j.ok ? (Array.isArray(j.data) ? j.data : (j.data && j.data.events) || []) : [];
+    if (!j) reason = 'lark-cli 不可用'; else if (!j.ok) reason = (j.error && j.error.message) || '日历读不到';
+    // 你拒了的日程不算；剩下的按和录音重叠的时长排。重叠不到录音一半、或有第二个候选咬得很近，就只算「猜测」，要你确认。
+    const cands = [];
+    for (const ev of items) {
+      const a = Date.parse((ev.start_time||{}).datetime || ''), b = Date.parse((ev.end_time||{}).datetime || '');
+      if (!a || !b) continue;
+      if (ev.self_rsvp_status === 'decline') continue;
+      const overlap = Math.min(b, e0) - Math.max(a, s0);
+      if (overlap > 5*60e3) cands.push({ ev, overlap });
+    }
+    cands.sort((x, y) => y.overlap - x.overlap);
+    const best = cands[0] ? cands[0].ev : null, bestOverlap = cands[0] ? cands[0].overlap : 0;
+    const ratio = bestOverlap / Math.max(1, e0 - s0);
+    const ambiguous = cands.length > 1 && cands[1].overlap > bestOverlap * 0.6;
+    const candidates = cands.slice(0, 4).map(c => ({ eventId: c.ev.event_id, title: c.ev.summary || '', start: (c.ev.start_time||{}).datetime || '', end: (c.ev.end_time||{}).datetime || '', overlapMin: Math.round(c.overlap/60e3) }));
+    if (best) {
+      event = { title: best.summary || '', start: (best.start_time||{}).datetime || '', end: (best.end_time||{}).datetime || '',
+        location: String(best.description || best.location && best.location.name || '').slice(0,120),
+        organizer: (best.event_organizer||{}).display_name || '', eventId: best.event_id || '', calendarId: best.organizer_calendar_id || '',
+        meetingUrl: (best.vchat||{}).meeting_url || '', attendees: [],
+        confidence: (ratio >= 0.5 && !ambiguous) ? 'high' : 'low', overlapMin: Math.round(bestOverlap/60e3), candidates };
+      // 参会人：能读到就带上
+      // 快捷命令 +list-attendees 对群日历返回空；原生 event.attendees list 能读到（2026-09-16 实测：Cary Luo / Aaron Wang / Abel Mei …）
+      const aj = parse(await run(['calendar','event.attendees','list','--as','user','--params', JSON.stringify({ calendar_id: event.calendarId || 'primary', event_id: event.eventId, page_size: 100 })]));
+      const list = aj && aj.ok ? ((aj.data && aj.data.items) || (Array.isArray(aj.data) ? aj.data : [])) : [];
+      event.attendees = list.filter(x => x.type !== 'resource').map(x => (x.display_name || x.user_id || '') + (x.rsvp_status === 'decline' ? '（已拒绝）' : '')).filter(Boolean).slice(0, 60);
+      if (!event.attendees.length) event.attendeesNote = '日历里读不到参会人（群日历不开放名单）';
+    } else if (!reason) reason = items.length ? '当天日程里没有和录音时间重叠的' : '当天日历为空';
+  } catch (e) { reason = e.message; }
+  // 你手动定过的（选了某一场，或说了「不是日历上的会」）永远优先于自动猜
+  const chosen = sess.calendar && sess.calendar.chosen;
+  sess.calendar = { checkedAt: Date.now(), event, reason, chosen: chosen || null };
+  if (chosen === 'none') { sess.calendar.event = null; sess.calendar.reason = '你标了「不是日历上的会」'; event = null; }
+  else if (chosen && event && event.eventId !== chosen && event.candidates) {
+    const pick = event.candidates.find(c => c.eventId === chosen);
+    if (pick) { sess.calendar.event = { ...event, ...pick, confidence: 'high', chosenByUser: true }; event = sess.calendar.event; }
+  } else if (event && chosen === event.eventId) { event.confidence = 'high'; event.chosenByUser = true; }
+  // D4（2026-09-22）：这里原来是裸 writeFileSync——没有 tmp+rename，也没有 fsync。
+  // 写到一半断电 / 进程被杀，读方 JSON.parse 失败，这场会就从列表里消失一次。
+  // 现在走 journal 的原子写，而且只动 calendar 这一个字段：读最新那份再改，不拿手上这份旧快照整份写回
+  // （会中调 /calendar-match 的话，手上这份的 transcript 会比盘上那份少最后几分钟）。
+  try { const f = sess.id ? pendingFileFor(sess.id) : ''; if (f) { const cur = journal.read(f); if (cur) journal.write(f, { ...cur, calendar: sess.calendar }); } } catch (e) {}
+  return event;
+}
+
 async function handleRequest(req, res) {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || tokenOk(env0, u.searchParams.get('token')); const p = u.pathname;
   // 「这次整理用了哪些资料」：只读，给以后界面上那一栏用（本轮不做界面）。
@@ -1729,68 +1792,6 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (!direct && !process.env.THT_TEST) { try { require('child_process').execFile('/bin/launchctl', ['kickstart', '-k', 'gui/' + process.getuid() + '/com.aaron.ark-mailbox-poll'], () => {}); } catch (e) {} }
     log('handoff 已写信 ' + name + (direct ? '（直达桌面会话）' : '（Ark 信箱）'));
     return reply(200, { ok: true, direct, name, summary: direct ? '已发到你桌面 Claude 的「听会台任务处理界面」会话，它会在那里回你；那个会话没开的话，10 分钟后 Ark 信箱接手并在飞书上回你' : '已交给主 Claude，最多三分钟内它会在飞书上回你', file: name });
-  }
-  // ===== 日历匹配：这场录音落在你飞书日历的哪个日程里 =====
-  // 目的：纪要头上自动带「时间 / 地点 / 组织者 / 参会人」，不用事后手补。
-  // 用 lark-cli（本人身份）查录音当天的日程，取与录音时间重叠最多的那一场；结果写回 pending 文件缓存，只查一次。
-  // 参会人接口对群日历常常为空，读到就列、读不到就写「日历里读不到」，不编。普通用户机器上没 lark-cli 就整段跳过。
-  async function calendarMatch(sess) {
-    if (!sess || !sess.start) return null;
-    if (sess.calendar && sess.calendar.checkedAt) return sess.calendar.event || null;
-    const cli = process.env.THT_LARK_CLI || 'lark-cli';
-    const run = (args, ms=25000) => new Promise(res => require('child_process').execFile(cli, args, { timeout: ms, maxBuffer: 4e6,
-      env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER:'1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER:'1' } }, (e, so) => res(e ? '' : String(so||''))));
-    const parse = t => { try { const i = t.indexOf('{'); return i >= 0 ? JSON.parse(t.slice(i)) : null; } catch (e) { return null; } };
-    const s0 = typeof sess.start === 'number' ? sess.start : Date.parse(sess.start), e0 = (typeof sess.end === 'number' ? sess.end : Date.parse(sess.end)) || (s0 + 3600e3);
-    const bj = t => new Date(t + 8*3600e3).toISOString().slice(0,10);
-    const day = bj(s0);
-    let event = null, reason = '';
-    try {
-      const j = parse(await run(['calendar','+agenda','--as','user','--start', day+'T00:00:00+08:00','--end', day+'T23:59:59+08:00']));
-      const items = j && j.ok ? (Array.isArray(j.data) ? j.data : (j.data && j.data.events) || []) : [];
-      if (!j) reason = 'lark-cli 不可用'; else if (!j.ok) reason = (j.error && j.error.message) || '日历读不到';
-      // 你拒了的日程不算；剩下的按和录音重叠的时长排。重叠不到录音一半、或有第二个候选咬得很近，就只算「猜测」，要你确认。
-      const cands = [];
-      for (const ev of items) {
-        const a = Date.parse((ev.start_time||{}).datetime || ''), b = Date.parse((ev.end_time||{}).datetime || '');
-        if (!a || !b) continue;
-        if (ev.self_rsvp_status === 'decline') continue;
-        const overlap = Math.min(b, e0) - Math.max(a, s0);
-        if (overlap > 5*60e3) cands.push({ ev, overlap });
-      }
-      cands.sort((x, y) => y.overlap - x.overlap);
-      const best = cands[0] ? cands[0].ev : null, bestOverlap = cands[0] ? cands[0].overlap : 0;
-      const ratio = bestOverlap / Math.max(1, e0 - s0);
-      const ambiguous = cands.length > 1 && cands[1].overlap > bestOverlap * 0.6;
-      const candidates = cands.slice(0, 4).map(c => ({ eventId: c.ev.event_id, title: c.ev.summary || '', start: (c.ev.start_time||{}).datetime || '', end: (c.ev.end_time||{}).datetime || '', overlapMin: Math.round(c.overlap/60e3) }));
-      if (best) {
-        event = { title: best.summary || '', start: (best.start_time||{}).datetime || '', end: (best.end_time||{}).datetime || '',
-          location: String(best.description || best.location && best.location.name || '').slice(0,120),
-          organizer: (best.event_organizer||{}).display_name || '', eventId: best.event_id || '', calendarId: best.organizer_calendar_id || '',
-          meetingUrl: (best.vchat||{}).meeting_url || '', attendees: [],
-          confidence: (ratio >= 0.5 && !ambiguous) ? 'high' : 'low', overlapMin: Math.round(bestOverlap/60e3), candidates };
-        // 参会人：能读到就带上
-        // 快捷命令 +list-attendees 对群日历返回空；原生 event.attendees list 能读到（2026-09-16 实测：Cary Luo / Aaron Wang / Abel Mei …）
-        const aj = parse(await run(['calendar','event.attendees','list','--as','user','--params', JSON.stringify({ calendar_id: event.calendarId || 'primary', event_id: event.eventId, page_size: 100 })]));
-        const list = aj && aj.ok ? ((aj.data && aj.data.items) || (Array.isArray(aj.data) ? aj.data : [])) : [];
-        event.attendees = list.filter(x => x.type !== 'resource').map(x => (x.display_name || x.user_id || '') + (x.rsvp_status === 'decline' ? '（已拒绝）' : '')).filter(Boolean).slice(0, 60);
-        if (!event.attendees.length) event.attendeesNote = '日历里读不到参会人（群日历不开放名单）';
-      } else if (!reason) reason = items.length ? '当天日程里没有和录音时间重叠的' : '当天日历为空';
-    } catch (e) { reason = e.message; }
-    // 你手动定过的（选了某一场，或说了「不是日历上的会」）永远优先于自动猜
-    const chosen = sess.calendar && sess.calendar.chosen;
-    sess.calendar = { checkedAt: Date.now(), event, reason, chosen: chosen || null };
-    if (chosen === 'none') { sess.calendar.event = null; sess.calendar.reason = '你标了「不是日历上的会」'; event = null; }
-    else if (chosen && event && event.eventId !== chosen && event.candidates) {
-      const pick = event.candidates.find(c => c.eventId === chosen);
-      if (pick) { sess.calendar.event = { ...event, ...pick, confidence: 'high', chosenByUser: true }; event = sess.calendar.event; }
-    } else if (event && chosen === event.eventId) { event.confidence = 'high'; event.chosenByUser = true; }
-    // D4（2026-09-22）：这里原来是裸 writeFileSync——没有 tmp+rename，也没有 fsync。
-    // 写到一半断电 / 进程被杀，读方 JSON.parse 失败，这场会就从列表里消失一次。
-    // 现在走 journal 的原子写，而且只动 calendar 这一个字段：读最新那份再改，不拿手上这份旧快照整份写回
-    // （会中调 /calendar-match 的话，手上这份的 transcript 会比盘上那份少最后几分钟）。
-    try { const f = sess.id ? pendingFileFor(sess.id) : ''; if (f) { const cur = journal.read(f); if (cur) journal.write(f, { ...cur, calendar: sess.calendar }); } } catch (e) {}
-    return event;
   }
   // ===== 回看页（REQ-004）：补跑结构化总结 / 读进度 / 存「需要你定一下」的回答 =====
   // 会议记忆原来靠「过一遍」写入；那个流程撤了，改成这里把核心结论和待办写进去，下一场会才接得上。

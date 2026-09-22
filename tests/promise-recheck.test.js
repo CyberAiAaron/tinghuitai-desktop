@@ -4,10 +4,10 @@
 // ② 分诊提示词有「承诺回查」这条规则，且构建产物 web/index.html 里也有（不是只改了源文件）。
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('fs'), os = require('os'), path = require('path');
 const mem = require('../app/memory'), ops = require('../app/memory-ops');
-test('以往沉淀每条带日期：两场会各承诺一次同一件事，检索后两条都在、日期各自正确', () => {
+test('以往沉淀每条带日期：两场会各承诺一次同一件事，检索后两条都在、日期各自正确', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-promise-recheck-'));
   try {
-    const db = mem.open(dir); if (!db) return;   // 本机 node 没有 sqlite 时整个记忆功能关闭，不测
+    const db = mem.open(dir); if (!db) { t.skip('本机 node 没有 sqlite，记忆功能整体关闭'); return; }   // 明确报 skip，不算通过
     mem.putCard(db, { kind: 'promise', topic: '供应商 demo', text: '向供应商索要 demo 录屏', owner: 'S1', meeting_id: 'm1', meeting_title: '硬件例会', recorded_at: '2026-09-12T02:00:00.000Z' });
     mem.putCard(db, { kind: 'promise', topic: '供应商 demo', text: '跟进供应商的 demo 反馈', owner: 'S1', meeting_id: 'm2', meeting_title: '硬件例会', recorded_at: '2026-09-17T02:00:00.000Z' });
     mem.putCard(db, { kind: 'promise', topic: '装宽带', text: '先装上宽带让团队用起来', owner: 'S0', meeting_id: 'm2', meeting_title: '硬件例会', recorded_at: '2026-09-17T02:00:00.000Z' });
@@ -26,7 +26,20 @@ test('分诊提示词含「承诺回查」规则，源文件和构建产物都�
   assert.ok(m, '构建产物里找不到 TRIAGE');
   for (const [name, text] of [['源文件', src], ['构建产物 TRIAGE', m[2]]]) {
     assert.ok(text.includes('承诺回查'), name + '缺「承诺回查」');
-    assert.ok(text.includes('已承诺过，至今未落地'), name + '缺 claim 写法');
+    assert.ok(text.includes('已承诺过，记录里没看到落地'), name + '缺 claim 写法');
+    assert.ok(!text.includes('至今未落地'), name + '不许断言「至今未落地」：沉淀里只有「没有完成记录」，不等于确认没做');
+    assert.ok(text.includes('没带日期的，不做承诺回查'), name + '缺「没日期不回查」');
     assert.ok(text.includes('相近的事不要硬凑'), name + '缺保守条款');
   }
+});
+test('toPromptBlock 不依赖 sqlite：日期合法才带，缺失或非法不带，不出现 undefined', () => {
+  const b = ops.toPromptBlock([
+    { kind: 'promise', text: 'A', meeting_title: '会1', recorded_at: '2026-09-12T02:00:00.000Z' },
+    { kind: 'promise', text: 'B', meeting_title: '会2' },
+    { kind: 'promise', text: 'C', meeting_title: '会3', recorded_at: '昨天' },
+  ]);
+  assert.match(b, /- \[承诺\] A　来自《会1》 2026-09-12\n/, '合法日期要带：' + b);
+  assert.match(b, /- \[承诺\] B　来自《会2》\n/, '缺日期就不带：' + b);
+  assert.match(b, /- \[承诺\] C　来自《会3》$/, '非法日期不带：' + b);
+  assert.ok(!/undefined|昨天/.test(b), '不能把脏字符串当日期：' + b);
 });
