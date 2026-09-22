@@ -90,5 +90,5 @@ test('第 9 条 页面侧：不确定的卡再点先问一句、带 retryConfirm
  assert.ok(fn.includes('if(j.uncertain)actUncertain.add(cardId)'),'服务端说不确定要记住这张卡');
  assert.ok(fn.includes('actUncertain.delete(cardId)'),'发成了要把标记清掉');
  assert.ok(js.includes('上次没确认发没发出去，确定再发？'));
- assert.match(fs.readFileSync(path.join(root,'web/archive.html'),'utf8'),/archive\.js\?v=16"/);
+ assert.match(fs.readFileSync(path.join(root,'web/archive.html'),'utf8'),/archive\.js\?v=17"/);
 });

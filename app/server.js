@@ -12,7 +12,8 @@ const http = require('http');
 const journal = require('./session-journal');
 const throttle = require('./write-throttle');
 const sendGate = require('./send-gate');   // 真外发的确认 + 幂等门禁（X6），和 slack-share 同一套规矩
-const logRotate = require('./log-rotate');  // D7：events.log / usage.jsonl / view-feedback.jsonl 超 10MB 滚成 .1
+const logRotate = require('./log-rotate');
+const retention = require('./retention');   // 录音保留期：只删 audio/ 下超期录音，文字永不删  // D7：events.log / usage.jsonl / view-feedback.jsonl 超 10MB 滚成 .1
 const transcriptPick = require('./transcript-pick');  // D5：同一场会「用哪份转写」的唯一一份规则
 const assistantCore = require('../web/assistant-core');
 const Busboy = require('busboy');
@@ -1139,6 +1140,12 @@ function recoverOrphans(){
 const orphanTimer=setTimeout(()=>{try{recoverOrphans();}catch(e){log('启动补收尾扫描出错 '+e.message);}
   const again=setInterval(()=>{try{recoverOrphans();}catch(e){log('补收尾扫描出错 '+e.message);}},15*60000);if(again.unref)again.unref();},STARTUP_RECOVERY_DELAY_MS);
 if(orphanTimer.unref)orphanTimer.unref();
+// 录音保留期（2026-09-22 Aaron 定「录音保留三十天，文字一直保留」）：启动 60 秒后扫一次，之后每 6 小时；正在录的会一律跳过。
+const RETENTION_FIRST_MS=(process.env.THT_TEST&&Number(process.env.THT_RETENTION_FIRST_MS)>0)?Number(process.env.THT_RETENTION_FIRST_MS):60000;
+function audioRetentionDays(){try{return retention.daysFrom(loadEnv().AUDIO_RETENTION_DAYS);}catch(e){return retention.DEFAULT_DAYS;}}
+function runRetention(){try{retention.sweep({audioDir:AUDIO_DIR,days:audioRetentionDays(),dataDir:DATA,log,isRecording:id=>{const s=SESSIONS.get(id);return !!(s&&!s.finalized);}});}catch(e){log('录音清理出错 '+e.message);}}
+const retentionTimer=setTimeout(()=>{runRetention();const again=setInterval(runRetention,6*3600000);if(again.unref)again.unref();},RETENTION_FIRST_MS);
+if(retentionTimer.unref)retentionTimer.unref();
 function recoveryNeeded(){if(!fs.existsSync(startupRecoveryDir))return 0;return fs.readdirSync(startupRecoveryDir).filter(f=>f.endsWith('.json')).map(f=>journal.read(path.join(startupRecoveryDir,f))).filter(s=>s&&!s.complete&&!SESSIONS.has(s.id)).length;}
 let crashedSinceStart = 0;
 // 请求处理器都是 async，一处未捕获就会终止进程，正在录的会议连同未落盘的部分一起没了。
@@ -2123,7 +2130,12 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) { res.writeHead(400); return res.end('bad id'); }   // 只认安全字符，杜绝跳目录
     const file = path.join(AUDIO_DIR, sid + '.pcm');
     if (!file.startsWith(AUDIO_DIR + path.sep)) { res.writeHead(400); return res.end('bad id'); }
-    let st; try { st = fs.statSync(file); } catch (e) { res.writeHead(404); return res.end('no audio'); }
+    let st; try { st = fs.statSync(file); } catch (e) {
+      // 录音被保留期清掉的，回看页要能说清是「按 N 天保留期清理」而不是「没有录音」；HEAD 没有 body，原因放响应头。
+      const swept = retention.wasSwept(DATA, sid), days = audioRetentionDays();
+      res.writeHead(404, { 'Content-Type': 'application/json', 'X-Audio-Gone': swept ? 'retention' : 'missing', 'X-Audio-Retention-Days': String(days) });
+      return res.end(req.method === 'HEAD' ? undefined : JSON.stringify(swept ? { ok: false, reason: 'retention', days, error: '录音已按 ' + days + ' 天保留期清理，文字记录仍在' } : { ok: false, reason: 'missing', error: 'no audio' }));
+    }
     const RATE = 16000, BITS = 16, CH = 1, BYTE_RATE = RATE * CH * BITS / 8;
     // 认人要听的是某个人的一句话，不是整场。带 start/dur（秒）就只切那一段，按帧对齐，读盘也只读这一段。
     const qs = u.searchParams.get('start'), qd = u.searchParams.get('dur');
@@ -2207,7 +2219,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     // 这三个字段是为了能一眼看出「现在跑的到底是哪份代码」。
     // 2026-09-11 踩过：pid 文件是陈旧的，按它杀进程杀错了，老服务继续跑了一整天，
     // 改完的服务端代码一直没生效，而界面因为是从磁盘读的看起来像已经更新。
-    pid: process.pid, startedAt: SERVER_STARTED_AT, version: SERVER_VERSION, assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>j.status==='error'||(j.status==='partial'&&!(j.summaryGenerated&&j.fullTextVerified))).length   /* 总结已出、全文已核、只剩「转写有缺口」告警的，是完成不是待处理（2026-09-15 Aaron 定） */   /* empty 是终态，不算待处理 */ })); }
+    audioRetention: retention.status(DATA, audioRetentionDays()), pid: process.pid, startedAt: SERVER_STARTED_AT, version: SERVER_VERSION, assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>j.status==='error'||(j.status==='partial'&&!(j.summaryGenerated&&j.fullTextVerified))).length   /* 总结已出、全文已核、只剩「转写有缺口」告警的，是完成不是待处理（2026-09-15 Aaron 定） */   /* empty 是终态，不算待处理 */ })); }
   // D6（2026-09-22）：默认不带逐字稿。原来这条路把 pending 里近百场的逐字稿整个打包，约 9MB，
   // 而首页启动时要的只是最新那一场。四种用法：
   //   ?latest=1   只回最新一场，带逐字稿（首页启动用这个）
