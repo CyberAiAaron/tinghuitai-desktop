@@ -21,6 +21,16 @@ test('compute：jev 按 provider 数（失败行也算）；Sonnet 按 live 档�
   assert.deepEqual(S.compute({ id: 'x' }, []), { ...S.compute({ id: 'x' }, []), jevCalls: 0, sonnetCalls: 0, insights: 0, adopted: 0 });
 });
 
+test('compute：同一张卡重复出现（同 id 两条，一条 rating、一条 actionState）只算一张、采纳只算一次；没 id 按 claim 归并', () => {
+  const sess = { id: 's2', factchecks: [
+    { id: 'a', rating: 'adopt' }, { id: 'a', actionState: { status: 'done' } }, { id: 'a' },
+    { claim: '同一句', rating: 'useful' }, { claim: '同一句', actionState: { status: 'done' } },
+    { id: 'b', rating: 'useless' }, 'junk', null,
+  ] };
+  const st = S.compute(sess, []);
+  assert.equal(st.insights, 3, 'a / 同一句 / b 三张'); assert.equal(st.adopted, 2, 'a 一次 + 同一句一次');
+});
+
 test('readUsageRows：只取本场 sessionId 的行，usage.jsonl.1（滚过的）一起看，坏行跳过；forSession 四个数与合成账本对得上', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-stats-'));
   fs.mkdirSync(path.join(dir, 'state'), { recursive: true });

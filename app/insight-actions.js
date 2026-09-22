@@ -275,10 +275,12 @@ const ONE_PAGER_SYS = '你是会议助手，把一张会中洞察卡整理成一
 const escHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const safeId = v => String(v || '').replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 100);
 function onePagerFile(dataDir, sessionId, cardId) { return path.join(dataDir, 'exports', ONE_PAGER_DIR, safeId(sessionId) + '__' + safeId(cardId) + '.html'); }
+// 只认「整段就是一个 JSON 对象」：允许模型套一层 ```json 围栏（去掉围栏后仍须整段可解析），不从夹着说明文字的回复里截子串（Codex 9f54c7ad 初审：截子串会把非严格回复当成功）
 function parseOnePager(raw) {
-  const s = String(raw || '').trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
-  let j = null; try { j = JSON.parse(s); } catch (e) { const a = s.indexOf('{'), b = s.lastIndexOf('}'); if (a >= 0 && b > a) { try { j = JSON.parse(s.slice(a, b + 1)); } catch (x) {} } }
-  if (!j || typeof j !== 'object') return null;
+  const s = String(raw || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  if (!s.startsWith('{') || !s.endsWith('}')) return null;
+  let j = null; try { j = JSON.parse(s); } catch (e) { return null; }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
   const out = {}; for (const k of ONE_PAGER_KEYS) out[k] = clip(flat(j[k]), 200);
   return ONE_PAGER_KEYS.some(k => out[k]) ? out : null;
 }

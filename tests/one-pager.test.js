@@ -33,6 +33,12 @@ test('onePager：post 档 ask 调 1 次，四段写进 HTML（转义），文件
   // 路径只认编号字符；奇怪字符替换掉
   assert.equal(path.dirname(IA.onePagerFile(dir, '../x', 'a/b')), path.join(dir, 'exports', 'one-pager'), '编号里的斜杠被替掉，文件只能落在 exports/one-pager/ 里');
   assert.deepEqual(IA.parseOnePager('{"said":"a"}'), { said: 'a', recorded: '', source: '', decision: '' }); assert.equal(IA.parseOnePager('{}'), null); assert.equal(IA.parseOnePager('[]'), null);
+  // 只认整段一个 JSON 对象：围栏可以去（上面正例已用 ```json），夹着说明文字的不截子串
+  assert.equal(IA.parseOnePager('好的，这是纠错单：{"said":"a","recorded":"b"} 请查收'), null, '前后带说明文字 → 不认');
+  assert.equal(IA.parseOnePager('```json\n{"said":"a"}\n``` 以上'), null, '围栏后面还有字 → 不认');
+  assert.equal(IA.parseOnePager('{"said":"a"} {"said":"b"}'), null, '两个对象 → 不认');
+  await assert.rejects(IA.onePager({ card: { ...card, id: 'c4' }, session: { id: SID }, dataDir: dir, ask: async () => '说明：{"said":"a","recorded":"b","source":"c","decision":"d"}' }), e => e.definite === true && /没按格式/.test(e.message));
+  assert.ok(!fs.existsSync(IA.onePagerFile(dir, SID, 'c4')));
 });
 
 // ---------- 真服务 ----------

@@ -28,11 +28,19 @@ function readUsageRows(dataDir, sessionId) {
 
 function compute(sess, usageRows) {
   const rows = Array.isArray(usageRows) ? usageRows : [];
-  const cards = Array.isArray(sess && sess.factchecks) ? sess.factchecks.filter(Boolean) : [];
+  // 同一张卡按 id（没 id 按 claim）只算一张：合并 / 重复回流 / 老数据里同卡出现两次，不多算（Codex 9f54c7ad 初审）
+  const byKey = new Map();
+  for (const c of Array.isArray(sess && sess.factchecks) ? sess.factchecks : []) {
+    if (!c || typeof c !== 'object') continue;
+    const key = c.id ? 'id:' + c.id : 'claim:' + String(c.claim || '');
+    const prev = byKey.get(key) || { adopted: false };
+    prev.adopted = prev.adopted || c.rating === 'adopt' || !!(c.actionState && c.actionState.status === 'done');
+    byKey.set(key, prev);
+  }
   const jevCalls = rows.filter(r => r && r.provider === 'jev').length;
   const sonnetCalls = rows.filter(r => r && r.provider !== 'jev' && LIVE_TIERS.has(String(r.tier || ''))).length;
-  const adopted = cards.filter(c => c.rating === 'adopt' || (c.actionState && c.actionState.status === 'done')).length;
-  return { jevCalls, sonnetCalls, insights: cards.length, adopted, at: Date.now() };
+  const adopted = [...byKey.values()].filter(x => x.adopted).length;
+  return { jevCalls, sonnetCalls, insights: byKey.size, adopted, at: Date.now() };
 }
 
 function forSession(dataDir, sess) { return compute(sess, readUsageRows(dataDir, sess && sess.id)); }
