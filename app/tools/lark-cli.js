@@ -90,7 +90,10 @@ async function taskCreate({ summary, description = '', assignee = '', due = '' }
   const r = await runCli(a, { timeout: 30000, ...opts });
   if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
   const dig = (o, ...ps) => { for (const p of ps) { const v = p.split('.').reduce((x, k) => (x && typeof x === 'object' ? x[k] : undefined), o); if (v != null && v !== '') return String(v); } return ''; };
-  return { ok: true, url: dig(r.json, 'data.task.url', 'data.url'), id: dig(r.json, 'data.task.guid', 'data.task.task_id', 'data.guid') };
+  const url = dig(r.json, 'data.task.url', 'data.url'), id = dig(r.json, 'data.task.guid', 'data.task.task_id', 'data.guid');
+  // 命令成功但回包里没有链接也没有编号：任务可能建了也可能没建，按 uncertain 报失败（门禁要 retryConfirmed 才重试），不把空链接当成功写进卡片（Codex 8b2bdefd 初审 F4）
+  if (!url && !id) return { ok: false, error: '飞书回包里没有任务链接和编号', uncertain: true };
+  return { ok: true, url, id };
 }
 
 module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, clip, norm };

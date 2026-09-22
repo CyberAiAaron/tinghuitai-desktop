@@ -125,6 +125,45 @@ test('setDate：owner 解析到 → 派给他；解析不到 → 建给本人并
   if (!db) t.diagnostic('这台 node 没有 sqlite，承诺卡那一段没验');
 });
 
+test('setDate：没传 owner 时默认承诺卡里的承诺人（Codex 8b2bdefd F3）；承诺人是本人或没记 → 本人并写明原因', async (t) => {
+  const mem = require(path.join(root, 'app/memory.js'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-owner-'));
+  const db = mem.open(dataDir);
+  if (!db) { t.diagnostic('这台 node 没有 sqlite，跳过'); return; }
+  mem.putCard(db, { id: 'p-cary', kind: 'promise', text: 'BOM 那个表回头发给 Cary', owner: 'Cary Luo', meeting_id: 'm-0912', meeting_title: '硬件例会', recorded_at: '2026-09-12T10:00:00Z' });
+  const card = { id: 'r1', type: 'recheck', claim: '这件事 09-12《硬件例会》已承诺过（BOM 表发给 Cary），记录里没看到落地', evidence: 'BOM 表我回头发', source: '硬件例会 2026-09-12', action: { do: 'set_date', args: {} } };
+  assert.equal((IA.matchPromise(db, card) || {}).id, 'p-cary', '先找到同一件事的承诺卡');
+  let calls = [];
+  let r = await IA.setDate({ card, args: {}, session: { id: 's1', title: '硬件周会' }, db, execImpl: fakeExec(calls) });
+  let a = calls.find(x => x[1] === '+create');
+  assert.equal(a[a.indexOf('--assignee') + 1], 'ou_cary', '任务派给承诺人'); assert.equal(r.patch.task.owner, 'Cary Luo'); assert.equal(r.patch.task.ownerFrom, 'promise'); assert.equal(r.patch.task.note, '');
+  // 承诺卡没记承诺人 → 本人，且描述里说明原因
+  const db2 = mem.open(fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-owner2-')));
+  mem.putCard(db2, { id: 'p-none', kind: 'promise', text: 'BOM 那个表回头发给 Cary', owner: '', meeting_id: 'm-0912', meeting_title: '硬件例会', recorded_at: '2026-09-12T10:00:00Z' });
+  calls = [];
+  r = await IA.setDate({ card, args: {}, session: { id: 's1', title: '硬件周会' }, db: db2, execImpl: fakeExec(calls) });
+  a = calls.find(x => x[1] === '+create');
+  assert.equal(a[a.indexOf('--assignee') + 1], IA.SELF_OPEN_ID); assert.equal(r.patch.task.ownerFrom, 'self'); assert.ok(a[a.indexOf('--description') + 1].includes('先建给本人'), '回退原因写进任务描述');
+  assert.ok(!calls.some(x => x[0] === 'contact'), '没有承诺人不去搜人');
+  // 按钮参数优先于承诺卡
+  calls = [];
+  r = await IA.setDate({ card, args: { owner: 'Aaron' }, session: { id: 's1' }, db, execImpl: fakeExec(calls) });
+  assert.equal(r.patch.task.ownerFrom, 'args'); assert.equal(calls.find(x => x[1] === '+create')[calls.find(x => x[1] === '+create').indexOf('--assignee') + 1], IA.SELF_OPEN_ID);
+});
+
+test('taskCreate：命令成功但回包没有链接也没有编号 → ok:false 且 uncertain（Codex 8b2bdefd F4）；setDate 不写 done', async () => {
+  const cli = require(path.join(root, 'app/tools/lark-cli.js'));
+  const emptyExec = (bin, args, o, cb) => cb(null, JSON.stringify({ ok: true, data: {} }), '');
+  const r = await cli.taskCreate({ summary: 'x', due: '2026-10-01' }, { execImpl: emptyExec });
+  assert.equal(r.ok, false); assert.equal(r.uncertain, true); assert.ok(/链接/.test(r.error));
+  const card = { id: 'r2', type: 'recheck', claim: '这件事已承诺过，记录里没看到落地', evidence: '我回头发', source: '硬件例会 2026-09-12', action: { do: 'set_date', args: {} } };
+  await assert.rejects(IA.setDate({ card, args: {}, session: {}, db: null, execImpl: emptyExec }), e => e.uncertain === true && !e.definite);
+  // 只有编号没有链接仍算成功（链接可以为空但编号能追）
+  const idOnly = (bin, args, o, cb) => cb(null, JSON.stringify({ ok: true, data: { task: { guid: 'g-only' } } }), '');
+  const r2 = await cli.taskCreate({ summary: 'x' }, { execImpl: idOnly });
+  assert.equal(r2.ok, true); assert.equal(r2.id, 'g-only'); assert.equal(r2.url, '');
+});
+
 // ---------- 真服务：POST /insight-action ----------
 function stubCli(dir) {
   const bin = path.join(dir, 'fake-lark-cli'), logFile = path.join(dir, 'cli-calls.log'), mode = path.join(dir, 'cli-mode');

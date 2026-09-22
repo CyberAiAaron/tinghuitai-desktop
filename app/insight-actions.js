@@ -228,32 +228,47 @@ async function openSource({ card, env, db, dataDir, log = () => {}, execImpl, in
 }
 
 // set_date：建飞书任务 + 承诺卡写 due / 状态。args {owner, due, title}
+// 同一件事的 pending 承诺卡：拿承诺卡自己的词去卡片 claim + 原话里找，命中 ≥2 个且占它自己词数 ≥30%（claim 里还带着「已承诺过 / 记录里没看到」这类话，反过来比就永远对不上）。
+// 没 sqlite / 查不到 → null。Codex 8b2bdefd 初审 F3：以前只在建完任务后才找这张卡，承诺人没有当上任务默认负责人。
+function matchPromise(db, card) {
+  if (!db) return null;
+  const ops = require('./memory-ops');
+  const hay = (String(card.claim || '') + ' ' + (card.evidence || '')).toLowerCase();
+  const rows = db.prepare(`SELECT * FROM cards WHERE kind='promise' AND state='pending' ORDER BY recorded_at DESC LIMIT 500`).all();
+  let best = null, bestScore = 0;
+  for (const row of rows) { const q = ops.terms(row.topic + ' ' + row.text); if (!q.length) continue; let hit = 0; for (const w of q) if (hay.includes(w)) hit++; const score = hit >= 2 && hit / q.length >= 0.3 ? hit / q.length : 0; if (score > bestScore) { best = row; bestScore = score; } }
+  return best;
+}
+const isSelf = o => !o || o === '本人' || /^aaron(\s*wang)?$/i.test(o);
+
+// set_date：建飞书任务 + 承诺卡写 due / 状态。args {owner, due, title}
+// 负责人默认顺序：按钮参数 owner → 模型给的 action.args.owner/who → 同一件事的承诺卡 owner → 本人。回退本人时卡片 task.ownerFrom 说明为什么。
 async function setDate({ card, args = {}, session = {}, env, db, log = () => {}, execImpl }) {
   const today = todayISO();
   const due = isoDay(args.due) || plusDays(today, 7);
-  const owner = String(args.owner || (card.action && card.action.args && (card.action.args.owner || card.action.args.who)) || '').trim().slice(0, 60);
+  let best = null; try { best = matchPromise(db, card); } catch (e) { log('insight-action set_date 找承诺卡失败 ' + e.message); }
+  let owner = String(args.owner || (card.action && card.action.args && (card.action.args.owner || card.action.args.who)) || '').trim().slice(0, 60);
+  let ownerFrom = owner ? 'args' : '';
+  if (!owner && best && String(best.owner || '').trim()) { owner = String(best.owner).trim().slice(0, 60); ownerFrom = 'promise'; }
+  if (!owner) ownerFrom = 'self';
   let assignee = SELF_OPEN_ID, note = '';
-  if (owner && owner !== '本人' && !/^aaron(\s*wang)?$/i.test(owner)) {
+  if (!isSelf(owner)) {
     const got = await larkCli.resolveIds([owner], { execImpl, log });
     const id = got.ok ? (got.ids || [])[0] : '';
     if (id) assignee = id; else note = `代办对象：${owner}`;
   }
+  if (ownerFrom === 'self') note = [note, '负责人：承诺卡里没有记承诺人，先建给本人'].filter(Boolean).join('；');
   const title = clip(String(args.title || '').trim() || card.claim, 100);
   const desc = [card.claim, card.evidence ? `会上原话：「${card.evidence}」` : '', card.source ? `出处：${card.source}` : '', session.title ? `来自会议：${session.title}` : '', note].filter(Boolean).join('\n');
   const cliTimeout = Math.max(500, Number((env || {}).INSIGHT_ACTION_CLI_TIMEOUT_MS) || 30000);
   const r = await larkCli.taskCreate({ summary: title, description: desc, assignee, due }, { execImpl, log, timeout: cliTimeout });
   if (!r.ok) { const e = Error(r.error || '建任务没成'); e.uncertain = !!r.uncertain; e.definite = !r.uncertain; throw e; }
-  const task = { url: r.url, id: r.id, owner: owner || '本人', assignee, due, note };
-  // 承诺卡：找同一件事的 pending 承诺写 due / owner；没有就新建一张，别让这次「定日期」只留在飞书
+  const task = { url: r.url, id: r.id, owner: owner || '本人', ownerFrom, assignee, due, note };
+  // 承诺卡：同一件事的 pending 承诺写 due / owner；没有就新建一张，别让这次「定日期」只留在飞书
   let memoryCard = null;
   if (db) {
     try {
-      const mem = require('./memory'), ops = require('./memory-ops');
-      // 同一件事：拿承诺卡自己的词去卡片 claim + 原话里找，命中 ≥2 个且占它自己词数 ≥30%（claim 里还带着「已承诺过 / 记录里没看到」这类话，反过来比就永远对不上）
-      const hay = (card.claim + ' ' + (card.evidence || '')).toLowerCase();
-      const rows = db.prepare(`SELECT * FROM cards WHERE kind='promise' AND state='pending' ORDER BY recorded_at DESC LIMIT 500`).all();
-      let best = null, bestScore = 0;
-      for (const row of rows) { const q = ops.terms(row.topic + ' ' + row.text); if (!q.length) continue; let hit = 0; for (const w of q) if (hay.includes(w)) hit++; const score = hit >= 2 && hit / q.length >= 0.3 ? hit / q.length : 0; if (score > bestScore) { best = row; bestScore = score; } }
+      const mem = require('./memory');
       const refs = task.url ? [task.url] : [];
       if (best) memoryCard = mem.updateCard(db, best.id, { due, owner: owner || best.owner, source_refs: [...safeJson(best.source_refs), ...refs], human_edited: 1 }, `会中定日期（${session.title || session.id || '本场'}）`);
       else memoryCard = mem.putCard(db, { kind: 'promise', state: 'pending', text: card.claim, topic: clip(card.claim, 40), owner: owner || '', due, meeting_id: session.id || '', meeting_title: session.title || '', source_refs: refs, human_edited: 1, change_reason: '会中定日期' });
@@ -324,4 +339,4 @@ async function onePager({ card, session = {}, dataDir, ask, log = () => {} }) {
   return { ok: true, patch: { onePager: onePagerState }, attachment: { kind: 'one_pager', cardId: card.id, title, path: rel, file, at: onePagerState.at }, body };
 }
 
-module.exports = { resolveSource, openSource, setDate, onePager, onePagerFile, parseOnePager, onePagerHtml, kbDir, latestKb, kbMapLookup, findSection, quoteFrom, recordedValue, correctionValue, parseMeetingRef, parseBoardRef, sections, NOT_FOUND, SELF_OPEN_ID, QUOTE_MAX, DOCS, ONE_PAGER_KEYS };
+module.exports = { resolveSource, openSource, setDate, matchPromise, onePager, onePagerFile, parseOnePager, onePagerHtml, kbDir, latestKb, kbMapLookup, findSection, quoteFrom, recordedValue, correctionValue, parseMeetingRef, parseBoardRef, sections, NOT_FOUND, SELF_OPEN_ID, QUOTE_MAX, DOCS, ONE_PAGER_KEYS };
