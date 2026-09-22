@@ -17,57 +17,8 @@ body{margin:0;padding:0 0 60px}
 .tr time{margin-right:8px}
 .spk{display:inline-block;padding:0 6px;margin-right:6px;font-size:11px}
 .orig{display:block;color:var(--muted,#76767c);font-size:12px;margin:-6px 0 10px 54px}
-.card{margin:0 0 8px}
-.card .k{margin-right:8px}
 .chip{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--panel-2,#f0f0f3);font-size:12px;color:var(--muted,#76767c)}
-.summary{white-space:pre-wrap;font-size:14px;line-height:1.65}
 .empty{padding:12px 14px}
-#rv{position:fixed;inset:0;z-index:140;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;padding:20px}
-#rv[hidden]{display:none}
-.rv-box{width:min(620px,100%);background:var(--panel);border-radius:16px;padding:20px;box-shadow:0 18px 60px #0003;max-height:88vh;overflow:auto}
-.rv-top{display:flex;align-items:center;font:12px var(--mono);color:var(--muted);margin-bottom:14px}
-.rv-kind{display:inline-block;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 9px;margin-bottom:10px}
-.rv-text{font-size:17px;line-height:1.6;margin:0 0 18px}
-.rv-edit textarea,.rv-edit input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px;background:var(--panel-2);color:var(--text)}
-.rv-row{display:flex;gap:8px;align-items:center;margin-top:8px}
-.rv-acts{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
-.rv-acts button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:8px 16px;font:inherit;font-size:14px;cursor:pointer}
-.rv-acts button.primary{background:var(--text);color:var(--panel);border-color:var(--text)}
-.rv-acts kbd{font:11px var(--mono);opacity:.55;margin-left:4px}
-.rv-done{font-size:14px;line-height:1.7}
-.rv-done pre{white-space:pre-wrap;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:40vh;overflow:auto;font:13px/1.7 var(--mono)}
-.note-box{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:0 0 6px;margin:0 0 14px}
-.note-box[hidden]{display:none}
-.cal-chip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:9px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);font-size:13px}
-.cal-chip[hidden]{display:none}
-.cal-chip .cal-k{font-family:'Space Mono',monospace;font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
-.cal-chip .cal-when,.cal-chip .cal-who{color:var(--muted)}
-.cal-chip .cal-ok{color:#2e7d32;font-weight:700}
-.cal-chip .cal-warn{color:#b3261e}
-.cal-chip button,.cal-chip select{padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--text);font:inherit;font-size:12px;cursor:pointer}
-.take-dlg{border:0;border-radius:16px;padding:20px;max-width:520px;width:calc(100% - 32px);background:var(--panel);color:var(--text)}
-.take-dlg::backdrop{background:#0006}
-.take-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
-.take-head b{font-size:16px}
-.take-head [data-x]{margin-left:auto;border:0;background:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1}
-.take-sub{margin:0 0 14px;color:var(--muted);font-size:13px}
-.take-row{display:flex;align-items:center;gap:8px;margin:10px 0;flex-wrap:wrap}
-.take-row label{font-size:13px;color:var(--muted);min-width:66px}
-.take-row input,.take-row select{flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text);font:inherit;font-size:13px}
-.take-row button{padding:8px 14px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text);font:inherit;font-size:13px;cursor:pointer}
-.take-row button.p{background:var(--live);border-color:var(--live);color:#fff}
-.take-row button:disabled{opacity:.5;cursor:default}
-.take-hint{flex:1;font-size:12px;color:var(--muted)}
-.take-msg{margin:12px 0 0;font-size:13px;color:var(--muted)}
-.take-msg.warn{color:#b3261e}
-.note-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:14px}
-.note-tag{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 9px}
-.note-head button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:4px 12px;font:inherit;font-size:12px;cursor:pointer}
-.note-body{padding:6px 18px 12px;font-size:14.5px;line-height:1.75}
-.note-body h3{font-size:14px;margin:16px 0 6px;color:var(--muted);font-weight:600}
-.note-body ul{margin:0;padding-left:20px}.note-body li{margin:5px 0}
-.note-meta{color:var(--muted);font-size:12.5px;margin:2px 0}
-.note-loading{padding:14px 16px;color:var(--muted);font-size:13px}
 .cond-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font-size:12.5px;color:var(--muted)}
 .cond-bar[hidden]{display:none}
 .cond-bar button{border:1px solid var(--line);background:var(--panel-2);color:var(--text);border-radius:999px;padding:3px 12px;font:inherit;font-size:12px;cursor:pointer}
@@ -80,7 +31,8 @@ button.k.play:hover,time.play:hover{text-decoration:underline}
 time.play{cursor:pointer}
 
 .bf-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:14px;margin-bottom:14px;align-items:start}
-@media(max-width:980px){.bf-grid{grid-template-columns:1fr}}
+/* 平板竖屏（768）上下堆叠、平板横屏（1024）起左右并列；嵌在主界面的浮层里时页面比窗口窄 8vw，断点按内容宽算 */
+@media(max-width:900px){.bf-grid{grid-template-columns:1fr}}
 .bf-body{padding:14px;font-size:14px;line-height:1.65}
 .pane h2{display:flex;align-items:center;gap:8px}
 .bf-scope{color:var(--muted);margin:0 0 12px}
@@ -121,10 +73,33 @@ time.play{cursor:pointer}
 .bf-tag.ok{background:#e6f4ea;color:#1e7e34}.bf-tag.bad{background:#fdecea;color:#b3261e}
 .bf-note{color:var(--muted);font-size:13px}
 /* 会后处理台（REQ-009）：一条事一张卡，一张卡一个主动作 + 一个「不认」。 */
-.bf-act{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:0 0 8px;background:#fff}
-.bf-act.done{background:var(--panel-2);border-style:dashed}
-.bf-act-head{display:flex;gap:8px;align-items:baseline}
-.bf-act-text{flex:1;font-weight:500}
+/* 飞书纪要式：1 / 2 / 3 自动编号的节，议题再编 2.1 2.2；结论加粗在高亮块里 */
+.fs{margin:0 0 18px}
+.fs-h{display:flex;align-items:center;gap:8px;font-size:15px;margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.fs-n{flex:none;min-width:22px;height:22px;padding:0 6px;border-radius:6px;background:var(--text);color:#fff;font:12px/22px var(--mono);text-align:center}
+.fs-n.sub{background:var(--panel-2);color:var(--text);font-size:11px}
+.bf-key b{font-weight:650}
+/* 待办表：一行一件事，动作在最后一列；展开的草稿占整行 */
+.td-wrap{overflow-x:auto;margin:0 0 8px}
+.td-table td{vertical-align:top}
+.td-table .td-n{color:var(--muted);font:12px var(--mono);width:22px}
+.td-table td:nth-child(2){white-space:normal;min-width:180px}
+.td-table td:nth-child(3),.td-table td:nth-child(4){white-space:nowrap;color:var(--text)}
+.td-table .td-act{white-space:nowrap;text-align:right}
+.td-table .td-act .bf-go{margin-right:4px}
+.td-table .td-act .bf-act-state{white-space:normal;max-width:180px;margin-top:4px;text-align:left}
+tr.bf-act.done td{background:var(--panel-2);color:var(--muted)}
+tr.bf-draft-row td{padding:0 8px 10px;border-bottom:1px solid #f0f0f2}
+tr.bf-draft-row .bf-draft{border-top:0;margin-top:0;padding-top:0}
+.bf-say{display:flex;gap:8px;align-items:center;margin:10px 0 4px}
+.bf-say input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:inherit;font-size:14px;background:#fff;color:var(--text)}
+.bf-say input:focus{outline:none;border-color:var(--text)}
+.bf-say button{flex:none;border:1px solid var(--text);background:var(--text);color:#fff;border-radius:10px;font:inherit;font-size:13px;padding:8px 14px;cursor:pointer}
+.bf-say button[type=button]{background:var(--panel-2);color:var(--text);border-color:var(--line)}
+.bf-say-log{font-size:13px;line-height:1.6;color:var(--text);margin:4px 0}
+.bf-say-log.bad{color:#b3261e}
+.bf-say-hint{color:var(--faint);font-size:12px;margin:2px 0 0}
+@media(max-width:600px){.td-table td:nth-child(3),.td-table td:nth-child(4){white-space:normal}.td-table .td-act{white-space:normal}}
 .bf-act-why{color:var(--muted);font-size:13px;margin-top:4px}
 .bf-act-acts{display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap}
 .bf-act-state{color:var(--muted);font-size:12px}.bf-act-state.bad{color:#b3261e}
@@ -165,7 +140,8 @@ time.play{cursor:pointer}
 .spk-hint{color:var(--muted);font-size:12.5px;margin:0 0 8px}
 .spk-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 0;border-top:1px solid #f0f0f2}
 .spk-row:first-of-type{border-top:0}
-.spk-who{font:12px var(--mono);background:var(--panel-2);border-radius:6px;padding:2px 8px}
+.spk-who{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;background:var(--panel-2);border-radius:6px;padding:2px 8px}
+.spk-dot{display:inline-block;width:9px;height:9px;border-radius:50%}
 .spk-lines{color:var(--faint);font-size:12px}
 .spk-name{font-weight:500}
 .spk-samples{flex-basis:100%;min-width:0;display:flex;flex-direction:column;gap:4px;margin:2px 0 2px 2px}
@@ -188,7 +164,7 @@ time.play{cursor:pointer}
 .md h1,.md h2,.md h3{font-size:14px;margin:14px 0 6px;text-transform:none;letter-spacing:0;color:var(--text);border:0;padding:0;font-family:inherit;display:block}
 .md ul{padding-left:18px;margin:4px 0}.md table{border-collapse:collapse;font-size:13px}.md td,.md th{border:1px solid var(--line);padding:4px 8px}
 </style></head><body>
-<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="review-go" hidden style="display:none">过一遍</button><button class="btn sm" id="download">下载 / 分享</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
+<div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="download">下载 / 分享</button><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
 <div class="wrap">
 <div class="meta" id="meta"></div>
 <div class="meta" id="post-stats" hidden></div>
@@ -201,24 +177,5 @@ time.play{cursor:pointer}
 </div>
 <div class="pane" id="legacy-box" hidden style="margin-bottom:14px"><h2>智能总结（旧版）<span style="flex:1"></span><button type="button" class="btn sm" id="bf-build">整理成新版</button></h2><div class="bf-body md" id="summary"></div></div>
 <details class="pane bf-tr" id="tr-box"><summary><h2>逐字稿 <span class="count" id="c-tr"></span></h2></summary><div class="scroll tr" id="transcript"></div></details>
-<div hidden><span id="c-hl"></span><span id="c-td"></span><span id="c-ck"></span><div id="highlights"></div><div id="todos"></div><div id="factchecks"></div></div>
 </div>
-<div id="rv" hidden>
-  <div class="rv-box">
-    <div class="rv-top"><span id="rv-step"></span><span style="flex:1"></span><button type="button" class="archive-close" id="rv-x" aria-label="关闭">×</button></div>
-    <div class="rv-kind" id="rv-kind"></div>
-    <div class="rv-text" id="rv-text"></div>
-    <div class="rv-edit" id="rv-edit" hidden>
-      <textarea id="rv-input" rows="3"></textarea>
-      <div class="rv-row"><input type="text" id="rv-owner" placeholder="谁做（可留空）"><input type="text" id="rv-due" placeholder="什么时候（可留空）"></div>
-      <div class="rv-row"><input type="text" id="rv-wrong" placeholder="顺手纠个词：听成了"><span>&rarr;</span><input type="text" id="rv-right" placeholder="其实是"></div>
-    </div>
-    <div class="rv-acts" id="rv-acts">
-      <button type="button" id="rv-drop">不要这条 <kbd>&larr;</kbd></button>
-      <button type="button" id="rv-edit-go">改一下 <kbd>&uarr;</kbd></button>
-      <button type="button" id="rv-keep" class="primary">留下 <kbd>&rarr;</kbd></button>
-    </div>
-    <div class="rv-done" id="rv-done" hidden></div>
-  </div>
-</div>
-<script src="archive.js?v=17"></script></body></html>
+<script src="archive.js?v=18"></script></body></html>

@@ -148,7 +148,7 @@
       const id = card.dataset.id, msg = card.querySelector('.msg');
       card.querySelectorAll('button[data-act]').forEach(b => b.onclick = async () => {
         const act = b.dataset.act;
-        if (act === 'open') return reviewSession(id);
+        if (act === 'open') return openArchivePanel(id);   // 09-22 Aaron 定：历史列表直达回看页，不再先装回三栏主界面
         if (act === 'resume') return resumeSession(id);
         if (act === 'retry') {
           b.disabled = true; msg.textContent = ui==='en'?'Requeued…':'已重新排队…';
@@ -170,38 +170,7 @@
     });
   }
   // 未结束的场次：真的接着录，不要在「查看」这个动作里把它标成已结束（那样就永远续不上了）
-  // 回看一场历史会议：把它原样装回三栏主界面（转写 / 要点+总结 / 待核查），而不是跳到另一张长得不一样的页面。
-  // 本机存过的场次用本机那份（带分组、总结、收敛结果，最完整）；只在 Mac 上的场次从 /meeting-result 取回。
-  // 回看态只看不改（沿用 viewOnly 的所有守卫）；要改、要纪要、要下载分享，走「纪要 / 下载分享」进那一场自己的页面。
-  let reviewBackup = null;   // 回看前的 cur，「回到当前」时放回去
-  async function reviewSession(id){
-    if (running) { note(ui==='en'?'A meeting is recording — finish it before reviewing another.':'正在录音，结束后再回看别的场次。', true); return; }
-    let S = state.sessions.find(s => String(s.id) === String(id));
-    if (!S) {
-      try {
-        const r = await fetch(relayBase()+'/meeting-result?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(15000)});
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        const j = await r.json(); S = normalizeSession(j.session || j);
-        ['highlights','todos','factchecks'].forEach(k => { (S[k]||[]).forEach((x,i) => { if (!x.at) x.at = (S.start||Date.now()) + i*1000; }); });
-        (S.transcript||[]).forEach((x,i) => { if (!x.at) x.at = (S.start||Date.now()) + (x.t||i)*1000; });
-      } catch(e) { note(ui==='en'?'Could not load this meeting: '+e.message:'这场读不回来：'+e.message, true); return; }
-    }
-    if (!(cur && cur.viewOnly && cur.reviewing)) reviewBackup = cur;   // 连续回看多场时只记最初那个
-    cur = Object.assign(newSession('view','view'), S, {viewOnly:true, reviewing:true});
-    resetSigs(); resetPaint(); stickBottom = false; closeSheets(); render();
-    const when = cur.start ? new Date(cur.start).toLocaleString(ui==='en'?'en-US':'zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-    $('#review-title').textContent = (cur.topicTitle || cur.title || (ui==='en'?'Untitled':'未命名会议')) + (when ? ' · ' + when : '');
-    $('#review-bar').hidden = false;
-    try { el.hl.scrollTop = 0; el.tr.scrollTop = 0; } catch(e){}
-  }
-  function exitReview(){
-    if (!(cur && cur.reviewing)) return;
-    $('#review-bar').hidden = true;
-    cur = reviewBackup || state.sessions[state.sessions.length-1] || newSession(); reviewBackup = null;
-    resetSigs(); resetPaint(); stickBottom = true; render();
-  }
-  $('#review-exit').onclick = exitReview;
-  $('#review-note').onclick = () => { if (cur && cur.reviewing) openArchivePanel(cur.id); };
+  // 回看一场历史会议：直达它自己的回看页 openArchivePanel(id)（09-22 Aaron 定）；「装回三栏主界面」那条路已删。
   function resumeSession(id){
     const picked = state.sessions.find(s => s.id === id);
     if (!picked) { note(ui==='en'?'This one only exists on the Mac.':'这场只在 Mac 上，先「从 Mac 找回」。', true); return; }

@@ -46,7 +46,6 @@
   }
   $('#k-test').onclick = () => selfTest();
   async function startAll(resume, force){
-    if (cur && cur.reviewing) { $('#review-bar').hidden = true; cur = reviewBackup || newSession(); reviewBackup = null; }
     const mode = force && force!=='auto' ? force : resolveMode();
     imeMode = mode === 'ime'; asrMode = mode.startsWith('asr');
     // 本机口令由服务端随页面注入（THT_BOOT），点开始时直接拿，不要求用户先「保存设置」一次。

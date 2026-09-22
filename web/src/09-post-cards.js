@@ -46,7 +46,7 @@
       renderPostCards(); return;
     }
     const id = open || (e.target.closest('.pc') && e.target.closest('.pc').dataset.pc);
-    if (id) reviewSession(id);             // 整张卡都可点，回到那场会开完时的主界面
+    if (id) openArchivePanel(id);          // 整张卡都可点，直达那场会的回看页（09-22 Aaron 定）
   });
   // 纪要就地看、一键复制。标清是自动整理版还是你确认过的版本。
   function showShareNote(text, confirmed){
