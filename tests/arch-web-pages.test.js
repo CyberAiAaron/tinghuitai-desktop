@@ -5,8 +5,8 @@
 const { test } = require('node:test'), assert = require('node:assert/strict');
 const fs = require('fs'), path = require('path');
 const WEB = path.join(__dirname, '..', 'web');
-// archive.html 这一轮由另一路在改，避免两边同时动同一个文件；补上之后把它从这里删掉。
-const PENDING = new Set(['archive.html']);
+// 例外名单，正常应当是空的。09-22 archive.html 已补齐，名单清空。
+const PENDING = new Set([]);
 const META = /<meta\s+name=["']referrer["']\s+content=["']no-referrer["']\s*\/?>/i;
 
 const pages = () => fs.readdirSync(WEB).filter(f => f.endsWith('.html'));
@@ -30,6 +30,6 @@ test('index.html 是构建产物：模板里有，构建出来的页面里也要
   assert.ok(META.test(fs.readFileSync(path.join(WEB, 'index.html'), 'utf8')), 'index.html 没跟上，跑一次 node scripts/build-web.js');
 });
 
-test('还没补上的页面就这一个，多一个要先说明', () => {
-  assert.deepEqual([...PENDING], ['archive.html']);
+test('例外名单必须是空的：新加页面要么带 no-referrer，要么先说明为什么不能带', () => {
+  assert.deepEqual([...PENDING], []);
 });

@@ -388,7 +388,8 @@ function ensureBackground(opts) { if (read(opts.dir, opts.sessionId)) return fal
 
 // ===== 动作 =====
 // dismiss / restore / claim / save-draft 都不外发；send 是唯一会调写类工具的口。
-async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log = () => {}, hub = null, execImpl, dataDir }) {
+// confirmed 由调用方（路由）从请求体里读出来传进来：界面上点过确认才是 true。默认 false = 不发。
+async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log = () => {}, hub = null, execImpl, dataDir, confirmed = false }) {
   const file = fileOf(dir, sessionId), data = readJSON(file);
   if (!data) { const e = Error('这场会还没有处理台数据'); e.code = 404; throw e; }
   const card = (data.cards || []).find(c => c.id === id);
@@ -408,7 +409,10 @@ async function apply({ dir, sessionId, cardId: id, action, draft, env = {}, log 
     const d = sanitizeDraft(card.kind, draft, null);
     if (!['meeting', 'delegate'].includes(card.kind)) { const e = Error('这类卡不外发'); e.code = 400; throw e; }
     if (!d) { const e = Error('草稿是空的，没有可发的内容'); e.code = 400; throw e; }
-    const r = await send(card.kind, d, env, execImpl, log, dataDir, sessionId);
+    // 幂等（2026-09-22 X6）：已经发出去的卡不再发第二遍。连点两下、页面超时后重试、断线重连
+    // 各自都会再来一次同样的请求，以前每一次都是一条真的日历 / 一条真的飞书任务。
+    if (card.state === 'sent') return { card, actions: data, alreadySent: true };
+    const r = await send(card.kind, d, env, execImpl, log, dataDir, sessionId, confirmed);
     if (!r.ok) { const e = Error(r.error || '没发出去'); e.code = 400; throw e; }
     card.draft = d; card.state = 'sent'; card.sentAt = now();
     card.sentRef = { type: card.kind === 'meeting' ? 'calendar' : 'task', url: r.url || '', id: r.id || '' };
@@ -462,7 +466,10 @@ async function claimToHub(hub, card, sessionId) {
 
 // ===== 外发：整个模块只有这里会带 confirmedByUser 去调写类工具 =====
 // 命令行怎么拼、返回里哪个字段是链接，都在 app/tools/lark.js。这里只负责「把他改过的那份草稿交出去」。
-async function send(kind, d, env, execImpl, log, dataDir, sessionId) {
+// 2026-09-22（审查第 21 条）：confirmedByUser 以前写死 true，等于「只要走到这个函数就算人确认过」——
+// 服务端事后查不出人到底点没点。现在由路由从请求体的 confirmed 读出来一路传进来，没有就直接拒，一个工具都不调。
+async function send(kind, d, env, execImpl, log, dataDir, sessionId, confirmed = false) {
+  if (confirmed !== true) return { ok: false, error: '请在界面上确认后再发送（服务端没收到确认）' };
   const ctx = { env, dataDir, execImpl, log, caller: 'ui', sessionId, confirmedByUser: true };
   if (kind === 'meeting') {
     const slot = d.slots[Math.min(Math.max(d.pick || 0, 0), Math.max(d.slots.length - 1, 0))];

@@ -73,7 +73,8 @@
   async function pullFromMac(msgEl){
     const m = msgEl || $('#hist-msg'); if (m) m.textContent = T('pull_wait')||'从 Mac 找回中……';
     try {
-      const r = await fetch(relayBase()+'/export-state?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store'});
+      // 「从 Mac 找回」要把每一场的全文搬回本机，所以这一条显式要全量（D6 之后默认不带逐字稿）
+      const r = await fetch(relayBase()+'/export-state?full=1&token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store'});
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
       const have = new Set(state.sessions.map(x=>x.id));

@@ -313,9 +313,21 @@ test('路由与外发门禁：只有 do:"send" 会碰 lark-cli，其余动作和
     // 门禁：到这里为止，桩 lark-cli 的调用记录必须是空的
     assert.deepEqual(cli.calls(), [], '生成、读取、打叉、撤销、存草稿、认领，一次都不许外发');
 
+    // 21（2026-09-22）：没有 confirmed:true 的 send 直接 400，一个工具都不许调
+    const unconfirmed = await post('/meeting-action', {
+      id: sid, cardId: meeting.id, do: 'send',
+      draft: { ...meeting.draft, title: '没确认就想发', pick: 1 },
+    });
+    assert.equal(unconfirmed.ok, false);
+    assert.match(String(unconfirmed.error || ''), /确认/);
+    assert.deepEqual(cli.calls(), [], '没确认的 send 不许碰 lark-cli');
+    // confirmed:false 也一样（别只认「字段存在」）
+    assert.equal((await post('/meeting-action', { id: sid, cardId: meeting.id, do: 'send', draft: meeting.draft, confirmed: false })).ok, false);
+    assert.deepEqual(cli.calls(), [], 'confirmed:false 也不许外发');
+
     // 只有 send 会外发，而且只发页面传过来的那份草稿
     const sendBack = await post('/meeting-action', {
-      id: sid, cardId: meeting.id, do: 'send',
+      id: sid, cardId: meeting.id, do: 'send', confirmed: true,
       draft: { ...meeting.draft, title: '我改过的标题', pick: 1 },
     });
     assert.equal(sendBack.ok, true, sendBack.error || '');
@@ -332,11 +344,21 @@ test('路由与外发门禁：只有 do:"send" 会碰 lark-cli，其余动作和
     // 派发：飞书任务同样只在 send 这一下才发
     const del = A.cards.find(c => c.kind === 'delegate');
     if (del) {
-      const r = await post('/meeting-action', { id: sid, cardId: del.id, do: 'send', draft: del.draft });
+      const r = await post('/meeting-action', { id: sid, cardId: del.id, do: 'send', draft: del.draft, confirmed: true });
       assert.equal(r.ok, true, r.error || '');
       assert.equal(r.card.sentRef.type, 'task');
       assert.ok(cli.calls().map(x => JSON.parse(x)).some(a => a[0] === 'task' && a[1] === '+create'));
     }
+    // 幂等：同一张已发出的卡再点一次，不产生第二条日历
+    const before = cli.calls().length;
+    const again = await post('/meeting-action', {
+      id: sid, cardId: meeting.id, do: 'send', confirmed: true,
+      draft: { ...meeting.draft, title: '我改过的标题', pick: 1 },
+    });
+    assert.equal(again.ok, true);
+    assert.equal(again.card.state, 'sent');
+    assert.equal(cli.calls().length, before, '已发出的卡再点一次不许重发');
+
     // 不认识的动作一律拒绝，绝不落到外发上
     assert.match((await post('/meeting-action', { id: sid, cardId: meeting.id, do: 'evil' })).error, /未知的动作/);
     assert.equal((await post('/meeting-action', { id: sid, cardId: 'c-zzzzzzzzzzzz', do: 'dismiss' })).error, '卡片编号不对');

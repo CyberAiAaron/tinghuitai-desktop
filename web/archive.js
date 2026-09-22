@@ -441,7 +441,7 @@ async function actDo(cardId,action,draft){
   paintActions();
   try{
     const r=await fetch('/asr-relay/meeting-action?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({id,cardId,do:action,draft}),signal:AbortSignal.timeout(120000)});
+      body:JSON.stringify({id,cardId,do:action,draft,confirmed:action==='send'}),signal:AbortSignal.timeout(120000)});
     const j=await r.json();
     if(!j.ok)throw Error(j.error||T('没成','failed'));
     actData=j.actions;
@@ -732,7 +732,7 @@ async function takeSend(target, extra){
   btn.disabled=true; takeMsg(target==='slack'?'正在发到 Slack，走连接器会慢几秒…':'正在发…');
   try{
     const r=await fetch('/asr-relay/share-send?token='+tok(),{method:'POST',headers:{'content-type':'application/json'},
-      body:JSON.stringify({id,target,...extra}),signal:AbortSignal.timeout(200000)});
+      body:JSON.stringify({id,target,confirmed:true,...extra}),signal:AbortSignal.timeout(200000)});
     const j=await r.json();
     const where=target==='lark'?'飞书':'Slack';
     takeMsg(j.ok

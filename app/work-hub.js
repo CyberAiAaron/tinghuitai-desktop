@@ -2,6 +2,7 @@
 // Personal work hub: additive source ingestion; manually edited records always win.
 const fs=require('fs'),path=require('path'),crypto=require('crypto');
 const {execFile}=require('child_process');
+const pick=require('./transcript-pick');   // D5：同一场会在盘上有两份文件时留哪一份，规则只有这一份
 const hash=s=>crypto.createHash('sha256').update(String(s)).digest('hex').slice(0,24);
 const norm=s=>String(s||'').normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu,'');
 const now=()=>new Date().toISOString();
@@ -174,7 +175,7 @@ class Hub{
    if(s.title!==before){s.revision++;s.updated=now();changed++;}}   // 没变就不动 revision，免得别的端以为有更新
   if(changed)this.save();
   return {checked:list.length,fixed};}
- syncDisk(){let count=0;this.dirty=0;const pending=path.join(this.root,'pending');if(fs.existsSync(pending)){const map=new Map();for(const f of fs.readdirSync(pending)){if(!/^(sess|offline)-.*\.json(\.done)?$/.test(f))continue;try{const p=path.join(pending,f),s=JSON.parse(fs.readFileSync(p));const rank=(s.transcript?.length||0)+(s.summary?.length||0);if(!map.has(s.id)||map.get(s.id).rank<rank)map.set(s.id,{s,rank});}catch{count++;}}for(const {s}of map.values())this.ingestSession(s);}
+ syncDisk(){let count=0;this.dirty=0;const pending=path.join(this.root,'pending');if(fs.existsSync(pending)){const map=new Map();for(const f of fs.readdirSync(pending)){if(!/^(sess|offline)-.*\.json(\.done)?$/.test(f))continue;try{const p=path.join(pending,f),s=JSON.parse(fs.readFileSync(p));const prev=map.get(s.id);if(!prev||pick.better(prev.s,s)===s)map.set(s.id,{s});}catch{count++;}}for(const {s}of map.values())this.ingestSession(s);}
  const dirs=['录音归档'];for(const name of dirs){const dir=path.join(this.root,name);if(!fs.existsSync(dir))continue;for(const f of fs.readdirSync(dir)){if(!f.endsWith('.md')||/^(_test|\.)/.test(f))continue;try{this.ingestMarkdown(path.join(dir,f));}catch{count++;}}} this.data.sync.disk={at:now(),status:count?'partial':'ok',errors:count};this.organize();
  // D1：这个方法每 5 分钟被定时器叫一次，读完 98 份会议后无条件重写 12MB（正本 + previous 两遍，
  // 全是同步 IO，会中就是在卡事件循环）。绝大多数轮次每一份的 fingerprint 都没变、ingest 全部提前返回，

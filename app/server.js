@@ -10,6 +10,9 @@ const execFileP = util.promisify(execFile);
 const WebSocket = require('ws');
 const http = require('http');
 const journal = require('./session-journal');
+const sendGate = require('./send-gate');   // 真外发的确认 + 幂等门禁（X6），和 slack-share 同一套规矩
+const logRotate = require('./log-rotate');  // D7：events.log / usage.jsonl / view-feedback.jsonl 超 10MB 滚成 .1
+const transcriptPick = require('./transcript-pick');  // D5：同一场会「用哪份转写」的唯一一份规则
 const assistantCore = require('../web/assistant-core');
 const Busboy = require('busboy');
 
@@ -41,6 +44,8 @@ process.env.PATH = [path.dirname(fs.realpathSync(process.execPath)), path.join(H
 const PORT = Number(process.env.THT_PORT || 47823);
 const ENV_PATH = settings.file;
 const LOG_PATH = path.join(DATA,'events.log');
+// D7：三份追加型文件超过这个大小就滚成 .1（只留一份）。THT_LOG_MAX_BYTES 只给测试调小用。
+const LOG_MAX_BYTES = Math.max(1024, Number(process.env.THT_LOG_MAX_BYTES || 10 * 1024 * 1024));
 const STATIC_DIR = path.join(__dirname,'../web');
 const INDEX_HTML = path.join(STATIC_DIR,'index.html');
 const contextPack = require('./context-pack');
@@ -51,11 +56,12 @@ const PENDING_DIR = path.join(DATA,'pending');
 const replayRuns = new Set();
 const replayStates = new Map();
 const AUDIO_DIR = path.join(DATA,'audio');
-const RECONNECT_GRACE_MS = 10 * 60000;   // 断线 10 分钟内重连续场
-const SILENCE_END_MS = 12 * 60000;       // 12 分钟无 final 收尾
+// 两个收尾阈值只在测试进程（THT_TEST）里允许用环境变量调短，生产永远是 10 / 12 分钟。
+const RECONNECT_GRACE_MS = (process.env.THT_TEST && Number(process.env.THT_GRACE_MS) > 0) ? Number(process.env.THT_GRACE_MS) : 10 * 60000;   // 断线 10 分钟内重连续场
+const SILENCE_END_MS = (process.env.THT_TEST && Number(process.env.THT_SILENCE_MS) > 0) ? Number(process.env.THT_SILENCE_MS) : 12 * 60000;       // 12 分钟无 final 收尾
 const QUEUE_MAX_SEC = 600;               // 火山断线期间最多缓存 10 分钟音频，重连后回灌补转
 
-function log(m) { try { fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} }
+function log(m) { try { logRotate.rotateIfBig(LOG_PATH, { max: LOG_MAX_BYTES }); fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} }
 // 本地免 token：⚠️ tailscale serve/funnel 是本机反代，会把外网请求也转发到 127.0.0.1，光看 remoteAddress 会把 funnel 流量误判成本地——
 // 所以额外要求「没有代理头」：serve/funnel 转发时会带 x-forwarded-for/x-forwarded-proto，真正直连 127.0.0.1 的浏览器请求不会有这些头。
 // 手机口令：主口令之外，settings 里的 PHONE_TOKENS 也算数（数组或逗号分隔，短于 24 位的不认）。
@@ -124,12 +130,23 @@ const llm = require('./llm');
 // 用量账本：所有花 token 的地方在花费那一刻记一笔，成本只从这本账汇总（不然子任务和收敛会被重复算）。
 // 记一笔的口径在 app/llm.js（noteUsage），会后管线经 app/llm-bridge.js 写的是同一个文件、同一种行。
 const USAGE_LOG = path.join(DATA, 'state', 'usage.jsonl');
+// D7（2026-09-22）：/meetings 每打开一次就把 usage.jsonl 整读一遍并逐行 JSON.parse。
+// 这份账只会往后追加，所以按 (mtimeMs, size) 做缓存：两个数都没变就直接用上次的汇总。
+// 同时在这里顺手轮转——真正往里写的是 app/llm.js（另一路在改，不动它），它每次按路径 append，
+// 这边 rename 成 .1 之后它下一次 append 会自然建一份新的。
+let usageCache = { key: '', value: null };
 function usageBySession() {
+  logRotate.rotateIfBig(USAGE_LOG, { max: LOG_MAX_BYTES });
+  let key = '';
+  try { const st = fs.statSync(USAGE_LOG); key = st.mtimeMs + ':' + st.size; } catch (e) { key = 'none'; }
+  if (key && usageCache.key === key && usageCache.value) return usageCache.value;
   const out = {}; try {
     for (const line of fs.readFileSync(USAGE_LOG, 'utf8').split('\n')) { if (!line) continue; let e; try { e = JSON.parse(line); } catch (x) { continue; }
       const k = e.sessionId || '_'; const o = out[k] || (out[k] = { tokensIn: 0, tokensOut: 0, calls: 0, estimated: false });
       o.tokensIn += e.in || 0; o.tokensOut += e.out || 0; o.calls++; if (e.est) o.estimated = true; }
-  } catch (e) {} return out;
+  } catch (e) {}
+  usageCache = { key, value: out };
+  return out;
 }
 // —— 模型健康状态（N-01 / REQ-008 ①）——
 // 09-18 那场：Claude 命令行被账号侧拒绝 48 分钟、备用 API 欠费，要点 0 条，页面一个字都没提示，两天后才发现。
@@ -235,7 +252,14 @@ class Session {
     // 每 4 分钟按最近说过的话重新检索一次，让调出来的旧决定跟得上当前话题。
     this.memoryTimer = setInterval(() => this.refreshMemory(), 240000);
     if (this.memoryTimer.unref) this.memoryTimer.unref();
-    this.endTimer = setInterval(() => { if (Date.now() - this.lastAudioTs > SILENCE_END_MS) this.finalize('12min未收到音频'); }, 60000);
+    // R1（2026-09-22）：12 分钟没收到音频就自动收尾，这条原来不看连接状态。
+    // 手机锁屏 / 切到后台时 WS 还连着、只是没有音频上行，解锁回来会已经被结掉，后半场全丢且页面无感。
+    // 规矩改成：这场只要还有一个 OPEN 的说话人连接，就不自动收尾——真断了会走 removeClient 那条 10 分钟宽限。
+    this.endTimer = setInterval(() => {
+      if (Date.now() - this.lastAudioTs <= SILENCE_END_MS) return;
+      if (this.hasOpenSpeaker()) { if (!this.silentNoted) { this.silentNoted = true; log('12min 无音频但说话人还连着，不自动收尾 ' + this.id); } return; }
+      this.finalize('12min未收到音频');
+    }, Math.min(60000, SILENCE_END_MS));
     this.stalled = false;
     this.stallTimer = setInterval(() => this.checkStall(), 15000);   // 90秒无 final 或火山连接断开 → 主动推 stall，别只写日志（2026-09-04 0730 信 漏洞3）
     this.journalTimer=setInterval(()=>this.checkpoint(),5000);
@@ -303,6 +327,13 @@ class Session {
   }
   addClient(ws) { this.clients.add(ws);if(this.audioSaveError&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'error',message:this.audioSaveError})); }
   removeClient(ws) { this.clients.delete(ws); }
+  // R1 / R2（2026-09-22）：会不会「自动收尾」要看这场还有没有活着的说话人连接。
+  // 观众（role=view）不算——旁听的人开着页面不代表会还在开；反过来，手机锁屏后 WS 还连着、
+  // 只是暂时没有音频，那是「还在开会」，12 分钟静音不该把它判死。
+  hasOpenSpeaker() {
+    for (const c of this.clients) if (c && c.__thtRole === 'speaker' && c.readyState === WebSocket.OPEN) return true;
+    return false;
+  }
   broadcast(o) { const s = JSON.stringify(o); for (const c of this.clients) { try { if (c.readyState === WebSocket.OPEN) c.send(s); } catch (e) {} } }
   snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names } }; }
   // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
@@ -706,7 +737,12 @@ class Session {
     if (!lines.length) return; larkPush((en ? '🎙️ Live alert\n' : '🎙️ 会中提醒\n') + lines.slice(0, 5).join('\n')); this.lastPushTs = Date.now(); log('push ' + Math.min(lines.length, 5));
   }
   endVolc() { if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN) { try { this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, NEG_WITH_SEQ, Buffer.alloc(0), -this.seq, false)); } catch (e) {} setTimeout(() => { try { this.volcWs.close(); } catch (e) {} }, 1200); } }
-  scheduleGrace(reason) { if (this.finalized) return; if (this.graceTimer) clearTimeout(this.graceTimer); this.graceTimer = setTimeout(() => this.finalize(reason), RECONNECT_GRACE_MS); log(`grace ${Math.round(RECONNECT_GRACE_MS / 60000)}min ${this.id}`); }
+  // R2（2026-09-22）：旧连接的 close 事件可能晚于新连接的 start 到达（手机切网、页面刷新都会这样）。
+  // 那时这场其实已经有一条新的说话人连接在跑了，却还是被装上 10 分钟收尾定时器；
+  // 中间只要没人再动它，一条正在开的会就被结掉。所以：还有 OPEN 的说话人连接就不装。
+  scheduleGrace(reason) { if (this.finalized) return;
+    if (this.hasOpenSpeaker()) { log('还有在线的说话人连接，不装收尾定时器 ' + this.id); return; }
+    if (this.graceTimer) clearTimeout(this.graceTimer); this.graceTimer = setTimeout(() => this.finalize(reason), RECONNECT_GRACE_MS); log(`grace ${Math.round(RECONNECT_GRACE_MS / 60000)}min ${this.id}`); }
   cancelGrace() { if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; log('grace cancelled (续场) ' + this.id); } }
   async closeAudio() {
     if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.closeSync(this.audioFd); } catch (e) {} this.audioFd = null; }
@@ -842,8 +878,26 @@ function pendingFileFor(sid) {
   return fs.existsSync(offline) ? offline : '';
 }
 
+// 离线回传：手机 / 浏览器把整场记录送回来存盘。
+// R6（2026-09-22）：以前 enqueue 抛错（最常见的是「这场正在归档」）会让整个函数 return false，
+//   路由回 400「保存失败」——可会议其实已经写进 pending 了，人被吓得再传一遍。7 天里出现 68 次。
+//   现在存盘和排队分开：存盘成功就算成功，排队失败只在响应里说一句。
+// D5（2026-09-22）：顺手停掉往 exports/ 再写一份 `听会台_..._离线回传.json` 的调试残留——
+//   同一份内容盘上已经有 pending 那份，这份没有任何读者，只是让「同一场有几份」这个问题更难回答。
 function saveOfflineSession(body) {
-  try { const s = JSON.parse(body); const dir = path.join(DATA,'exports'); fs.mkdirSync(dir, { recursive: true }); const ts = String(s.start || new Date().toISOString()).replace(/[-:TZ.]/g, '').slice(0, 12); const title = String(s.title || '听会台离线场次').replace(/[\/\\:*?"<>|\n]/g, '_').slice(0, 40); fs.mkdirSync(PENDING_DIR, { recursive: true }); if(typeof s.id!=='string'||!s.id||s.id.length>100)throw Error('Invalid session id');const f=path.join(PENDING_DIR,'offline-'+crypto.createHash('sha256').update(s.id).digest('hex').slice(0,24)+'.json');journal.write(f,s); if (s.transcript?.length) { meetingPipeline.enqueue(s); } fs.writeFileSync(path.join(dir, `听会台_${ts}_${title}_离线回传.json`), JSON.stringify(s, null, 1)); return true; } catch (e) { log('saveOffline fail ' + e.message); return false; }
+  try {
+    const s = JSON.parse(body);
+    if (typeof s.id !== 'string' || !s.id || s.id.length > 100) throw Error('Invalid session id');
+    fs.mkdirSync(PENDING_DIR, { recursive: true });
+    const f = path.join(PENDING_DIR, 'offline-' + crypto.createHash('sha256').update(s.id).digest('hex').slice(0, 24) + '.json');
+    journal.write(f, s);
+    let queued = true, reason = '';
+    if (s.transcript?.length) {
+      try { meetingPipeline.enqueue(s); }
+      catch (e) { queued = false; reason = String(e.message || e).slice(0, 200); log('offline session 已存盘，但没能排进会后整理：' + reason); }
+    } else { queued = false; reason = '这场没有转写内容，不需要会后整理'; }
+    return { ok: true, queued, reason };
+  } catch (e) { log('saveOffline fail ' + e.message); return { ok: false, queued: false, reason: String(e.message || e).slice(0, 200) }; }
 }
 
 // multipart/form-data { title?, audio: file(.m4a/.mp3/.wav/.aac) } -> 落盘 audio/import-<ts>.<ext> -> 立即回 {ok:true} -> 后台转 wav + 离线识别（带说话人）
@@ -1016,8 +1070,10 @@ const memRetryTimer=setInterval(()=>{
     if(LLM_HEALTH.down)return;   // 模型整段不可用时不试，免得把重试次数白白烧完
     const ops=require('./memory-ops');const ids=ops.failedMeetings(DATA,3);if(!ids.length)return;
     for(const id of ids){
-      const f=path.join(PENDING_DIR,'sess-'+id+'.json');let sess=null;
-      try{sess=JSON.parse(fs.readFileSync(f,'utf8'));}catch(e){ops.skipRetry(DATA,id,'原始记录已不在');log('记忆补跑跳过（原始记录已不在）'+id);continue;}
+      // S1（2026-09-22）：这里原来写死 sess-<id>.json。导入音频的会落盘名是 offline-<sha>.json，
+      // 于是这类会每一轮都读不到文件 → 记 skipRetry → 三次打满，永久没记忆，界面上也没有重试入口。
+      const f=pendingFileFor(id);let sess=null;
+      try{if(!f)throw Error('no pending file');sess=JSON.parse(fs.readFileSync(f,'utf8'));}catch(e){ops.skipRetry(DATA,id,'原始记录已不在');log('记忆补跑跳过（原始记录已不在）'+id);continue;}
       if(!sess||!(sess.transcript||[]).length){ops.skipRetry(DATA,id,'没有转写');continue;}
       log('记忆补跑 '+id);
       ops.ingest(DATA,sess,(sysP,userP)=>askModel(loadEnv(),sysP,userP,2000,'post'),log)
@@ -1069,6 +1125,20 @@ async function handleRequest(req, res) {
       return send(200, out);
     } catch (e) { return send(500, { error: String(e.message || e).slice(0, 200) }); }
   }
+  // X6（2026-09-22）：/sharing/bundle/lark 会真的在飞书里建一份文档，原来只认口令。
+  // 在这里先把「人点过确认」这一条闸关上，再把请求交给 share-bundles（那边的 larkStatus / running
+  // 已经自带「同一个 key 不重跑」，不再叠第二套幂等）。为了不吞掉请求体，读完之后原样回放给它。
+  if(p.replace(/^\/asr-relay/,'')==='/sharing/bundle/lark' && req.method==='POST'){
+    const send=(code,j)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
+    if(!authed){send(401,{error:'请连接 Mac'});return;}
+    let raw=''; try{ for await (const c of req){ raw+=c; if(Buffer.byteLength(raw)>1e6) throw Error('请求过长'); } }catch(e){ send(400,{error:e.message}); return; }
+    let body={}; try{ body=JSON.parse(raw||'{}'); }catch(e){ send(400,{error:'格式不对'}); return; }
+    try{ sendGate.requireConfirmed(body); }catch(e){ send(400,{error:e.message}); return; }
+    const replay=Object.create(req);   // method / headers / url 走原型链拿原来那份，只把「读body」换成回放
+    replay[Symbol.asyncIterator]=async function*(){ yield raw; };
+    if(await shareBundles.route(replay,res,u,authed))return;
+    return;
+  }
   if(p.replace(/^\/asr-relay/,'').startsWith('/sharing/bundle') && await shareBundles.route(req,res,u,authed))return;
   if(p.endsWith('/sharing/lark') && req.method==='POST'){
     const send=(status,j)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(j));};
@@ -1109,6 +1179,18 @@ async function handleRequest(req, res) {
     // tailscaled 一起重启 → 正在跑的请求当场被杀。一小时内重启 5 次，5 次都能对上探活失败那一行。
     // 会中的模型调用绝不跨进程：那台服务的存活由一个 8 秒探针说了算，不能交给它做长活。
     if (up && LOCAL_ONLY_HUB.has(sub)) up = '';
+    // X1（2026-09-22）：鉴权必须发生在反代之前。此前是「先代理，代理时还把客户端口令换成上游口令」，
+    // 等于任何网页对 127.0.0.1:<端口>/hub/* 发一个简单 POST 就能拿上游全权改工作台（批量忽略、注入假待办 / 假会议）。
+    // 现在：没有合法口令（也不是本机同源）直接 401，一个字节都不往上游发。
+    if (!authed) { res.writeHead(401, {'Content-Type':'application/json','Cache-Control':'no-store'}); res.end(JSON.stringify({error:'请输入听会台中转口令'})); return; }
+    // 同源校验也提到代理之前：work-hub.route 里有这条（origin.host 必须等于 host），但走代理时它根本不会执行，
+    // 跨站页面的写请求会被「洗」成一条看起来同源的上游请求。放在这里 = 代理和本地两条路过同一道闸。
+    // 不把原始 Origin 原样透传给上游：上游拿它自己的 Host（3101）去比，每一条合法的代理 POST 都会被它 403。
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers.origin) {
+      let sameOrigin = false;
+      try { sameOrigin = new URL(req.headers.origin).host === String(req.headers.host || ''); } catch (e) { sameOrigin = false; }
+      if (!sameOrigin) { res.writeHead(403, {'Content-Type':'application/json','Cache-Control':'no-store'}); res.end(JSON.stringify({error:'origin mismatch'})); return; }
+    }
     if (up) { if (await proxyHub(req,res,u,up)) return; }   // 上游连不上就退回本地，工作台不至于打不开
     await workHub.route(req,res,u,authed); return;
   }
@@ -1148,13 +1230,17 @@ async function handleRequest(req, res) {
     require('./updater').check().then(r=>{res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(r&&{ok:r.ok,current:r.current,latest:r.latest,hasUpdate:r.hasUpdate,notes:r.notes,released:r.released,error:r.error,prev:require('./updater').prevVersion(),prevInfo:require('./updater').prevInfo()}));})
       .catch(e=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     return;}
+  // X4（2026-09-22）：换程序文件必须在本机当面点。原来只认 token——手机口令、被转发的带 token 链接，
+  // 都能远程触发一次「下载并覆盖整个 app 目录」。更新与回退都归到这条。
   if(req.method==='POST'&&p.endsWith('/update')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    if(!isLocalReq(req)){res.writeHead(403,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'更新只能在这台电脑上操作：'+localReqReason(req)}));}
     if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再更新'}));}
     require('./updater').apply(m=>log('update: '+m),()=>![...SESSIONS.values()].some(s=>!s.finalized)).then(r=>{log('update done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r,restarting:true}));relaunchAfterUpdate();})
       .catch(e=>{log('update fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
     return;}
   // 回到上一版：更新前留的那份原样搬回来
   if(req.method==='POST'&&p.endsWith('/update-rollback')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
+    if(!isLocalReq(req)){res.writeHead(403,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({ok:false,error:'回退只能在这台电脑上操作：'+localReqReason(req)}));}
     if([...SESSIONS.values()].some(s=>!s.finalized)){res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:false,error:'正在录音，结束本场后再回退'}));}
     require('./updater').rollback(m=>log('rollback: '+m)).then(r=>{log('rollback done '+JSON.stringify(r));res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,...r,restarting:true}));relaunchAfterUpdate();})
       .catch(e=>{log('rollback fail '+e.message);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:String(e.message||e)}));});
@@ -1419,11 +1505,10 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
         let x; try { x = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, f), 'utf8')); } catch (e) { continue; }
         const id = String(x.id || '');
         if (!id || gone.has(id)) continue;
-        // 同一场可能同时有 sess- 和 offline- 两份。留信息多的那份：
-        // 有收敛/过审结果的优先，其次转写更长的。留错了会把「已整理」显示成「没整理」。
-        const score = (o) => (o.condensed ? 4 : 0) + (o.review ? 2 : 0) + ((o.transcript || []).length ? 1 : 0);
+        // 同一场可能同时有 sess- 和 offline- 两份。留信息多的那份，规则在 app/transcript-pick.js
+        // （D5：这条规则原来在三个地方各写一份）。留错了会把「已整理」显示成「没整理」。
         const dupIdx = rows.findIndex(r => r.id === id);
-        if (dupIdx >= 0) { if (score(x) <= score(rows[dupIdx].__raw)) continue; rows.splice(dupIdx, 1); }
+        if (dupIdx >= 0) { if (transcriptPick.better(rows[dupIdx].__raw, x) !== x) continue; rows.splice(dupIdx, 1); }
         const live = SESSIONS.has(id) && !SESSIONS.get(id).finalized;
         const t = titles[id] || {};
         const d = MS.describe(x, jobs.get(id), memCounts.get(id) || 0, live, lang, memStates.get(id) || '');
@@ -1513,7 +1598,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (rating === null) return reply(400, { ok: false, error: 'rating 只能是 useful / useless / adopt / 空' });
     const rec = { at: new Date().toISOString(), sessionId: String(j.sessionId || '').slice(0, 80), id: String(j.id || '').slice(0, 80), kind: String(j.kind || '').slice(0, 10), claim: String(j.claim || '').slice(0, 300), rating, comment: String(j.comment || '').replace(/\s+/g, ' ').slice(0, 300) };
     if (!rec.claim && !rec.id) return reply(400, { ok: false, error: '缺 claim' });
-    try { fs.mkdirSync(path.dirname(VIEW_FEEDBACK_LOG), { recursive: true }); fs.appendFileSync(VIEW_FEEDBACK_LOG, JSON.stringify(rec) + '\n'); } catch (e) { return reply(500, { ok: false, error: '账本写不进去：' + e.message }); }
+    try { fs.mkdirSync(path.dirname(VIEW_FEEDBACK_LOG), { recursive: true }); logRotate.rotateIfBig(VIEW_FEEDBACK_LOG, { max: LOG_MAX_BYTES, everyMs: 0 }); fs.appendFileSync(VIEW_FEEDBACK_LOG, JSON.stringify(rec) + '\n'); } catch (e) { return reply(500, { ok: false, error: '账本写不进去：' + e.message }); }
     const sess = SESSIONS.get(rec.sessionId);
     if (sess) { const same = x => (rec.id && x.id) ? x.id === rec.id : x.claim === rec.claim; sess.viewFeedback = (sess.viewFeedback || []).filter(x => !same(x)); if (rating || rec.comment) sess.viewFeedback.push(rec); const it = (sess.factchecks || []).find(x => x && (rec.id ? x.id === rec.id : x.claim === rec.claim)); if (it) { it.rating = rating; it.comment = rec.comment; } }
     return reply(200, { ok: true, live: !!sess });
@@ -1637,7 +1722,11 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       const pick = event.candidates.find(c => c.eventId === chosen);
       if (pick) { sess.calendar.event = { ...event, ...pick, confidence: 'high', chosenByUser: true }; event = sess.calendar.event; }
     } else if (event && chosen === event.eventId) { event.confidence = 'high'; event.chosenByUser = true; }
-    try { const f = path.join(PENDING_DIR, 'sess-' + sess.id + '.json'); if (sess.id && fs.existsSync(f)) { const cur = JSON.parse(fs.readFileSync(f,'utf8')); cur.calendar = sess.calendar; fs.writeFileSync(f, JSON.stringify(cur)); } } catch (e) {}
+    // D4（2026-09-22）：这里原来是裸 writeFileSync——没有 tmp+rename，也没有 fsync。
+    // 写到一半断电 / 进程被杀，读方 JSON.parse 失败，这场会就从列表里消失一次。
+    // 现在走 journal 的原子写，而且只动 calendar 这一个字段：读最新那份再改，不拿手上这份旧快照整份写回
+    // （会中调 /calendar-match 的话，手上这份的 transcript 会比盘上那份少最后几分钟）。
+    try { const f = sess.id ? pendingFileFor(sess.id) : ''; if (f) { const cur = journal.read(f); if (cur) journal.write(f, { ...cur, calendar: sess.calendar }); } } catch (e) {}
     return event;
   }
   // ===== 回看页（REQ-004）：补跑结构化总结 / 读进度 / 存「需要你定一下」的回答 =====
@@ -1772,10 +1861,14 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
     const sid = String(j.id || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
     const cardId = String(j.cardId || ''); if (!/^c-[0-9a-f]{12}$/.test(cardId)) return reply(400, { ok:false, error:'卡片编号不对' });
+    // X6 / 21（2026-09-22）：do:'send' 是这条路上唯一会真外发的动作（建日历、派飞书任务）。
+    // 「人在界面上点了确认」必须由请求带进来，服务端不再自己假设；没带就 400，一个工具都不调。
+    // 幂等在 actions.apply 里：已经是 sent 的卡不再发第二遍（连点两下 / 断线重试都只发一次）。
+    if (String(j.do || '') === 'send' && j.confirmed !== true) return reply(400, { ok:false, error:'请在界面上确认后再发送（服务端没收到确认）' });
     try {
       const out = await withMeetingLock(sid, () => actions.apply({
         dir: ACTIONS_DIR, sessionId: sid, cardId, action: String(j.do || ''), draft: j.draft,
-        env: loadEnv(), log, hub: workHub && workHub.hub, dataDir: DATA,
+        env: loadEnv(), log, hub: workHub && workHub.hub, dataDir: DATA, confirmed: j.confirmed === true,
       }));
       log('meeting-action ' + sid + ' ' + cardId + ' ' + j.do);
       return reply(200, { ok:true, card: out.card, actions: out.actions });
@@ -1786,14 +1879,19 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
     const sid = String(u.searchParams.get('id') || '');
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok:false, error:'会议编号不对' });
-    let sess; try { sess = JSON.parse(fs.readFileSync(path.join(PENDING_DIR, 'sess-' + sid + '.json'), 'utf8')); } catch (e) { return reply(404, { ok:false, error:'找不到这场会议' }); }
+    const sessFile = pendingFileFor(sid);
+    let sess = sessFile ? journal.read(sessFile) : null;
+    if (!sess) return reply(404, { ok:false, error:'找不到这场会议' });
     if (req.method === 'POST') {
       const parts = []; for await (const c of req) { parts.push(c); if (Buffer.concat(parts).length > 4000) return reply(413, { ok:false, error:'太长' }); }
       let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
       const chosen = String(j.eventId || '').slice(0, 120);
       if (!chosen) return reply(400, { ok:false, error:'缺 eventId（或 none）' });
       sess.calendar = { ...(sess.calendar || {}), chosen, checkedAt: 0 };   // 清掉缓存，按你的选择重算
-      try { fs.writeFileSync(path.join(PENDING_DIR, 'sess-' + sid + '.json'), JSON.stringify(sess)); } catch (e) {}
+      // D4（2026-09-22）：原来是裸 writeFileSync，把上面读到的那份整个写回去。
+      // 会中点「这场是哪个日历会」时，盘上那份已经比手上这份多了几分钟转写，一写就抹掉。
+      // 现在原子写，而且只覆盖 calendar 一个字段。
+      try { const cur = journal.read(sessFile) || sess; journal.write(sessFile, { ...cur, calendar: sess.calendar }); } catch (e) {}
     } else if (u.searchParams.get('refresh') === '1') { const keep = sess.calendar && sess.calendar.chosen; sess.calendar = keep ? { chosen: keep } : undefined; }
     const ev = await calendarMatch(sess);
     return reply(200, { ok:true, event: ev, reason: (sess.calendar||{}).reason || '', chosen: (sess.calendar||{}).chosen || null });
@@ -1820,8 +1918,8 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       try { done = meetingPipeline.result(sid); } catch (e) {}
       if (!pend && !done) throw Object.assign(new Error('找不到这场会议'), { code: 404 });
       const m = { ...(pend || {}), ...(done || {}) };
-      // 逐字稿以条数多的那份为准：归档那份做过纠错合并，pending 那份可能更全
-      if ((pend?.transcript?.length || 0) > (done?.transcript?.length || 0)) m.transcript = pend.transcript;
+      // 逐字稿以条数多的那份为准：归档那份做过纠错合并，pending 那份可能更全（规则同在 app/transcript-pick.js）
+      m.transcript = transcriptPick.pickTranscript(pend, done);
       m.condensed = pend?.condensed || done?.condensed || null;
       m.review = pend?.review || done?.review || null;
       m.title = done?.topicTitle || pend?.topicTitle || done?.title || pend?.title || '';
@@ -1859,18 +1957,28 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const parts = []; let size = 0;
     for await (const c of req) { parts.push(c); size += c.length; if (size > 20000) return reply(413, { ok: false, error: '请求太长' }); }
     let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+    // 没有确认就 400，且在这之前不读会议、不拼正文、不碰任何外发命令
+    if (j.confirmed !== true) return reply(400, { ok: false, error: '请在界面上确认后再发送（服务端没收到确认）' });
     try {
       const sess = loadSession(String(j.id || ''));
       try { await calendarMatch(sess); } catch (e) {}
       const md = share.buildMarkdown(sess, noteOf(sess));
       const to = String(j.target || '');
-      let r = null;
-      if (to === 'lark') r = await share.sendLark(md, String(j.chatId || 'self'), loadEnv().THT_ARCHIVE_OWNER_ID || '');
-      else if (to === 'slack') r = await share.sendSlack(md, String(j.channel || 'self'));
-      else return reply(400, { ok: false, error: '不认识这个去处' });
-      log('分享成功 ' + to + ' ' + (j.chatId || j.channel || 'self') + (r && r.attached === false ? '（附件没发成：' + r.why + '）' : ''));
+      const where = String(j.chatId || j.channel || 'self');
+      if (!['lark', 'slack'].includes(to)) return reply(400, { ok: false, error: '不认识这个去处' });
+      // X6（2026-09-22）：这条是真外发（飞书私聊 / Slack 频道）。之前只认口令，服务端查不出人点没点确认，
+      // 而且同一份纪要连点两下会真发两遍。门禁和 /sharing/slack/send 同一套，见 app/send-gate.js。
+      const r = await sendGate.send({
+        dataDir: DATA, kind: 'share-send', body: j, meta: { target: to, where, id: sess.id },
+        key: [to, where, sess.id, sendGate.hash(md)],
+        run: () => to === 'lark'
+          ? share.sendLark(md, where, loadEnv().THT_ARCHIVE_OWNER_ID || '')
+          : share.sendSlack(md, where),
+      });
+      if (r.alreadySent) { log('分享跳过（这份内容已发过）' + to + ' ' + where); return reply(200, { ok: true, where: to, attached: r.attached !== false, why: r.why || '', alreadySent: true }); }
+      log('分享成功 ' + to + ' ' + where + (r && r.attached === false ? '（附件没发成：' + r.why + '）' : ''));
       return reply(200, { ok: true, where: to, attached: !(r && r.attached === false), why: (r && r.why) || '' });
-    } catch (e) { log('分享失败 ' + e.message); return reply(200, { ok: false, error: String(e.message).slice(0, 300) }); }
+    } catch (e) { log('分享失败 ' + e.message); return reply(200, { ok: false, error: String(e.message).slice(0, 300), uncertain: !!e.uncertain }); }
   }
   // 会后过一遍：保存你对收敛结果的逐条判断，并落两份产物
   if (p.endsWith('/review')) {
@@ -2024,9 +2132,26 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     // 2026-09-11 踩过：pid 文件是陈旧的，按它杀进程杀错了，老服务继续跑了一整天，
     // 改完的服务端代码一直没生效，而界面因为是从磁盘读的看起来像已经更新。
     pid: process.pid, startedAt: SERVER_STARTED_AT, version: SERVER_VERSION, assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>j.status==='error'||(j.status==='partial'&&!(j.summaryGenerated&&j.fullTextVerified))).length   /* 总结已出、全文已核、只剩「转写有缺口」告警的，是完成不是待处理（2026-09-15 Aaron 定） */   /* empty 是终态，不算待处理 */ })); }
-  if (req.method === 'GET' && p.endsWith('/export-state')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(buildExportState())); }
+  // D6（2026-09-22）：默认不带逐字稿。原来这条路把 pending 里近百场的逐字稿整个打包，约 9MB，
+  // 而首页启动时要的只是最新那一场。四种用法：
+  //   ?latest=1   只回最新一场，带逐字稿（首页启动用这个）
+  //   ?ids=a,b    只回点名的这几场，带逐字稿（恢复某一场用）
+  //   ?full=1     老行为：全部场次全文（「从 Mac 找回」要把每一场都搬回本机，仍然需要）
+  //   不带参数     全部场次的索引：transcript 是空数组，另给 transcriptCount
+  if (req.method === 'GET' && p.endsWith('/export-state')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const ids = String(u.searchParams.get('ids') || '').split(',').map(x => x.trim()).filter(Boolean);
+    const latest = u.searchParams.get('latest') === '1', full = u.searchParams.get('full') === '1';
+    let list = buildExportState().sessions;
+    if (ids.length) { const want = new Set(ids); list = list.filter(s => want.has(String(s.id))); }
+    else if (latest) list = list.slice(-1);   // 列表按 start 升序，最后一条就是最新一场
+    if (!(full || latest || ids.length))
+      list = list.map(s => ({ ...s, transcript: [], transcriptCount: (s.transcript || []).length, transcriptOmitted: true }));
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ v: 1, sessions: list }));
+  }
   if (req.method === 'POST' && p.endsWith('/audio')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } res.writeHead(409,{'Content-Type':'application/json'});return res.end(JSON.stringify({error:'首版未安装离线音频转写。请使用实时转写或导入文字。'})); }
-  if (req.method === 'POST' && p.endsWith('/session')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } let parts = [], size = 0, big = false; req.on('data', c => { parts.push(c); size += c.length; if (size > 5e6) { big = true; req.destroy(); } }); req.on('end', () => { const body = Buffer.concat(parts).toString('utf8'); if (big) { res.writeHead(413); return res.end('too large'); } const ok = saveOfflineSession(body); log('offline session ' + (ok ? 'saved' : 'FAIL')); res.writeHead(ok ? 200 : 400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok })); }); return; }
+  if (req.method === 'POST' && p.endsWith('/session')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } let parts = [], size = 0, big = false; req.on('data', c => { parts.push(c); size += c.length; if (size > 5e6) { big = true; req.destroy(); } }); req.on('end', () => { const body = Buffer.concat(parts).toString('utf8'); if (big) { res.writeHead(413); return res.end('too large'); } const r = saveOfflineSession(body); log('offline session ' + (r.ok ? 'saved' : 'FAIL') + (r.ok && !r.queued ? '（未排队：' + r.reason + '）' : '')); res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: r.ok, queued: r.queued, reason: r.reason || undefined })); }); return; }
   if (req.method === 'POST' && p.endsWith('/archive')) { if (!authed) { res.writeHead(401); return res.end('unauthorized'); } let parts = [], size = 0, big = false; req.on('data', c => { parts.push(c); size += c.length; if (size > 8e6) { big = true; req.destroy(); } }); req.on('end', () => { const body = Buffer.concat(parts).toString('utf8'); if (big) { res.writeHead(413, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'too large' })); } try { const j = JSON.parse(body || '{}'); if (!j.md && !j.session) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'need md or session' })); } const r = queueArchive(j); log('archive ' + r.target + ' queued ' + r.sid); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, ...r })); } catch (e) { log('archive exc ' + e.message); res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: e.message })); } }); return; }
   res.writeHead(404); res.end('not found');
 }
@@ -2051,7 +2176,7 @@ wss.on('connection', (ws, req) => {
       let msg; try { msg = JSON.parse(data.toString()); } catch (e) { return; }
       if (msg.type === 'view') { attachView(); return; }
       if (msg.type === 'start') {
-        role = 'speaker'; rate = Number(msg.rate)||16000; const sid = msg.sessionId || null;
+        role = 'speaker'; ws.__thtRole = 'speaker'; rate = Number(msg.rate)||16000; const sid = msg.sessionId || null;   // R1/R2：收尾前要能数出「这场还有几个在线的说话人连接」
         if((sid&&!/^[a-zA-Z0-9_-]{1,100}$/.test(sid))||rate<8000||rate>192000){ws.close(4400,'invalid session');return;}
         if(sid&&(SESSIONS.get(sid)?.finalized||SESSIONS.get(sid)?.finalizing||journal.read(path.join(DATA,'state','live-sessions',sid+'.json'))?.complete)){ws.close(4409,'session is ending');return;}
         if (sid && SESSIONS.has(sid)) {
@@ -2129,4 +2254,32 @@ if (MEMORY_PROJECTION_DIR && !process.env.THT_TEST) {
 }
 server.listen(PORT, '127.0.0.1', () => log(`asr-relay v2.3 listening on 127.0.0.1:${PORT}`));
 
-if (!process.env.THT_TEST) { setTimeout(()=>{try{workHub.hub.syncDisk();workHub.hub.syncIndex();}catch(e){log('hub sync '+e.message);}},2000); setInterval(()=>{try{workHub.hub.syncDisk();const last=workHub.hub.data.sync.index?.at;if(!last||Date.now()-Date.parse(last)>6*3600000)workHub.hub.syncIndex();}catch(e){log('hub sync '+e.message);}},5*60000).unref(); }
+// D1 + R7（2026-09-22）：这个定时器每 5 分钟把 pending 目录里近百份会议整读一遍，再整份重写 work-hub.json
+// （正本 + previous 两遍，12MB，全是同步 IO）。两种情况它纯属白跑还要卡住事件循环：
+//   1) 配了 HUB_UPSTREAM——本地这份库根本没人读，真源在上游那台，/hub 请求全被转走了；
+//   2) 正在录音——会中做十几兆的同步读写，卡的是转写回调和 WS 心跳。
+// 「这一轮没有东西变就不落盘」是第一批做在 syncDisk 里的；这里管的是「连读都不该读」。
+// THT_HUB_SYNC_MS 只给测试用来把 5 分钟缩短，生产不设。
+function hubUpstreamConfigured(){
+  if(String(process.env.THT_HUB_UPSTREAM||'').trim())return true;
+  try{return !!String(loadEnv().HUB_UPSTREAM||'').trim();}catch(e){return false;}
+}
+function hubSyncSkipReason(){
+  if(hubUpstreamConfigured())return '工作台真源在上游，本地这份没人读';
+  if([...SESSIONS.values()].some(s=>!s.finalized))return '正在录音';
+  return '';
+}
+if (!process.env.THT_TEST) {
+  const tick=(withIndex)=>{
+    const skip=hubSyncSkipReason();
+    if(skip)return;
+    try{
+      workHub.hub.syncDisk();
+      const last=workHub.hub.data.sync.index?.at;
+      if(withIndex||!last||Date.now()-Date.parse(last)>6*3600000)workHub.hub.syncIndex();
+    }catch(e){log('hub sync '+e.message);}
+  };
+  const every=Math.max(200,Number(process.env.THT_HUB_SYNC_MS||5*60000));
+  setTimeout(()=>tick(true),Math.min(2000,every));
+  setInterval(()=>tick(false),every).unref();
+}
