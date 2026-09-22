@@ -195,6 +195,17 @@ test('setDate 兜底 A/B（Aaron 2026-09-22 拍板）：有 memory.db 但查不�
     assert.equal(part.ok, true); assert.equal(part.patch.task.url, 'https://example.test/task/g-1'); assert.equal(part.memoryCardId, '');
     assert.equal(part.patch.task.memoryCardError, 'database is locked'); assert.match(part.patch.task.note, /承诺卡没记上（任务已建，请手工补记忆）/);
   } finally { mem.putCard = orig; mem.updateCard = origU; }
+  // putCard 那条写路单独验（新库、没有匹配承诺卡）：抛错 → 留痕；返回空对象（没 id）→ 同样留痕（Codex c3b493db F0/F1）
+  for (const [label, impl] of [['抛错', () => { throw Error('readonly database'); }], ['返回空', () => null], ['无 id', () => ({})]]) {
+    const dbN = mem.open(fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-put-'))); assert.equal(IA.matchPromise(dbN, card), null);
+    mem.putCard = impl;
+    try {
+      const part = await IA.setDate({ card, args: { owner: 'Cary Luo', createIfMissing: true }, session: { id: 's1' }, db: dbN, execImpl: fakeExec([]) });
+      assert.equal(part.ok, true, label); assert.equal(part.patch.task.url, 'https://example.test/task/g-1'); assert.equal(part.memoryCardId, '', label);
+      assert.ok(part.patch.task.memoryCardError, label + ' 留原因'); assert.match(part.patch.task.note, /承诺卡没记上（任务已建，请手工补记忆）/, label);
+    } finally { mem.putCard = orig; }
+  }
+  mem.updateCard = () => ({}); try { const part = await IA.setDate({ card, args: { owner: 'Cary Luo', createIfMissing: true }, session: { id: 's1' }, db, execImpl: fakeExec([]) }); assert.equal(part.memoryCardId, ''); assert.match(part.patch.task.note, /承诺卡没记上/, 'updateCard 无 id 同样留痕'); } finally { mem.updateCard = origU; }
 });
 
 test('taskCreate：命令成功但回包没有链接也没有编号 → ok:false 且 uncertain（Codex 8b2bdefd F4）；setDate 不写 done', async () => {

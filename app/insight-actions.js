@@ -297,9 +297,11 @@ async function setDate({ card, args = {}, session = {}, env, db, log = () => {},
       const refs = task.url ? [task.url] : [];
       if (best) memoryCard = mem.updateCard(db, best.id, { due, owner: owner || best.owner, source_refs: [...safeJson(best.source_refs), ...refs], human_edited: 1 }, `会中定日期（${session.title || session.id || '本场'}）`);
       else memoryCard = mem.putCard(db, { kind: 'promise', state: 'pending', text: card.claim, topic: clip(card.claim, 40), owner: owner || '', due, meeting_id: session.id || '', meeting_title: session.title || '', source_refs: refs, human_edited: 1, change_reason: '会中定日期' });
+      if (!memoryCard || !memoryCard.id) throw Error('memory 写卡没回卡号');   // 返回空 / 无 id 也算没写进去（Codex c3b493db F0）
     } catch (e) {
       // 任务已经建在飞书了，不能抛错让人重点（会重复建任务）；写成部分成功：卡片 task.note 直说承诺卡没记上，让人手工补（Codex bbf46b84 F1）
       log('insight-action set_date 承诺卡没写进去 ' + e.message);
+      memoryCard = null;
       task.memoryCardError = String(e.message || e).slice(0, 120);
       task.note = [task.note, '承诺卡没记上（任务已建，请手工补记忆）'].filter(Boolean).join('；');
     }
