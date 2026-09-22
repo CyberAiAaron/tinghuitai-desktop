@@ -206,10 +206,9 @@ test('服务端：/meeting-result 给出 brief；POST /todo-say 改卡并回 app
     const md = ex.j.markdown;
     assert.match(md, /## 1\. 一屏速览/); assert.match(md, /\*\*结论：/); assert.match(md, /\| # \| 事项 \| 负责人 \| 期限 \|/);
     assert.ok(md.includes('整理手板结果'), '分享正文要用最新卡片');
-    // 纪要正文 = 从「1 一屏速览」到「3 待办」之后的下一个一级标题为止；逐字稿导出仍是旧口径（S 码），另列为已知项
-    const start = md.indexOf('## 1. 一屏速览'), todo = md.indexOf('## 3. 待办'), end = md.indexOf('\n## ', todo + 5);
-    const note = md.slice(start, end < 0 ? undefined : end);
-    assert.ok(!/\bS[0-9]\b/.test(note), '纪要正文不出现 S 码：' + (note.match(/.*\bS[0-9]\b.*/) || [''])[0]);
+    // 整份导出（纪要正文 + 逐字稿段）都不出现 S 码：纪要走 briefNote 的名字表，逐字稿走 who()（没认的写「未认人」）
+    assert.ok(!/\bS[0-9]\b/.test(md), '分享导出出现了 S 码：' + (md.match(/.*\bS[0-9]\b.*/) || [''])[0]);
+    assert.ok(md.includes('## 逐字稿') && md.includes('**未认人**') && md.includes('**Cary Luo**'), '逐字稿段要有真名和「未认人」');
     assert.equal(cli.calls().length, 0, '这几条路一次都不该碰 lark-cli');
   } finally { child.kill('SIGTERM'); }
 });
