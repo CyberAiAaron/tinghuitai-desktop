@@ -25,6 +25,8 @@ module.exports=async function(req,res,u,{isLocal,localReason,settings,active,tes
   const dest=String(req.headers['sec-fetch-dest']||''),site=String(req.headers['sec-fetch-site']||'');
   if(dest==='script'&&site&&site!=='same-origin')return json(403,{error:'bootstrap.js 只能由本机同源页面加载（当前 '+site+'）'});
   res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end('window.THT_BOOT='+JSON.stringify({...publicState,relayToken:c.RELAY_TOKEN})+';');return true;}
+ // 远端只给就绪状态这几个字段（Codex 09-22 审核意见）：base / model / resource / archive 这类内部配置只留本机
+ if(setup&&req.method==='GET'&&remoteRead){const {ready,asrConfigured,asrProvider,macAsrAvailable,modelConfigured,agentLabel}=publicState;return json(200,{ready,asrConfigured,asrProvider,macAsrAvailable,modelConfigured,agentLabel});}
  if(setup&&req.method==='GET')return json(200,publicState);
  // 本机装没装 AI 命令行：装了就不用申请 API Key
  if(detect&&req.method==='GET'){const found=require('./cli-llm').detect();return json(200,{found:Object.keys(found),provider:c.LLM_PROVIDER||''});}
