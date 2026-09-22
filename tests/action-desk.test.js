@@ -388,12 +388,12 @@ test('页面契约：「建议怎么做」「可能讲错的」「合适的部�
     assert.ok(!noComment(js).includes(gone), 'archive.js 里不该再有「' + gone + '」');
     assert.ok(!noComment(html).includes(gone), 'archive.html 里不该再有「' + gone + '」');
   }
-  // 顺序：核心结论 → 待办卡 → 一句话思考 → 风险提示 → 议题展开。
+  // 顺序（09-22 Aaron 定「飞书纪要式」）：1 一屏速览（结论加粗）→ 2 议题 → 3 待办表 → 一句话对话框 → 一句话思考 → 风险提示。
   // 文案走 t() 字典，所以在拼 #bf-sum 的那一段里按文案键排，不按中文原文排。
   const seg = js.slice(js.indexOf("$('#bf-sum').innerHTML="), js.indexOf('paintActions();'));
   assert.ok(seg.length > 200, '没找到 #bf-sum 的拼装段落');
-  const order = ["t('keyc')", 'bf-cards', 'bf-think', 'bf-risks', "t('detail')"].map(k => seg.indexOf(k));
-  assert.ok(order.every(i => i >= 0), '这五块都要在 #bf-sum 里渲染：' + JSON.stringify(order));
+  const order = ["t('quick')", "t('topics')", 'bf-cards', 'bf-say', 'bf-think', 'bf-risks'].map(k => seg.indexOf(k));
+  assert.ok(order.every(i => i >= 0), '这六块都要在 #bf-sum 里渲染：' + JSON.stringify(order));
   for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], '第 ' + i + ' 块的顺序不对');
   // 中英文都要有
   assert.ok(js.includes("uiLang==='en'") || js.includes('T('), 'archive.js 要有中英文文案');

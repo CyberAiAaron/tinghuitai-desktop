@@ -2285,6 +2285,20 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       return reply(200, { ok:true, card: out.card, actions: out.actions, ...(out.alreadySent ? { alreadySent: true } : {}) });
     } catch (e) { return reply(e.code === 404 ? 404 : e.code === 409 ? 409 : 400, { ok:false, error: e.message, ...(e.uncertain ? { uncertain: true } : {}) }); }
   }
+  // 待办对话框（Aaron 2026-09-22 定）：回看页里一句话改 / 加 / 派待办。POST {id, text} → 规则先解析、听不懂才问模型（app/todo-say.js）。
+  // 这条路不外发：「派给 X」只改卡和草稿，真建飞书任务仍走上面 /meeting-action 的 do:'send' + 界面确认。
+  if (p.endsWith('/todo-say')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method not allowed'); }
+    const parts = []; let size = 0; for await (const c of req) { size += c.length; if (size > 4000) return reply(413, { ok:false, error:'太长' }); parts.push(c); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
+    const sid = String(j.id || ''); if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok:false, error:'会议编号不对' });
+    try {
+      const out = await withMeetingLock(sid, () => require('./todo-say').handle({ dir: ACTIONS_DIR, sessionId: sid, text: String(j.text || ''), enhanced: meetingPipeline.result(sid), env: loadEnv(), dataDir: DATA, log }));
+      return reply(200, { ok:true, ...out });
+    } catch (e) { return reply(e.code === 404 ? 404 : 400, { ok:false, error: e.message }); }
+  }
   // 会中「换一场」：页面 POST {id, eventId|none} → 按你的选择重对一次日历，结果照常推回页面
   if (p.endsWith('/live-calendar')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
@@ -2355,6 +2369,12 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const CAP = { highlights: 15, todos: 10, factchecks: 8 };
     const noteOf = sess => {
       try {
+        // REQ-004 收尾：新版结构化总结在就从它生成（编号议题 + 加粗结论 + 待办表），③ 点评不进分享；
+        // 待办以回看页处理台那份为准（他在对话框里改过的才是真的），没有就用总结里的。
+        if (sess.brief && sess.brief.overview) {
+          const acts = require('./actions').read(ACTIONS_DIR, String(sess.id || ''));
+          return share.briefNote(sess, acts && acts.cards);
+        }
         const R = require('./review');
         let cond = sess.condensed, raw = false;
         if (!cond) {

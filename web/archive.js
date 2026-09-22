@@ -7,7 +7,7 @@ let settings={};try{settings=JSON.parse(localStorage.getItem('tht-settings')||'{
 const ts=v=>typeof v==='number'?v:(Date.parse(v)||0);
 const fmtDur=sec=>{sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return (h?h+':':'')+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');};
 const clock=(row,start)=>{if(row.t)return row.t;const at=Number(row.at||0);const rel=at>1e11?(at-start)/1000:at;const m=Math.floor(rel/60),s=Math.floor(rel%60);return m+':'+String(s).padStart(2,'0');};
-let record=null,source='',showRaw=false;
+let record=null,source='';
 // 界面语言跟着主界面走：主界面存了就用存的，没存过按浏览器语言猜一次
 let uiLang=(navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en';
 try{const v=localStorage.getItem('tht-ui');if(v)uiLang=(v==='en'?'en':'zh');}catch{}
@@ -16,7 +16,9 @@ if(window.opener||history.length<=1){$('#closewin').hidden=false;$('#closewin').
 function fromLocal(){try{const st=JSON.parse(localStorage.getItem('tht-state')||'{}');return (st.sessions||[]).find(s=>String(s.id)===id)||null;}catch{return null;}}
 async function fromMac(){const r=await fetch('/asr-relay/meeting-result?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(settings.relayToken||''),{cache:'no-store',signal:AbortSignal.timeout(6000)});if(!r.ok)throw Error(String(r.status));return r.json();}
 
-function spkName(s,names){if(!s)return '';return (names&&names[s])||({me:'我',them:'对方'})[s]||('S'+s);}
+// 说话人只显示真名或「未认人」（Aaron 09-22 定）：S0 / S1 这类声音编号只留在数据里，不上界面。
+const UNNAMED=()=>uiLang==='en'?'Unnamed':'未认人';
+function spkName(s,names){if(!s)return '';return (names&&names[s])||({me:'我',them:'对方'})[s]||UNNAMED();}
 let hasAudio=false;
 let audioGone='';   // 'retention' = 录音已按保留期清理（服务端 X-Audio-Gone 头），回看页据此显示说明而不是空白
 let audioRetentionDays=30;
@@ -78,23 +80,8 @@ function render(s){
   $('#src-chip').hidden=false;$('#src-chip').textContent=source==='mac'?'来源：Mac 归档'+(s.archiveNote?'（'+s.archiveNote+'）':''):'来源：本机记录（Mac 未同步）';
   renderBrief(s);
   paintSpeakers();
-  // 会后收敛：默认只显示收敛过的那十几条，原始的几百条折在「看全部」后面。
-  // 会中每 40 秒一轮、只看眼前一小段，所以宁可多记；这里才是该做取舍的地方。
-  const cond = s.condensed && !showRaw ? s.condensed : null;
-  const hl=(cond? cond.highlights : (s.highlights||[])),
-        td=(cond? cond.todos : (s.todos||[])),
-        ck=(cond? cond.factchecks : (s.factchecks||[])),
-        tr=(s.transcript||[]);
-  $('#c-hl').textContent=hl.length;$('#c-td').textContent=td.length;$('#c-ck').textContent=ck.length;$('#c-tr').textContent=tr.length;
-  // 时间戳做成可点的：点一下把播放器跳到那一刻。没有录音时退回成普通标签。
-  const secOf=x=>{const at=Number(x.at||0);if(!at)return null;return at>1e11?(at-start)/1000:at;};
-  const when=x=>{if(!x.at)return '';const t=esc(clock({at:x.at},start));const sec=secOf(x);
-    return hasAudio&&sec!=null?'<button type="button" class="k play" data-sec="'+sec+'" title="'+(uiLang==='en'?'Replay from here':'回听这一段')+'">▶ '+t+'</button>':'<span class="k">'+t+'</span>';};
-  $('#highlights').innerHTML=hl.length?hl.map(x=>'<div class="card hl">'+when(x)+'<div>'+esc(x.text)+(x.how?'<div class="v">💡 '+esc(x.how)+'</div>':'')+'</div></div>').join(''):'<div class="empty">本场没有要点。</div>';
-  $('#todos').innerHTML=td.length?td.map(x=>'<div class="card todo">'+when(x)+'<div>☐ '+esc(x.text)+(x.owner?'<div class="v">→ '+esc(x.owner)+'</div>':'')+'</div></div>').join(''):'<div class="empty">本场没有待办。</div>';
-  const vl=v=>v==='true'?'大概率对':v==='false'?'可能有误':'拿不准';
-  $('#factchecks').innerHTML=ck.length?ck.map(x=>'<div class="card ck">'+when(x)+'<div>'+esc(x.claim)+'<div class="v"><span class="verdict '+esc(x.verdict||'')+'">'+vl(x.verdict)+'</span> '+esc(x.note||'')+'</div></div></div>').join(''):'<div class="empty">本场没有待核查项。</div>';
-  const names=s.names||{};
+  const tr=(s.transcript||[]);$('#c-tr').textContent=tr.length;
+  const names=spkMap(s);
   // 段落 id 挂在 <p> 上：要点点一下要落到「就是这一句」，靠的是 data-seg，不是按时间猜最近的一句。
   $('#transcript').innerHTML=tr.length?tr.map(row=>{const sp=row.speaker||row.spk||row.who||'';const rsec=(()=>{const at=Number(row.at||0);if(!at)return null;return at>1e11?(at-start)/1000:at;})();
     const seg=row.id!=null?String(row.id):'';
@@ -106,7 +93,13 @@ const COLORS=['#202124','#c8102e','#1f5fbf','#1e7e34','#b26a00','#6a3fb5','#0083
 const mmss=sec=>{sec=Math.max(0,Math.round(sec||0));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0');};
 // 界面文案：[中文, English]。这一屏原来全是中文，界面切到 en 时只有一半跟着换。
 const L={sum:['智能总结','Summary'],rev:['点评与指导','Review'],
-  topics:['议题与时间分布','Topics and timeline'],keyc:['核心结论','Key conclusions'],todos:['待办','Action items'],
+  topics:['议题','Topics'],keyc:['核心结论','Key conclusions'],todos:['待办','Action items'],
+  quick:['一屏速览','At a glance'],concl:['结论：','Conclusion: '],noKeyc:['这场没有形成核心结论。','No key conclusions.'],
+  colWhat:['事项','Item'],colWho:['负责人','Owner'],colDue:['期限','Due'],sugg:['建议','suggested'],
+  sayPh:['一句话改待办：「第 2 条派给 Cary，周五前」「加一条：整理手板结果」「第 3 条不要了」','Change to-dos in one line: "#2 assign to Cary, by Friday" "add: collect mockup results" "#3 drop"'],
+  sayGo:['执行','Apply'],sayBusy:['正在改…','Applying…'],sayCancel:['取消','Cancel'],sayStop:['已取消','Cancelled'],
+  sayHint:['「派给谁」只填好草稿，真建任务还要你点「派发」。','"Assign to" only fills in the draft; nothing is sent until you click Assign.'],
+  byModel:['模型理解的','interpreted by the model'],
   detail:['议题展开','Topics in detail'],showFull:['展开完整','Show full'],showBrief:['只看结论','Conclusions only'],
   open:['未决：','Open: '],noConc:['未形成结论','No conclusion reached'],srcLine:['原句','Source'],
   facts:['补充背景','Background'],align:['和项目目标的关系','Against project goals'],
@@ -133,7 +126,7 @@ let segText=new Map();
 const decEditing=new Set();
 // 名字只存一处：names 映射。以前这里还从「需要你定一下」的答案里二次推导，
 // 于是认人清单把一个名字清掉之后，旧答案又会把它顶回来。现在认人只走 /speaker-confirm，答案不再参与显示。
-function spkMap(s){return {...(s.names||{})};}
+function spkMap(s){const m={};(s.transcript||[]).forEach(r=>{const k=String(r.speaker??r.spk??r.who??'');if(k&&/^\w{1,12}$/.test(k)&&!m[k])m[k]=UNNAMED();});return {...m,...(s.names||{})};}
 function nm(text,map){let t=esc(text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),()=>esc(map[k]));});return t;}
 // 时间胶囊 = 回到原句的入口。段落 id（seg）在就精确落到那一句；只有时间就按时间找最近的一句；
 // 两样都没有的条目不做成可点的样式，免得点了没反应。
@@ -161,25 +154,26 @@ function renderBrief(s){
   $('#bf-sum-h').textContent=t('sum');$('#bf-rev-h').textContent=t('rev');
   const map=spkMap(s), ov=b.overview, dur=Math.max(b.duration||0,...ov.topics.map(x=>x.to||0),1);
   let bar='',pos=0;ov.topics.forEach((x,i)=>{const f=Math.max(pos,x.from||0),to=Math.max(f,x.to||0);if(f>pos)bar+='<i class="gap" style="width:'+((f-pos)/dur*100)+'%"></i>';bar+='<i data-sec="'+f+'" title="'+esc(x.title)+' '+mmss(f)+'–'+mmss(to)+'" style="width:'+((to-f)/dur*100)+'%;background:'+COLORS[i%COLORS.length]+'">'+x.n+'</i>';pos=to;});
+  // 飞书纪要式（Aaron 09-22 定）：标题自动编号（1 速览 / 2 议题 / 3 待办，议题再编 2.1 2.2），结论加粗，待办是表。
   // 一个议题一张卡片：速览只留结论和状态，完整才展开要点和原话。开关只有 #bf-view 那一个。
   const quote=seg=>seg?(segText.get(String(seg))||''):'';
   const card=(c,i)=>{const head=ov.topics[i]||{},v=decOf(b,c),editing=decEditing.has(String(c.n));
     const badge=editing
       ? '<span class="bf-dec-pick">'+DEC.map(d=>'<button type="button" class="bf-opt'+(d[0]===v?' on':'')+'" data-dec-set="'+c.n+'|'+d[0]+'">'+esc(uiLang==='en'?d[1]:d[0])+'</button>').join('')+'</span>'
       : '<button type="button" class="bf-dec '+decClass(v)+'" data-dec="'+c.n+'" title="'+esc(t('decHint'))+'">'+esc(decLabel(v))+'</button>';
-    return '<div class="bf-card" data-topic="'+c.n+'"><h3><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+c.n+'</span><span class="bf-ttl">'+nm(head.title||'',map)+'</span>'+badge+'</h3>'
-      +'<div class="bf-key">'+(c.conclusion?nm(c.conclusion,map):esc(t('noConc')))+'</div>'
+    return '<div class="bf-card" data-topic="'+c.n+'"><h3><span class="fs-n sub">2.'+(i+1)+'</span><span class="bf-ttl">'+nm(head.title||'',map)+'</span>'+badge+(head.to?'<span class="bf-dur">'+mmss(head.from||0)+'–'+mmss(head.to)+'</span>':'')+'</h3>'
+      +'<div class="bf-key"><b>'+esc(t('concl'))+(c.conclusion?nm(c.conclusion,map):esc(t('noConc')))+'</b></div>'
       +(viewFull?'<ul>'+(c.points||[]).map(x=>'<li>'+nm(x.text,map)+tbtn(x.at,x.seg)+(quote(x.seg)?'<div class="bf-quote">「'+nm(quote(x.seg),map)+'」</div>':'')+'</li>').join('')+'</ul>'
         +(c.open&&c.open.length?'<div class="bf-open">'+esc(t('open'))+c.open.map(x=>nm(x,map)).join('；')+'</div>':''):'')
       +'</div>';};
   $('#bf-sum').innerHTML=
     (b.meta&&b.meta.scope?'<p class="bf-scope">'+nm(b.meta.scope,map)+'</p>':'')
-    +'<div class="bf-h">'+esc(t('topics'))+'</div><ul class="bf-topics">'+ov.topics.map((x,i)=>'<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><span>'+nm(x.title,map)+'</span><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>').join('')+'</ul><div class="bf-bar">'+bar+'</div>'
-    +(ov.conclusions.length?'<div class="bf-h">'+esc(t('keyc'))+'</div>'+ov.conclusions.map(c=>'<div class="bf-key">'+nm(c,map)+'</div>').join(''):'')
-    // REQ-009：待办不再是一张点不动的表。这里只留三个空壳，内容由 paintActions() 填——
-    // 它读的是 /meeting-actions（会后自动备好的卡、草稿、预研究），和总结不是同一份数据。
-    +'<div id="bf-cards"></div><div id="bf-think"></div><div id="bf-risks"></div>'
-    +'<div class="bf-h">'+esc(t('detail'))+'</div>'+(b.topics||[]).map(card).join('');
+    +'<section class="fs"><h3 class="fs-h"><span class="fs-n">1</span>'+esc(t('quick'))+'</h3>'
+      +(ov.conclusions.length?ov.conclusions.map(c=>'<div class="bf-key"><b>'+nm(c,map)+'</b></div>').join(''):'<p class="bf-note">'+esc(t('noKeyc'))+'</p>')
+      +'<ul class="bf-topics">'+ov.topics.map((x,i)=>'<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><span>'+nm(x.title,map)+'</span><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>').join('')+'</ul><div class="bf-bar">'+bar+'</div></section>'
+    +'<section class="fs"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(t('topics'))+'</h3>'+(b.topics||[]).map(card).join('')+'</section>'
+    // REQ-009 + 09-22：待办是这一节的表，内容由 paintActions() 填（读 /meeting-actions）；表下面是一句话改待办的对话框。
+    +'<section class="fs" id="bf-todo"><h3 class="fs-h"><span class="fs-n">3</span>'+esc(t('todos'))+' <span class="bf-sug" id="bf-todo-n"></span></h3><div id="bf-cards"></div><div id="bf-say"></div><div id="bf-think"></div><div id="bf-risks"></div></section>';
   const view=$('#bf-view');view.textContent=viewFull?t('showBrief'):t('showFull');view.onclick=()=>{setViewFull(!viewFull);render(record);};
   $('#bf-sum').querySelectorAll('[data-dec]').forEach(el=>el.onclick=()=>{decEditing.add(el.dataset.dec);render(record);});
   $('#bf-sum').querySelectorAll('[data-dec-set]').forEach(el=>el.onclick=()=>{const [n,v]=el.dataset.decSet.split('|');saveDecision(Number(n),v);});
@@ -210,7 +204,7 @@ function renderBrief(s){
 // 谁还没名字、他说过哪几句、候选人是谁，都由 /meeting-speakers 算好。这里只负责：听一段、点一下、当场全页换名。
 // 认人只有这一个入口——「需要你定一下」里问说话人的题已经隐藏（见 renderBrief）。
 let spkRows=null,spkOpen=false,spkAll=false,spkNote='',spkNoteBad=false,spkNoteFor='',spkAudio=null,spkPlaying='';
-const spkLabel=k=>k==='me'?'我':k==='them'?'对方':'S'+k;
+const spkLabel=k=>k==='me'?'我':k==='them'?'对方':UNNAMED();
 async function loadSpeakers(){
   if(source!=='mac')return;
   try{const r=await fetch('/asr-relay/meeting-speakers?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(settings.relayToken||''),{cache:'no-store',signal:AbortSignal.timeout(8000)});
@@ -224,15 +218,14 @@ function paintSpeakers(){
   const left=spkRows.filter(r=>!r.name).length;
   // 全认完就收成一行——这件事做完了，不该继续占着智能总结上面的位置
   if(!left&&!spkOpen){
-    box.innerHTML='<div class="spk-done"><b>已认 '+spkRows.length+' 人</b><span>'+esc(spkRows.map(r=>spkLabel(r.spk)+'＝'+r.name).join('，'))+'</span><button type="button" id="spk-edit">改</button>'+spkState()+'</div>';
+    box.innerHTML='<div class="spk-done"><b>已认 '+spkRows.length+' 人</b><span>'+esc(spkRows.map(r=>r.name).join('，'))+'</span><button type="button" id="spk-edit">改</button>'+spkState()+'</div>';
     $('#spk-edit').onclick=()=>{spkOpen=true;spkNote='';spkNoteFor='';paintSpeakers();};
     return;
   }
   // 声音一多（一场会常有 8–10 个编号）整块会把总结挤到两屏以下。先只摆说话最多的 3 个——逐字稿大头就是他们，其余一键展开。
   const many=spkRows.length>3&&!spkAll,shown=many?spkRows.slice(0,3):spkRows,restLines=many?spkRows.slice(3).reduce((n,r)=>n+(r.lines||0),0):0;
-  box.innerHTML='<h2>这场会里的人</h2><p class="spk-hint">'+(left?'还有 '+left+' 个人没名字。听一句，点个名字，逐字稿、总结、待办里的编号当场全换过来。':'都认完了，点名字可以改。')+'</p>'
-    +shown.map(r=>'<div class="spk-row" data-spk="'+esc(r.spk)+'"><span class="spk-who">'+esc(spkLabel(r.spk))+'</span><span class="spk-lines">'+r.lines+' 句</span>'
-      +(r.name?'<span class="spk-name">'+esc(r.name)+'</span>':'')
+  box.innerHTML='<h2>这场会里的人</h2><p class="spk-hint">'+(left?'还有 '+left+' 个人没名字。听一句，点个名字，逐字稿、总结、待办里的「'+UNNAMED()+'」当场全换过来。':'都认完了，点名字可以改。')+'</p>'
+    +shown.map(r=>'<div class="spk-row" data-spk="'+esc(r.spk)+'"><span class="spk-who"><i class="spk-dot" style="background:'+COLORS[(Number(String(r.spk).replace(/\D/g,''))||0)%COLORS.length]+'"></i>'+esc(r.name||spkLabel(r.spk))+'</span><span class="spk-lines">'+r.lines+' 句</span>'
       +'<div class="spk-samples">'+(r.samples.length
         ? r.samples.map(x=>'<button type="button" class="spk-clip" data-clip="'+esc(r.spk)+'|'+x.start+'|'+x.dur+'"><span class="t">'+(hasAudio?'▶ ':'')+mmss(x.start)+'</span><span class="q">'+esc(x.text)+'</span></button>').join('')
         : '<span class="spk-lines">这个编号只有零碎的语气词，没有整句可听</span>')+'</div>'
@@ -308,24 +301,73 @@ async function loadFocus(){
 }
 function paintActions(){
   const box=document.getElementById('bf-cards');if(!box)return;
-  const think=document.getElementById('bf-think'),risks=document.getElementById('bf-risks');
+  const think=document.getElementById('bf-think'),risks=document.getElementById('bf-risks'),cnt=document.getElementById('bf-todo-n');
   if(!actData){
+    if(cnt)cnt.textContent='';
     box.innerHTML=actStatus==='running'
-      ? '<div class="bf-h">'+esc(t('todos'))+'</div><p class="bf-note">'+T('正在把这场会产生的事整理成卡片（通常 1–3 分钟），好了这里会自己出现。','Turning this meeting into action cards (usually 1–3 min). It will appear here on its own.')+'</p>'
+      ? '<p class="bf-note">'+T('正在把这场会产生的事整理成待办（通常 1–3 分钟），好了这里会自己出现。','Turning this meeting into to-dos (usually 1–3 min). It will appear here on its own.')+'</p>'
       : (actStatus==='unavailable'||actStatus==='error'
-        ? '<div class="bf-h">'+esc(t('todos'))+'</div><p class="bf-note">'+esc(actNote.get('*')||T('这场会还没整理出待办和建议。','No to-dos or advice from this meeting yet.'))+'</p>'
+        ? '<p class="bf-note">'+esc(actNote.get('*')||T('这场会还没整理出待办。','No to-dos from this meeting yet.'))+'</p>'
         : '');
     if(think)think.innerHTML='';if(risks)risks.innerHTML='';
-    return;
+    paintSay();return;
   }
   const cards=actData.cards||[],live=cards.filter(c=>c.state!=='dismissed'),hidden=cards.filter(c=>c.state==='dismissed');
-  box.innerHTML='<div class="bf-h">'+esc(t('todos'))+' <span class="bf-sug">'+live.length+'</span></div>'
-    +(actData.classifiedBy==='rules'?'<p class="bf-note">'+T('这批分类是按关键词判的（模型这次没回应），类型可能要你自己调。','Typed by keyword rules this time (the model did not answer).')+'</p>':'')
-    +(live.length?live.map(actCard).join(''):'<p class="bf-note">'+T('这场没有要处理的事。','Nothing to process from this meeting.')+'</p>')
-    +hidden.map(c=>'<div class="bf-undo" data-undo="'+esc(c.id)+'"><span>'+T('已收起','Dismissed')+'「'+esc(c.text.slice(0,40))+'」</span><button type="button">'+T('撤销','Undo')+'</button></div>').join('');
+  if(cnt)cnt.textContent=live.length;
+  box.innerHTML=(actData.classifiedBy==='rules'&&live.length?'<p class="bf-note">'+T('这批分类是按关键词判的（模型这次没回应），类型可能要你自己调。','Typed by keyword rules this time (the model did not answer).')+'</p>':'')
+    +(live.length?'<div class="td-wrap"><table class="bf-table td-table"><thead><tr><th>#</th><th>'+esc(t('colWhat'))+'</th><th>'+esc(t('colWho'))+'</th><th>'+esc(t('colDue'))+'</th><th></th></tr></thead><tbody>'+live.map((c,i)=>actRow(c,i+1)).join('')+'</tbody></table></div>':'<p class="bf-note">'+T('这场没有要处理的事。','Nothing to process from this meeting.')+'</p>')
+    +hidden.map(c=>'<div class="bf-undo" data-undo="'+esc(c.id)+'"><span>'+(c.doneAt?T('已做完','Done'):T('已收起','Dismissed'))+'「'+esc(c.text.slice(0,40))+'」</span><button type="button">'+T('撤销','Undo')+'</button></div>').join('');
   if(think)think.innerHTML=thinkHtml();
   if(risks)risks.innerHTML=risksHtml();
+  paintSay();
   wireActions(box);
+}
+// 待办表的一行：# / 事项（类型标签 + 说明）/ 负责人 / 期限 / 动作。展开的草稿占整行。
+function actRow(c,n){
+  const note=actNote.get(c.id)||'',open=actOpen.has(c.id),d=c.draft||{},map=spkMap(record||{});
+  const owner=c.owner||d.assignee||'',due=c.due||d.due||'';
+  return '<tr class="bf-act'+(c.state==='sent'?' done':'')+'" data-card="'+esc(c.id)+'"><td class="td-n">'+n+'</td>'
+    +'<td><span class="bf-tag k-'+esc(c.kind)+'">'+esc(KIND_LABEL(c.kind))+'</span>'+nm(c.text,map)
+    +(c.reason?'<div class="bf-act-why">'+esc(c.reason)+'</div>':'')
+    +(c.advice&&c.advice!==c.text?'<div class="bf-act-why">'+T('建议做法：','Suggested: ')+esc(c.advice)+'</div>':'')
+    +(c.researchSkipped?'<div class="bf-act-why">'+esc(c.researchSkipped)+'</div>':'')
+    +(c.sentNote?'<div class="bf-act-why">'+esc(c.sentNote)+'</div>':'')
+    +(c.claimFailed&&c.claimNote?'<div class="bf-act-why">'+esc(c.claimNote)+'</div>':'')+'</td>'
+    +'<td>'+(owner?nm(owner,map):'<span class="bf-sug">—</span>')+'</td><td>'+(due?esc(due):'<span class="bf-sug">—</span>')+'</td>'
+    +'<td class="td-act">'+mainAction(c,open)+'<button type="button" class="bf-x" data-x="'+esc(c.id)+'" title="'+T('我不认这条','Not mine')+'" aria-label="'+T('我不认这条','Not mine')+'">✕</button>'
+    +(note?'<div class="bf-act-state'+(/没|失败|不/.test(note)?' bad':'')+'">'+esc(note)+'</div>':'')+'</td></tr>'
+    +(open?'<tr class="bf-draft-row" data-card="'+esc(c.id)+'"><td colspan="5"><div class="bf-draft">'+draftHtml(c)+'</div></td></tr>':'');
+}
+// ===== 一句话改待办（Aaron 09-22 定）=====
+// 不限模板：规则听得懂的当场改，听不懂的服务端问模型翻译成同一套操作。这里不外发：「派给谁」只填草稿，还要点「派发」。
+let sayBusy=false,sayLog='',sayBad=false,sayDraft='',sayAbort=null;
+function paintSay(){
+  const host=document.getElementById('bf-say');if(!host)return;
+  if(source!=='mac'){host.innerHTML='';return;}
+  host.innerHTML='<form class="bf-say" id="say-form"><input type="text" id="say-in" maxlength="800" autocomplete="off" placeholder="'+esc(t('sayPh'))+'" value="'+esc(sayDraft)+'"'+(sayBusy?' disabled':'')+'>'
+    +(sayBusy?'<button type="button" id="say-cancel">'+esc(t('sayCancel'))+'</button>':'<button type="submit">'+esc(t('sayGo'))+'</button>')+'</form>'
+    +(sayBusy?'<div class="bf-say-log">'+esc(t('sayBusy'))+'</div>':'')
+    +(sayLog?'<div class="bf-say-log'+(sayBad?' bad':'')+'">'+sayLog+'</div>':'')
+    +'<p class="bf-say-hint">'+esc(t('sayHint'))+'</p>';
+  const input=document.getElementById('say-in');input.oninput=()=>{sayDraft=input.value;};
+  document.getElementById('say-form').onsubmit=e=>{e.preventDefault();const v=input.value.trim();if(v&&!sayBusy)saySend(v);};
+  const cancel=document.getElementById('say-cancel');if(cancel)cancel.onclick=()=>{if(sayAbort)sayAbort.abort();};
+}
+async function saySend(text){
+  sayBusy=true;sayLog='';sayBad=false;sayAbort=new AbortController();paintSay();
+  const timer=setTimeout(()=>sayAbort&&sayAbort.abort(),90000);
+  try{
+    const r=await fetch('/asr-relay/todo-say?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,text}),signal:sayAbort.signal});
+    const j=await r.json();
+    if(!j.ok)throw Error(j.error||T('没改成','Failed'));
+    actData=j.actions;actStatus='done';if(j.focus)actOpen.add(j.focus);
+    sayLog=(j.applied||[]).map(x=>'✓ '+esc(x)).join('<br>')+(j.by==='model'?' <span class="bf-sug">· '+esc(t('byModel'))+'</span>':'');sayDraft='';
+  }catch(e){
+    // 取消 = 撤回这次请求；服务端可能已经改完，所以取消后重读一遍，页面上不留半截状态
+    if(e&&e.name==='AbortError'){sayLog=esc(t('sayStop'));sayBad=false;clearTimeout(timer);sayBusy=false;sayAbort=null;loadActions();return;}
+    sayLog=esc(e.message||e);sayBad=true;
+  }
+  clearTimeout(timer);sayBusy=false;sayAbort=null;paintActions();
 }
 function thinkHtml(){
   const lines=[];
@@ -341,22 +383,6 @@ function risksHtml(){
   return '<div class="bf-h">'+T('风险提示','Conflicts')+'</div>'+rs.map(r=>'<div class="bf-risk">'+esc(r.text)
     +(r.evidence?'<div class="bf-src">'+T('依据：','Source: ')+esc(r.evidence.slice(0,160))+'</div>':'')
     +(r.link?'<div class="bf-src"><a href="'+esc(r.link)+'" target="_blank" rel="noopener">'+T('看依据','Open source')+' ↗</a></div>':'')+'</div>').join('');
-}
-function actCard(c){
-  const note=actNote.get(c.id)||'';
-  const open=actOpen.has(c.id);
-  return '<div class="bf-act'+(c.state==='sent'?' done':'')+'" data-card="'+esc(c.id)+'">'
-    +'<div class="bf-act-head"><span class="bf-tag k-'+esc(c.kind)+'">'+esc(KIND_LABEL(c.kind))+'</span>'
-    +'<span class="bf-act-text">'+esc(c.text)+'</span>'
-    +'<button type="button" class="bf-x" data-x="'+esc(c.id)+'" title="'+T('我不认这条','Not mine')+'" aria-label="'+T('我不认这条','Not mine')+'">✕</button></div>'
-    +(c.reason?'<div class="bf-act-why">'+esc(c.reason)+'</div>':'')
-    +(c.advice&&c.advice!==c.text?'<div class="bf-act-why">'+T('建议做法：','Suggested: ')+esc(c.advice)+'</div>':'')
-    +(c.researchSkipped?'<div class="bf-act-why">'+esc(c.researchSkipped)+'</div>':'')
-    +(c.sentNote?'<div class="bf-act-why">'+esc(c.sentNote)+'</div>':'')
-    +(c.claimFailed&&c.claimNote?'<div class="bf-act-why">'+esc(c.claimNote)+'</div>':'')
-    +'<div class="bf-act-acts">'+mainAction(c,open)+'<span class="bf-act-state'+(/没|失败|不/.test(note)?' bad':'')+'">'+esc(note)+'</span></div>'
-    +(open?'<div class="bf-draft">'+draftHtml(c)+'</div>':'')
-    +'</div>';
 }
 function mainAction(c,open){
   if(c.state==='sent'){
@@ -437,12 +463,12 @@ function whenText(s){
 }
 function wireActions(box){
   box.querySelectorAll('[data-undo]').forEach(el=>el.querySelector('button').onclick=()=>actDo(el.dataset.undo,'restore'));
-  box.querySelectorAll('.bf-act').forEach(card=>{
-    const cid=card.dataset.card;
-    const x=card.querySelector('[data-x]');if(x)x.onclick=()=>actDo(cid,'dismiss');
-    const open=card.querySelector('[data-open]');
+  box.querySelectorAll('tr[data-card]').forEach(row=>{
+    const cid=row.dataset.card;
+    const x=row.querySelector('[data-x]');if(x)x.onclick=()=>actDo(cid,'dismiss');
+    const open=row.querySelector('[data-open]');
     if(open)open.onclick=()=>{if(actOpen.has(cid))actOpen.delete(cid);else actOpen.add(cid);paintActions();};
-    card.querySelectorAll('[data-do]').forEach(b=>b.onclick=()=>actDo(cid,b.dataset.do,readDraft(card)));
+    row.querySelectorAll('[data-do]').forEach(b=>b.onclick=()=>actDo(cid,b.dataset.do,readDraft(row)));
   });
 }
 // 草稿只从这张卡自己的输入框读，不从内存里拼——他看到什么就发什么。
@@ -552,31 +578,6 @@ async function mountHead(s){
 }
 
 // 录音在 Mac 上。先 HEAD 一下，有才挂播放器，避免页面上出现一个点不动的控件。
-// 收敛条：说清楚现在看的是哪一版，一键切换。没收敛过就不出现。
-function renderCondenseBar(s){
-  let bar=document.getElementById('cond-bar');
-  const mk=()=>{ let b=document.getElementById('cond-bar');
-    if(!b){ b=document.createElement('div'); b.id='cond-bar'; b.className='cond-bar';
-      document.getElementById('player-box').insertAdjacentElement('afterend', b); }
-    return b; };
-  // 这里只说明状态，不放按钮。整理这件事只有一个入口：历史会议里的「重新整理」。
-  // 2026-09-12：这里原来也放了一个「按最新格式整理」，和外面那个按钮干同一件事，
-  // 违反「一个动作只留一个入口」，已撤掉。
-  if(!s.condensed){
-    const n=(s.highlights||[]).length+(s.todos||[]).length+(s.factchecks||[]).length;
-    if(n<20 || source!=='mac'){ if(bar) bar.hidden=true; return; }
-    bar=mk(); bar.hidden=false;
-    bar.innerHTML='<span>这场按老格式整理，共 '+n+' 条。回到「历史会议」点这一场的「重新整理」，可以按最新格式重整。</span>';
-    return;
-  }
-  bar=mk(); bar.hidden=false;
-  const src=s.condensed.source||{};
-  const c=s.condensed;
-  bar.innerHTML = showRaw
-    ? '<span>正在看会中逐段抽出来的全部条目（要点 '+(src.highlights||0)+' · 待办 '+(src.todos||0)+' · 待核查 '+(src.factchecks||0)+'）</span><button type="button" id="cond-toggle">看收敛后的</button>'
-    : '<span>会后已收敛：要点 '+(src.highlights||0)+'→'+c.highlights.length+' · 待办 '+(src.todos||0)+'→'+c.todos.length+' · 待核查 '+(src.factchecks||0)+'→'+c.factchecks.length+'</span><button type="button" id="cond-toggle">看全部原始条目</button>';
-  document.getElementById('cond-toggle').onclick=()=>{ showRaw=!showRaw; render(record); };
-}
 // 这一场往长期记忆里留下了什么。点进去能看到那几条。
 async function mountMemoryLink(){
   let el=document.getElementById('mem-link');
@@ -623,93 +624,10 @@ window.addEventListener('hashchange',jumpFromHash);
   catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);jumpFromHash();}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
 })();
 
-// 下载和分享是同一件事，只留一个入口（顶栏这个）。
-// 以前这里另有一份客户端拼的「全文与总结」，把会议过程中的几百条要点/待办/待核查全倒进去——
-// 那不是给人读的。现在统一走 /share-export：总结 + 核心要点 + 核心纠错 + 核心待办 + 逐字稿。
+// 下载和分享是同一件事，只留一个入口（顶栏这个）。统一走 /share-export：
+// 有新版结构化总结的会，正文 = 编号议题 + 加粗结论 + 待办表（③ 点评不进分享）+ 逐字稿；老会议走收敛结果。
 $('#download').onclick=openTake;
 
-// ===== 过一遍：收敛后的十几条，一条一条判「留下 / 改一下 / 不要」 =====
-// 只对收敛结果做，原始那几百条不进这个流程——那是翻不动的。
-// 判断完两个去处：留下的进记忆卡（Claude 那边的投影随之更新），外加一份给人看的纪要。
-let rvQueue=[], rvAt=0, rvDecisions=[], rvEditing=false;
-const RV_KIND={highlights:'要点',todos:'待办',factchecks:'待核查'};
-
-function reviewReady(s){
-  const c=s && s.condensed;
-  if(!c) return 0;
-  return (c.highlights||[]).length+(c.todos||[]).length+(c.factchecks||[]).length;
-}
-function mountReviewButton(s){
-  const b=document.getElementById('review-go'); if(!b) return;
-  const n=reviewReady(s);
-  if(!n || source!=='mac'){ b.hidden=true; return; }
-  b.hidden=false;
-  const done=s.review && s.review.decisions ? s.review.decisions.length : 0;
-  // 「过一遍」没人看得懂。说清是什么动作、有多少条。
-  b.textContent = done ? ('重新确认这 '+n+' 条') : ('确认这 '+n+' 条');
-  b.onclick=()=>startReview(s);
-}
-
-// 纪要是这一页的正文，放最上面。以前它埋在「智能总结」里，而那是一大篇未收敛的长文。
-async function mountNote(s){
-  let box=document.getElementById('note-box');
-  if(!box){ box=document.createElement('section'); box.id='note-box'; box.className='note-box';
-    (document.getElementById('mem-link')||document.getElementById('cond-bar')||document.getElementById('player-box'))
-      .insertAdjacentElement('afterend', box); }
-  if(source!=='mac'){ box.hidden=true; return; }
-  box.hidden=false; box.innerHTML='<p class="note-loading">纪要加载中…</p>';
-  try{
-    const r=await fetch('/asr-relay/share-note?id='+encodeURIComponent(id)+'&token='+encodeURIComponent(settings.relayToken||''),{cache:'no-store',signal:AbortSignal.timeout(15000)});
-    const j=await r.json();
-    if(!j.ok||!j.note){ box.hidden=true; return; }
-    const lines=j.note.split('\n');
-    const html=lines.map(l=>{
-      if(l.startsWith('## ')) return '<h3>'+esc(l.slice(3))+'</h3>';
-      if(l.startsWith('# ')) return '';
-      if(l.startsWith('- ')) return '<li>'+esc(l.slice(2))+'</li>';
-      return l.trim()? '<p class="note-meta">'+esc(l)+'</p>' : '';
-    }).join('').replace(/(<li>.*?<\/li>)+/g, m=>'<ul>'+m+'</ul>');
-    box.innerHTML='<div class="note-head"><b>纪要</b><span class="note-tag">'+(j.confirmed?'你确认过的版本':'自动整理版')+'</span>'
-      +'<span style="flex:1"></span><button type="button" id="note-copy">复制</button>'
-      +'</div>'
-      +'<div class="note-body">'+html+'</div>';
-    document.getElementById('note-copy').onclick=async()=>{
-      try{ await navigator.clipboard.writeText(j.note); document.getElementById('note-copy').textContent='已复制'; }
-      catch(e){ document.getElementById('note-copy').textContent='复制失败'; }
-    };
-  }catch(e){ box.hidden=true; }
-}
-
-// 日历匹配的结果要让你一眼看到、一下改掉：猜对了就一个 ✓，猜得不稳就标「待确认」，点开能换一场或说「不是日历上的会」。
-// 匹配错了不改，参会人和时间就会跟着错进纪要和分享文档。
-async function mountCalendarChip(){
-  let box=document.getElementById('cal-chip');
-  if(!box){ box=document.createElement('div'); box.id='cal-chip'; box.className='cal-chip';
-    (document.getElementById('note-box')||document.getElementById('player-box')).insertAdjacentElement('beforebegin', box); }
-  if(source!=='mac'){ box.hidden=true; return; }
-  const tok=encodeURIComponent(settings.relayToken||'');
-  const paint=(j)=>{
-    const ev=j.event; box.hidden=false;
-    if(!ev){ box.innerHTML='<span class="cal-k">日历</span><span>'+esc(j.chosen==='none'?'你标了：不是日历上的会':(j.reason||'没对上日程'))+'</span>'+(j.chosen==='none'?'<button type="button" data-cal="reset">重新匹配</button>':''); }
-    else {
-      const low=ev.confidence==='low'&&!ev.chosenByUser;
-      const when=(ev.start||'').slice(11,16)+(ev.end?'–'+ev.end.slice(11,16):'');
-      box.innerHTML='<span class="cal-k">日历</span><b>'+esc(ev.title)+'</b><span class="cal-when">'+esc(when)+'</span>'
-        +(ev.attendees&&ev.attendees.length?'<span class="cal-who">'+esc(ev.attendees.join('、'))+'</span>':'')
-        +(low?'<span class="cal-warn">按时间猜的，待确认</span>':'<span class="cal-ok">✓</span>')
-        +'<span style="flex:1"></span>'
-        +((ev.candidates||[]).length>1?'<select data-cal="pick">'+(ev.candidates||[]).map(c=>'<option value="'+esc(c.eventId)+'"'+(c.eventId===ev.eventId?' selected':'')+'>'+esc(c.title)+' '+esc((c.start||'').slice(11,16))+'</option>').join('')+'</select>':'')
-        +(low?'<button type="button" data-cal="'+esc(ev.eventId)+'">就是这场</button>':'')
-        +'<button type="button" data-cal="none">不是日历上的会</button>';
-    }
-    box.querySelectorAll('[data-cal]').forEach(el=>{
-      const send=async v=>{ box.style.opacity=.6; const r=await fetch('/asr-relay/calendar-match?id='+encodeURIComponent(id)+(v==='reset'?'&refresh=1':'')+'&token='+tok, v==='reset'?{cache:'no-store'}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({eventId:v})}); box.style.opacity=1; paint(await r.json()); mountNote(record); };
-      if(el.tagName==='SELECT') el.onchange=()=>send(el.value); else el.onclick=()=>send(el.dataset.cal);
-    });
-  };
-  try{ const r=await fetch('/asr-relay/calendar-match?id='+encodeURIComponent(id)+'&token='+tok,{cache:'no-store',signal:AbortSignal.timeout(60000)}); paint(await r.json()); }
-  catch(e){ box.hidden=true; }
-}
 // 会后带走：下载和分享是同一件事的三个去处，共用同一份正文（纪要 + 逐字稿）。
 // 分开做成三个按钮的话，三处各生成一遍，内容迟早对不上。
 const tok=()=>encodeURIComponent(settings.relayToken||'');
@@ -779,96 +697,3 @@ async function takeSend(target, extra){
   }catch(e){ takeMsg('没发出去：'+e.message, true); }
   finally{ btn.disabled=false; }
 }
-function startReview(s){
-  const c=s.condensed||{};
-  rvQueue=[];
-  for(const k of ['highlights','todos','factchecks'])
-    (c[k]||[]).forEach((x,i)=>rvQueue.push({kind:k,index:i,item:x}));
-  if(!rvQueue.length) return;
-  rvAt=0; rvDecisions=[]; rvEditing=false;
-  document.getElementById('rv-done').hidden=true;
-  document.getElementById('rv-acts').hidden=false;
-  document.getElementById('rv').hidden=false;
-  paintReview();
-}
-function paintReview(){
-  const cur=rvQueue[rvAt];
-  if(!cur) return finishReview();
-  document.getElementById('rv-step').textContent=(rvAt+1)+' / '+rvQueue.length;
-  document.getElementById('rv-kind').textContent=RV_KIND[cur.kind]||cur.kind;
-  const t=cur.item.text||cur.item.claim||'';
-  document.getElementById('rv-text').textContent=t;
-  const ed=document.getElementById('rv-edit');
-  ed.hidden=!rvEditing;
-  if(rvEditing){
-    document.getElementById('rv-input').value=t;
-    document.getElementById('rv-owner').value=cur.item.owner||'';
-    document.getElementById('rv-due').value=cur.item.due||'';
-    document.getElementById('rv-wrong').value=''; document.getElementById('rv-right').value='';
-    setTimeout(()=>document.getElementById('rv-input').focus(),30);
-  }
-}
-function rvNext(action){
-  const cur=rvQueue[rvAt]; if(!cur) return;
-  const d={kind:cur.kind,index:cur.index,action};
-  if(action==='edit'){
-    d.text=(document.getElementById('rv-input').value||'').trim();
-    d.owner=(document.getElementById('rv-owner').value||'').trim();
-    d.due=(document.getElementById('rv-due').value||'').trim();
-    if(!d.text){ d.action='keep'; }
-    const w=(document.getElementById('rv-wrong').value||'').trim(), r=(document.getElementById('rv-right').value||'').trim();
-    if(w&&r) pushLexiconFromReview(w,r);      // 顺手纠的词也回流到热词
-  }
-  rvDecisions.push(d);
-  rvEditing=false; rvAt++;
-  paintReview();
-}
-async function pushLexiconFromReview(wrong,right){
-  try{ await fetch('/asr-relay/lexicon?token='+encodeURIComponent(settings.relayToken||''),
-    {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({wrong,right,meetingId:id}),signal:AbortSignal.timeout(8000)}); }
-  catch(e){ console.debug('[review] 词没送上去', e&&e.message); }
-}
-async function finishReview(){
-  const box=document.getElementById('rv-done');
-  document.getElementById('rv-acts').hidden=true;
-  document.getElementById('rv-edit').hidden=true;
-  document.getElementById('rv-text').textContent='';
-  document.getElementById('rv-kind').textContent='';
-  box.hidden=false; box.textContent='正在保存…';
-  try{
-    const r=await fetch('/asr-relay/review?token='+encodeURIComponent(settings.relayToken||''),
-      {method:'POST',headers:{'content-type':'application/json'},
-       body:JSON.stringify({id,decisions:rvDecisions}),signal:AbortSignal.timeout(30000)});
-    const j=await r.json();
-    if(!j.ok){ box.textContent='没存上：'+(j.error||'未知原因'); return; }
-    const kept=rvDecisions.filter(d=>d.action!=='drop').length, dropped=rvDecisions.length-kept;
-    box.innerHTML='<p><b>过完了。</b>留下 '+kept+' 条，丢掉 '+dropped+' 条。</p>'
-      +'<p>已写进会议记忆 '+j.written+' 条'+(j.projected?'，Claude 那边的只读副本也更新了：<br><code>'+esc(j.projected)+'</code>':'')+'</p>'
-      +'<p style="margin-top:14px">下面这份是给人看的，可以直接转发：</p>'
-      +'<pre id="rv-note">'+esc(j.note||'')+'</pre>'
-      +'<div class="rv-row"><button type="button" id="rv-copy">复制这份纪要</button><button type="button" id="rv-close2">关闭</button></div>';
-    document.getElementById('rv-copy').onclick=async()=>{
-      try{ await navigator.clipboard.writeText(j.note||''); document.getElementById('rv-copy').textContent='已复制'; }
-      catch(e){ document.getElementById('rv-copy').textContent='复制失败，手动选中'; }
-    };
-    document.getElementById('rv-close2').onclick=()=>{ document.getElementById('rv').hidden=true; location.reload(); };
-  }catch(e){ box.textContent='没存上：'+(e.message||e); }
-}
-document.addEventListener('keydown',e=>{
-  const rv=document.getElementById('rv');
-  if(!rv||rv.hidden) return;
-  if(e.key==='Escape'){ rv.hidden=true; return; }
-  if(rvEditing){
-    if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); rvNext('edit'); }
-    return;
-  }
-  if(e.key==='ArrowRight'){ e.preventDefault(); rvNext('keep'); }
-  else if(e.key==='ArrowLeft'){ e.preventDefault(); rvNext('drop'); }
-  else if(e.key==='ArrowUp'){ e.preventDefault(); rvEditing=true; paintReview(); }
-});
-document.addEventListener('click',e=>{
-  if(e.target.id==='rv-x'){ document.getElementById('rv').hidden=true; }
-  else if(e.target.id==='rv-keep'){ rvNext('keep'); }
-  else if(e.target.id==='rv-drop'){ rvNext('drop'); }
-  else if(e.target.id==='rv-edit-go'){ if(rvEditing) rvNext('edit'); else { rvEditing=true; paintReview(); } }
-});

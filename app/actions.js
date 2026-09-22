@@ -542,4 +542,5 @@ module.exports = {
   KINDS, STATES, MAX_RESEARCH, MAX_RISKS,
   keyOf, fileOf, read, ensure, ensureBackground, generate, apply, markSent, projectFocus, sentDigest,
   classifyByRules, enforceExclusive, sourceCards, mergeStates, sanitizeDraft, twoSlots, norm, todayLocal,
+  cardId, ownerIsOther,   // app/todo-say.js 加卡、判「派给别人」用同一套口径
 };

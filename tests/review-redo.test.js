@@ -1,0 +1,184 @@
+'use strict';
+// 回看页大改（REQ-004 + Aaron 09-22 拍板四条）：
+//   ① 历史列表直达回看页  ② 总结改飞书纪要式（编号 / 议题分组 / 结论加粗 / 待办表）
+//   ③ 待办用一句话改（规则优先，模型兜底，不外发）  ④ 界面只显示真名或「未认人」，不出现 S0 / S1
+// 样例是合成的（tests/fixtures/review-redo/make.js），真实会议不进仓库。
+const { test } = require('node:test'), assert = require('node:assert/strict');
+const fs = require('fs'), os = require('os'), path = require('path'), net = require('net'), { spawn } = require('child_process');
+const root = path.join(__dirname, '..');
+const fx = require('./fixtures/review-redo/make');
+const say = require('../app/todo-say');
+const share = require('../app/share');
+const A = require('../app/actions');
+const pause = ms => new Promise(r => setTimeout(r, ms));
+const tmp = tag => fs.mkdtempSync(path.join(os.tmpdir(), 'tht-' + tag + '-'));
+const AT = new Date('2026-09-22T10:00:00+08:00');   // 周二
+const clone = x => JSON.parse(JSON.stringify(x));
+
+// ===================== ③ 一句话改待办：规则解析 =====================
+test('规则解析：派给 / 加一条 / 不要了 / 做完了 / 改成 / 相对日期 都能认，多句用分号分开', () => {
+  assert.deepEqual(say.parseRules('第 2 条派给 Cary，周五前', AT), [{ op: 'assign', n: 2, owner: 'Cary', due: '2026-09-25' }]);
+  assert.deepEqual(say.parseRules('加一条：整理手板结果，10 月 8 日前', AT), [{ op: 'add', text: '整理手板结果', owner: '', due: '2026-10-08' }]);
+  assert.deepEqual(say.parseRules('第 3 条不要了', AT), [{ op: 'remove', n: 3 }]);
+  assert.deepEqual(say.parseRules('#1 做完了', AT), [{ op: 'done', n: 1 }]);
+  const edit = say.parseRules('第 1 条改成 准备 CDCP 材料初稿', AT);
+  assert.equal(edit.length, 1); assert.equal(edit[0].op, 'edit'); assert.equal(edit[0].n, 1); assert.match(edit[0].text, /CDCP 材料初稿/);
+  const multi = say.parseRules('第 2 条派给 Cary；第 3 条不要了', AT);
+  assert.deepEqual(multi.map(o => o.op), ['assign', 'remove']);
+  assert.equal(say.parseDue('明天', AT), '2026-09-23');
+  assert.equal(say.parseDue('下周一', AT), '2026-09-28');
+  assert.equal(say.parseDue('2026-10-01', AT), '2026-10-01');
+});
+
+test('规则解析：听不懂的话回 null（交给模型），不硬猜', () => {
+  assert.equal(say.parseRules('这个会开得挺好的', AT), null);
+  assert.equal(say.parseRules('', AT), null);
+  // 一半听懂一半没懂 → 整句给模型，不做半截
+  assert.equal(say.parseRules('第 2 条派给 Cary；还有那个事你看着办', AT), null);
+});
+
+test('validOps：模型回的操作要过形状校验，编号越界 / 未知 op / 空 add 都拒', () => {
+  assert.equal(say.validOps({ ops: [{ op: 'fly', n: 1 }] }, 4), null);
+  assert.equal(say.validOps({ ops: [{ op: 'remove', n: 9 }] }, 4), null);
+  assert.equal(say.validOps({ ops: [{ op: 'add', text: '' }] }, 4), null);
+  assert.deepEqual(say.validOps({ ops: [{ op: 'remove', n: 4 }] }, 4), [{ op: 'remove', n: 4 }]);
+});
+
+// ===================== ③ 落到卡片上 =====================
+test('apply：派给别人 → delegate + 草稿 + focus；加一条 → 新卡编号是 c-<12hex>；不要了 / 做完了只改状态不删卡', () => {
+  const data = clone(fx.actions);
+  const r = say.apply(data, [{ op: 'assign', n: 2, owner: 'Cary Luo', due: '2026-09-25' }], { at: AT.toISOString() });
+  const c2 = data.cards[1];
+  assert.equal(c2.kind, 'delegate'); assert.equal(c2.owner, 'Cary Luo'); assert.equal(c2.draft.assignee, 'Cary Luo'); assert.equal(c2.draft.due, '2026-09-25');
+  assert.equal(r.focus, c2.id); assert.match(r.applied[0], /派给 Cary Luo/);
+
+  const r2 = say.apply(data, [{ op: 'add', text: '整理手板结果', owner: '', due: '2026-10-08' }], { at: AT.toISOString() });
+  const added = data.cards[data.cards.length - 1];
+  assert.match(added.id, /^c-[0-9a-f]{12}$/); assert.equal(added.kind, 'self'); assert.equal(added.due, '2026-10-08'); assert.equal(added.source, 'say');
+  assert.equal(r2.focus, '');
+  // 同一句话再加一遍：id 不撞，形状不变
+  say.apply(data, [{ op: 'add', text: '整理手板结果', owner: '', due: '' }], { at: AT.toISOString() });
+  const ids = data.cards.map(c => c.id);
+  assert.equal(new Set(ids).size, ids.length); ids.forEach(id => assert.match(id, /^c-[0-9a-f]{12}$/));
+
+  say.apply(data, [{ op: 'remove', n: 1 }, { op: 'done', n: 1 }], { at: AT.toISOString() });   // 第二个 n:1 落到原第 2 条（第 1 条已收起）
+  assert.equal(data.cards[0].state, 'dismissed'); assert.equal(data.cards[0].doneAt, undefined);
+  assert.equal(data.cards[1].state, 'dismissed'); assert.equal(data.cards[1].doneAt, AT.toISOString());
+  assert.equal(data.cards.length, 6, '收起不等于删掉');
+});
+
+test('apply：已派发的卡拒改；编号越界拒改；两种错都是 400', () => {
+  const data = clone(fx.actions); data.cards[0].state = 'sent';
+  assert.throws(() => say.apply(data, [{ op: 'assign', n: 1, owner: 'Cary' }]), e => e.code === 400 && /派发/.test(e.message));
+  assert.throws(() => say.apply(data, [{ op: 'remove', n: 8 }]), e => e.code === 400 && /没有第 8 条/.test(e.message));
+});
+
+test('handle：没有卡片文件但总结已出 → 从空表开始；连总结都没有 → 404；一个字都没说 → 400', async () => {
+  const dir = tmp('say');
+  const out = await say.handle({ dir, sessionId: 'x1', text: '加一条：约 Val 取用研', enhanced: fx.enhanced, dataDir: dir, at: AT });
+  assert.equal(out.by, 'rules'); assert.equal(out.actions.cards.length, 1); assert.equal(out.actions.cards[0].text, '约 Val 取用研');
+  assert.ok(fs.existsSync(A.fileOf(dir, 'x1')), '要落盘');
+  await assert.rejects(say.handle({ dir, sessionId: 'x2', text: '加一条：a', enhanced: { brief: null }, dataDir: dir, at: AT }), e => e.code === 404);
+  await assert.rejects(say.handle({ dir, sessionId: 'x1', text: '   ', enhanced: fx.enhanced, dataDir: dir, at: AT }), e => e.code === 400);
+});
+
+// ===================== ② ④ 分享正文：飞书纪要式 + 不出现 S 码 =====================
+test('briefNote：三级编号、结论加粗、待办表；没认的人写「未认人」，认了的写真名，正文不出现 S0 / S1', () => {
+  const md = share.briefNote(fx.enhanced, fx.actions.cards);
+  assert.match(md, /^## 1\. 一屏速览/m); assert.match(md, /^## 2\. 议题/m); assert.match(md, /^### 2\.1 /m); assert.match(md, /^## 3\. 待办/m);
+  assert.match(md, /\*\*结论：/); assert.match(md, /\| # \| 事项 \| 负责人 \| 期限 \|/);
+  assert.ok(md.includes('Cary Luo'), '认了名的要写真名');
+  assert.ok(md.includes('未认人'), '没认名的写「未认人」');
+  assert.ok(!/\bS[0-9]\b/.test(md), '正文不许出现 S0 / S1 这种声音编号：' + (md.match(/.*\bS[0-9]\b.*/) || [''])[0]);
+  const { speakerMap, nameIn } = share.__test;
+  const m = speakerMap(fx.session);
+  assert.equal(m.get ? m.get('1') : m['1'], 'Cary Luo');
+  assert.equal(nameIn('S3 准备材料，S1 review', m), '未认人 准备材料，Cary Luo review');
+});
+
+// ===================== 走真服务进程 =====================
+const freePort = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
+function stubCli(dir) {
+  const bin = path.join(dir, 'lark-stub.js'), logFile = path.join(dir, 'lark-calls.log');
+  fs.writeFileSync(bin, '#!/usr/bin/env node\nrequire("fs").appendFileSync(' + JSON.stringify(logFile) + ', JSON.stringify(process.argv.slice(2))+"\\n");process.stdout.write("{}");\n');
+  fs.chmodSync(bin, 0o755);
+  return { bin, calls: () => { try { return fs.readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean); } catch (e) { return []; } } };
+}
+async function up(dir, home) {
+  const cli = stubCli(dir);
+  const port = await freePort(), base = 'http://127.0.0.1:' + port + '/asr-relay';
+  const child = spawn(process.execPath, [path.join(root, 'app/server.js')],
+    { env: { ...process.env, HOME: home, THT_DATA_DIR: dir, THT_PORT: String(port), THT_NO_OPEN: '1', THT_TEST: '1', THT_LARK_CLI: cli.bin }, stdio: 'ignore' });
+  let ok = false;
+  for (let i = 0; i < 150; i++) { try { if ((await fetch('http://127.0.0.1:' + port + '/health')).ok) { ok = true; break; } } catch (e) {} await pause(100); }
+  assert.ok(ok, '服务 15 秒内没起来');
+  return { child, base, port, cli };
+}
+
+test('服务端：/meeting-result 给出 brief；POST /todo-say 改卡并回 applied / focus；/share-export 正文是飞书纪要式且没有 S 码；全程不碰 lark-cli', async () => {
+  const dir = tmp('redo-srv'), home = path.join(dir, 'home'); fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ RELAY_TOKEN: 't'.repeat(32), ARCHIVE_TARGET: 'local' }));
+  const { id } = fx.install(dir);
+  const { child, base, cli } = await up(dir, home);
+  const get = async p => { const r = await fetch(base + p); return { status: r.status, j: await r.json() }; };
+  const post = async (p, body) => { const r = await fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, j: await r.json() }; };
+  try {
+    const mr = await get('/meeting-result?id=' + id);
+    assert.equal(mr.status, 200); assert.equal(mr.j.brief.overview.topics.length, 2);
+
+    let r = await post('/todo-say', { id, text: '第 2 条派给 Cary Luo，周五前' });
+    assert.equal(r.status, 200, JSON.stringify(r.j)); assert.equal(r.j.ok, true); assert.equal(r.j.by, 'rules');
+    assert.match(r.j.applied[0], /派给 Cary Luo/); assert.equal(r.j.focus, 'c-' + 'b'.repeat(12));
+    assert.equal(r.j.actions.cards[1].kind, 'delegate');
+
+    r = await post('/todo-say', { id, text: '加一条：整理手板结果，10 月 8 日前' });
+    assert.equal(r.status, 200); assert.equal(r.j.actions.cards.length, 5);
+    const again = await get('/meeting-actions?id=' + id);
+    assert.equal(again.j.actions.cards.length, 5, '改动要落盘，再读还在');
+
+    r = await post('/todo-say', { id, text: '第 9 条不要了' });
+    assert.equal(r.status, 400); assert.match(r.j.error, /没有第 9 条/);
+    r = await post('/todo-say', { id, text: '' });
+    assert.equal(r.status, 400);
+    r = await post('/todo-say', { id: 'nobody-here', text: '加一条：x' });
+    assert.equal(r.status, 404);
+    const bad = await fetch(base + '/todo-say?id=' + id);
+    assert.equal(bad.status, 405);
+
+    const ex = await get('/share-export?id=' + id);
+    assert.equal(ex.status, 200); assert.equal(ex.j.ok, true);
+    const md = ex.j.markdown;
+    assert.match(md, /## 1\. 一屏速览/); assert.match(md, /\*\*结论：/); assert.match(md, /\| # \| 事项 \| 负责人 \| 期限 \|/);
+    assert.ok(md.includes('整理手板结果'), '分享正文要用最新卡片');
+    // 纪要正文 = 从「1 一屏速览」到「3 待办」之后的下一个一级标题为止；逐字稿导出仍是旧口径（S 码），另列为已知项
+    const start = md.indexOf('## 1. 一屏速览'), todo = md.indexOf('## 3. 待办'), end = md.indexOf('\n## ', todo + 5);
+    const note = md.slice(start, end < 0 ? undefined : end);
+    assert.ok(!/\bS[0-9]\b/.test(note), '纪要正文不出现 S 码：' + (note.match(/.*\bS[0-9]\b.*/) || [''])[0]);
+    assert.equal(cli.calls().length, 0, '这几条路一次都不该碰 lark-cli');
+  } finally { child.kill('SIGTERM'); }
+});
+
+// ===================== 页面契约 =====================
+test('页面契约：旧三栏 / 过一遍 / 纪要 / 日历条都不在了；三级编号、待办表、一句话对话框都在；archive.js 不再拼 S 码', () => {
+  const js = fs.readFileSync(path.join(root, 'web/archive.js'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'web/archive.html'), 'utf8');
+  const noComment = s => s.replace(/^[ \t]*\/\/.*$/gm, '');
+  for (const gone of ['id="rv"', 'id="review-go"', 'id="highlights"', 'id="todos"', 'id="factchecks"', 'cal-chip']) assert.ok(!html.includes(gone), 'archive.html 里不该再有 ' + gone);
+  for (const gone of ['renderCondenseBar', 'mountReviewButton', 'startReview(', 'mountNote(', 'mountCalendarChip', 'showRaw']) assert.ok(!noComment(js).includes(gone), 'archive.js 里不该再有 ' + gone);
+  for (const need of ['id="bf-say"', 'id="bf-cards"', 'class="fs-n"', 'fs-n sub', 'td-table', "t('concl')", 'UNNAMED']) assert.ok(js.includes(need), 'archive.js 要有 ' + need);
+  assert.ok(!/['"]S['"]\s*\+/.test(noComment(js)), 'archive.js 不许再拼「S」+ 编号当说话人名字');
+  assert.ok(js.includes('未认人') && js.includes('Unnamed'), '「未认人」要有中英文');
+  assert.ok(/AbortController/.test(js) && /sayCancel/.test(js), '一句话改待办要能取消（取消 = 撤回这次请求）');
+  assert.ok(/\.bf-say|#bf-say/.test(html) && /td-table/.test(html), 'archive.html 要有对话框和待办表的样式');
+  assert.ok(/@media\s*\(max-width:\s*900px\)/.test(html), '平板宽度：两栏在 900px 以下叠成一栏');
+});
+
+test('页面契约：历史列表和会后卡点开都直达回看页，不再先装回三栏主界面', () => {
+  const list = fs.readFileSync(path.join(root, 'web/src/13-meeting-list.js'), 'utf8');
+  const cards = fs.readFileSync(path.join(root, 'web/src/09-post-cards.js'), 'utf8');
+  assert.match(list, /if \(act === 'open'\) return openArchivePanel\(id\)/);
+  assert.ok(!/if \(act === 'open'\)[^\n]*reviewSession/.test(list), '「打开」不许再走 reviewSession');
+  assert.match(cards, /openArchivePanel\(id\)/);
+  const built = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
+  assert.ok(built.includes("if (act === 'open') return openArchivePanel(id)"), 'index.html 要是 build-web 之后的产物');
+});

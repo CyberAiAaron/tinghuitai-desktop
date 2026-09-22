@@ -40,6 +40,48 @@ function buildMarkdown(session, note) {
   return out.join('\n');
 }
 
+// 新版结构化总结 → 飞书纪要式 Markdown：标题自动编号、议题分组、结论加粗、待办表格。
+// 只写会上说了什么（速览 + 议题展开 + 待办）；③ 点评是助手的判断、可能直接评价同事发言，默认不进分享。
+// 说话人：有名字的换名字，没名字的写「未认人」，不出现 S0 / S1 这类声音编号（Aaron 09-22 定）。
+function speakerMap(session) {
+  const map = { ...(session.names || {}) };
+  for (const r of (Array.isArray(session.transcript) ? session.transcript : [])) {
+    const k = String(r.speaker == null ? (r.spk == null ? '' : r.spk) : r.speaker);
+    if (/^\w{1,12}$/.test(k) && !map[k]) map[k] = '未认人';
+  }
+  return map;
+}
+function nameIn(text, map) {
+  let t = String(text == null ? '' : text);
+  for (const k of Object.keys(map)) { if (!map[k] || !/^\w{1,12}$/.test(k)) continue; t = t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)' + k + '(?!\\d)', 'g'), map[k]); }
+  return t;
+}
+function briefNote(session, cards) {
+  const b = session.brief || {}, ov = b.overview || {}, map = speakerMap(session), N = s => nameIn(s, map);
+  const out = [];
+  if (b.meta && b.meta.scope) out.push(N(b.meta.scope), '');
+  out.push('## 1. 一屏速览', '');
+  (ov.conclusions || []).forEach(c => out.push('- **' + N(c) + '**'));
+  if (!(ov.conclusions || []).length) out.push('_这场没有形成核心结论。_');
+  out.push('', '## 2. 议题', '');
+  const heads = ov.topics || [];
+  (b.topics || []).forEach((tp, i) => {
+    const head = heads[i] || {}, dec = (b.decisions || {})[String(tp.n)] || tp.decision || '';
+    out.push('### 2.' + (i + 1) + ' ' + N(head.title || ('议题 ' + tp.n)) + (dec ? '（' + dec + '）' : ''), '');
+    out.push('**结论：' + N(tp.conclusion || '未形成结论') + '**', '');
+    (tp.points || []).forEach(p => out.push('- ' + N(p.text) + (p.at ? ' `' + clock(p.at) + '`' : '')));
+    if ((tp.open || []).length) out.push('', '未决：' + tp.open.map(N).join('；'));
+    out.push('');
+  });
+  const rows = Array.isArray(cards)
+    ? cards.filter(c => c.state !== 'dismissed').map(c => ({ what: c.text, owner: c.owner || ((c.draft || {}).assignee) || '', due: c.due || ((c.draft || {}).due) || '' }))
+    : (ov.todos || []).map(t => ({ what: t.what, owner: t.owner || '', due: t.due || '' }));
+  out.push('## 3. 待办', '');
+  if (!rows.length) out.push('_这场没有待办。_');
+  else { out.push('| # | 事项 | 负责人 | 期限 |', '|---|---|---|---|'); rows.forEach((r, i) => out.push('| ' + (i + 1) + ' | ' + N(r.what).replace(/\|/g, '／') + ' | ' + (N(r.owner) || '—') + ' | ' + (r.due || '—') + ' |')); }
+  return out.join('\n');
+}
+
 const safe = s => String(s || '').replace(/[\/\\:*?"<>|\n\r]/g, '_').slice(0, 60);
 const fileNameOf = session => safe(session.title || session.id || '会议') + '_纪要与逐字稿.md';
 
@@ -123,4 +165,4 @@ async function sendSlack(text, channel, deps = {}) {
   return true;
 }
 
-module.exports = { buildMarkdown, fileNameOf, larkTargets, sendLark, sendSlack, __test: { clock, who, buildMarkdown, splitForIM } };
+module.exports = { buildMarkdown, briefNote, fileNameOf, larkTargets, sendLark, sendSlack, __test: { clock, who, buildMarkdown, splitForIM, speakerMap, nameIn } };
