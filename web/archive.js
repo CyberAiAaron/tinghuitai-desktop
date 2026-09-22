@@ -126,7 +126,8 @@ let segText=new Map();
 const decEditing=new Set();
 // 名字只存一处：names 映射。以前这里还从「需要你定一下」的答案里二次推导，
 // 于是认人清单把一个名字清掉之后，旧答案又会把它顶回来。现在认人只走 /speaker-confirm，答案不再参与显示。
-function spkMap(s){const m={};(s.transcript||[]).forEach(r=>{const k=String(r.speaker??r.spk??r.who??'');if(k&&/^\w{1,12}$/.test(k)&&!m[k])m[k]=UNNAMED();});return {...m,...(s.names||{})};}
+// names 里的键可能是 '1' 也可能是老写法 'S1'（share.who 两种都认），这里归一到转写用的 '1'，不然认了名的人会被「未认人」盖掉
+function spkMap(s){const m={};(s.transcript||[]).forEach(r=>{const k=String(r.speaker??r.spk??r.who??'');if(k&&/^\w{1,12}$/.test(k)&&!m[k])m[k]=UNNAMED();});Object.entries(s.names||{}).forEach(([k,v])=>{if(!v)return;const kk=(/^S\d+$/.test(k)&&!(k in m)&&(k.slice(1) in m))?k.slice(1):k;m[kk]=v;});return m;}
 function nmTxt(text,map){let t=String(text==null?'':text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),map[k]);});return t;}
 function nm(text,map){let t=esc(text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),()=>esc(map[k]));});return t;}
 // 时间胶囊 = 回到原句的入口。段落 id（seg）在就精确落到那一句；只有时间就按时间找最近的一句；

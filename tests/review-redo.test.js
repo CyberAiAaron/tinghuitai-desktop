@@ -231,6 +231,17 @@ test('页面契约：旧三栏 / 过一遍 / 纪要 / 日历条都不在了；�
   assert.match(js, /ask\.hidden=!qs\.length/, '疑问块要按过滤后的题数决定显示');
 });
 
+test('spkMap：names 用 1 或 S1 两种键都认，认了名的不会被「未认人」盖掉；没认的才是未认人', () => {
+  const js = fs.readFileSync(path.join(root, 'web/archive.js'), 'utf8');
+  const src = js.slice(js.indexOf('function spkMap(s){'), js.indexOf('\n', js.indexOf('function spkMap(s){')));
+  const spkMap = new Function('UNNAMED', src + '; return spkMap;')(() => '未认人');
+  const tr = [{ speaker: '0' }, { speaker: '1' }, { speaker: '2' }];
+  assert.deepEqual(spkMap({ transcript: tr, names: { 1: 'Cary Luo' } }), { 0: '未认人', 1: 'Cary Luo', 2: '未认人' });
+  assert.deepEqual(spkMap({ transcript: tr, names: { S1: 'Cary Luo' } }), { 0: '未认人', 1: 'Cary Luo', 2: '未认人' });
+  assert.deepEqual(spkMap({ transcript: tr, names: { S1: 'Cary Luo', 1: '' } }), { 0: '未认人', 1: 'Cary Luo', 2: '未认人' }, '空名字不盖真名');
+  assert.deepEqual(spkMap({ transcript: tr, names: { S9: 'Val' } }), { 0: '未认人', 1: '未认人', 2: '未认人', S9: 'Val' }, '不在转写里的键原样留');
+});
+
 test('页面契约：历史列表和会后卡点开都直达回看页，不再先装回三栏主界面', () => {
   const list = fs.readFileSync(path.join(root, 'web/src/13-meeting-list.js'), 'utf8');
   const cards = fs.readFileSync(path.join(root, 'web/src/09-post-cards.js'), 'utf8');
