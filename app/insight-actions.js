@@ -216,15 +216,32 @@ async function resolveSource(source, refs, opts = {}) {
 }
 
 // ---------- 两个动作 ----------
+// 兜底（Aaron 2026-09-22 21:10 拍板：F1/F2 前置核对推到下一批，先接受「点击才执行、执行时真查」）：
+// 执行时查不到出处 / 承诺卡，不报死错，回 {ok:false, uncertain:true, offer:'create'} 让前端出一行字 + 「照会上说的新建」按钮；
+// 再点带 args.createIfMissing=true 才新建（recheck 建任务 + 新承诺卡；conflict 记一张待核的 question 卡）。
+// 每次执行回 sourceHit（true 命中 / false 缺失 / null 没法查），路由记到卡片和会后统计（F5 第五个数）。
+const OFFER_MSG = '资料里没这条，要我照会上说的新建吗？';
+const offerCreate = () => ({ ok: false, uncertain: true, offer: 'create', message: OFFER_MSG, sourceHit: false });
+
 // open_source：写回卡片 correction / quote / doc；找到了才往 highlights 加冲突条（找不到不编）
-async function openSource({ card, env, db, dataDir, log = () => {}, execImpl, inspect, kbMap }) {
+async function openSource({ card, args = {}, session = {}, env, db, dataDir, log = () => {}, execImpl, inspect, kbMap }) {
   const r = await resolveSource(card.source, card.refs, { env, claim: card.claim, evidence: card.evidence, db, execImpl, log, inspect, kbMap });
+  if (!r.found && !args.createIfMissing) return offerCreate();
+  let memoryCardId = '';
+  if (!r.found && db) {
+    // 照会上说的记一张待核卡：question / open，人工核过再改状态；不当决定写
+    try {
+      const mem = require('./memory');
+      const c = mem.putCard(db, { kind: 'question', state: 'open', text: `会上说「${clip(card.evidence || card.claim, 120)}」，资料（${card.source || '未写出处'}）里没查到，待核`, topic: clip(card.claim, 40), meeting_id: session.id || '', meeting_title: session.title || '', source_refs: r.doc && r.doc.url ? [r.doc.url] : [], human_edited: 1, needs_review: 1, review_note: '会中冲突待核（照会上说的新建）', change_reason: '会中冲突待核' });
+      memoryCardId = c ? c.id : '';
+    } catch (e) { log('insight-action open_source 待核卡没写进去 ' + e.message); }
+  }
   const patch = {
-    correction: r.found ? `记录：${r.value}（${r.label}${r.date ? '，' + r.date : ''}）` : NOT_FOUND,
+    correction: r.found ? `记录：${r.value}（${r.label}${r.date ? '，' + r.date : ''}）` : NOT_FOUND + (memoryCardId ? '（已记冲突待核）' : ''),
     quote: r.quote || '', doc: r.doc || null, found: r.found,
   };
   const highlight = r.found ? `⚠️ 冲突：会上 ${clip(card.evidence || card.claim, 40)}，记录 ${r.value}（${r.label}${r.date ? ' ' + r.date : ''}）` : '';
-  return { ok: true, patch, highlight, resolved: r };
+  return { ok: true, patch, highlight, resolved: r, sourceHit: r.found, memoryCardId };
 }
 
 // set_date：建飞书任务 + 承诺卡写 due / 状态。args {owner, due, title}
@@ -247,6 +264,9 @@ async function setDate({ card, args = {}, session = {}, env, db, log = () => {},
   const today = todayISO();
   const due = isoDay(args.due) || plusDays(today, 7);
   let best = null; try { best = matchPromise(db, card); } catch (e) { log('insight-action set_date 找承诺卡失败 ' + e.message); }
+  // 有 memory.db 才算「查过」：查不到承诺卡且没让新建 → 不建任务，先问。没 sqlite 查不了，照旧建（sourceHit null，不计）
+  const sourceHit = db ? !!best : null;
+  if (db && !best && !args.createIfMissing) return offerCreate();
   let owner = String(args.owner || (card.action && card.action.args && (card.action.args.owner || card.action.args.who)) || '').trim().slice(0, 60);
   let ownerFrom = owner ? 'args' : '';
   if (!owner && best && String(best.owner || '').trim()) { owner = String(best.owner).trim().slice(0, 60); ownerFrom = 'promise'; }
@@ -274,7 +294,7 @@ async function setDate({ card, args = {}, session = {}, env, db, log = () => {},
       else memoryCard = mem.putCard(db, { kind: 'promise', state: 'pending', text: card.claim, topic: clip(card.claim, 40), owner: owner || '', due, meeting_id: session.id || '', meeting_title: session.title || '', source_refs: refs, human_edited: 1, change_reason: '会中定日期' });
     } catch (e) { log('insight-action set_date 承诺卡没写进去 ' + e.message); }
   }
-  return { ok: true, patch: { task }, url: task.url, refId: task.id, memoryCardId: memoryCard ? memoryCard.id : '' };
+  return { ok: true, patch: { task }, url: task.url, refId: task.id, memoryCardId: memoryCard ? memoryCard.id : '', sourceHit };
 }
 function safeJson(s) { try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
 
@@ -339,4 +359,4 @@ async function onePager({ card, session = {}, dataDir, ask, log = () => {} }) {
   return { ok: true, patch: { onePager: onePagerState }, attachment: { kind: 'one_pager', cardId: card.id, title, path: rel, file, at: onePagerState.at }, body };
 }
 
-module.exports = { resolveSource, openSource, setDate, matchPromise, onePager, onePagerFile, parseOnePager, onePagerHtml, kbDir, latestKb, kbMapLookup, findSection, quoteFrom, recordedValue, correctionValue, parseMeetingRef, parseBoardRef, sections, NOT_FOUND, SELF_OPEN_ID, QUOTE_MAX, DOCS, ONE_PAGER_KEYS };
+module.exports = { resolveSource, openSource, setDate, matchPromise, OFFER_MSG, onePager, onePagerFile, parseOnePager, onePagerHtml, kbDir, latestKb, kbMapLookup, findSection, quoteFrom, recordedValue, correctionValue, parseMeetingRef, parseBoardRef, sections, NOT_FOUND, SELF_OPEN_ID, QUOTE_MAX, DOCS, ONE_PAGER_KEYS };

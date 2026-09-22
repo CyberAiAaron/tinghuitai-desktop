@@ -526,6 +526,9 @@ test('insight card action states: queued shows undo, running, failed shows retry
  html=c.viewListHtml([{...base,actionState:{status:'failed',do:'open_source',error:'lark-cli 没跑起来'}}],true);assert.ok(html.includes('没成：lark-cli 没跑起来')&&/insight-act" type="button" data-do="open_source" data-retry="1">重试<\/button>/.test(html),'失败可重试');
  html=c.viewListHtml([{...base,actionState:{status:'failed',do:'open_source',error:'超时',uncertain:true}}],true);assert.ok(/data-retry="confirm"/.test(html),'结果不明的重试要带 retryConfirmed');
  html=c.viewListHtml([{...base,actionState:{status:'cancelled',do:'open_source'}}],true);assert.ok(html.includes('已撤回')&&/insight-act" type="button" data-do="open_source" >核对并附文档/.test(html),'撤回后按钮回来');
+ // 兜底 A（Aaron 2026-09-22 拍板）：offer 态 = 一行字 + 「照会上说的新建」按钮（data-create，点击带 args.createIfMissing），不出重试、不出主按钮
+ html=c.viewListHtml([{...base,actionState:{status:'offer',do:'open_source',offer:'create',message:'资料里没这条，要我照会上说的新建吗？'}}],true);assert.ok(html.includes('<div class="v ins-state">资料里没这条，要我照会上说的新建吗？</div>')&&/<button class="btn sm insight-act" type="button" data-do="open_source" data-create="1">照会上说的新建<\/button>/.test(html),'offer 出新建按钮');assert.equal((html.match(/insight-act/g)||[]).length,1);assert.ok(!html.includes('data-retry')&&!html.includes('insight-cancel'));
+ html=c.viewListHtml([{...base,type:'recheck',action:{do:'set_date',args:{}},actionState:{status:'offer',do:'set_date',offer:'create',message:'资料里没这条，要我照会上说的新建吗？',args:{owner:'Cary Luo',due:'2026-10-01'}}}],true);assert.ok(/data-do="set_date" data-create="1">照会上说的新建</.test(html),'recheck 的 offer 也是同一个按钮');
  html=c.viewListHtml([{...base,actionState:{status:'done',do:'open_source'},correction:'记录：6.3%（决策板 D3，2026-09-17）',quote:'D3 流失率 6.3%',doc:{title:'决策板',url:'https://example.test/docx/A2hQ'}}],true);
  assert.ok(html.includes('<div class="v ins-res">记录：6.3%（决策板 D3，2026-09-17）</div>')&&html.includes('原文：「D3 流失率 6.3%」')&&/<button class="btn sm insight-open" type="button" data-url="https:\/\/example.test\/docx\/A2hQ"[^>]*>打开文档<\/button>/.test(html),'做完：正确值 + 原文 + 打开文档');assert.ok(!/window\.open|target="_blank"/.test(html),'不开新窗口');
  html=c.viewListHtml([{...base,actionState:{status:'done',do:'open_source'},correction:'资料里没有这个数',quote:'',doc:null}],true);assert.ok(html.includes('资料里没有这个数')&&!html.includes('insight-open'),'找不到就如实说，没有链接按钮');
@@ -556,3 +559,9 @@ test('insights merge keeps type / action / evidence and the actionState of the r
  c.mergeInsights(list,[{id:'b',claim:'会上说 CDCP 09-22；决策板记延期未定（补）',type:'conflict',evidence:'原话',action:{do:'open_source',args:{}},source:'决策板 D1',why:'省'},{id:'c',claim:'新的一条',type:'bogus',action:'open_source',source:'S',why:'W'}],5);
  assert.equal(list.length,2);assert.equal(list[0].id,'b');assert.equal(list[0].type,'conflict');assert.equal(list[0].evidence,'原话');assert.deepEqual(JSON.parse(JSON.stringify(list[0].action)),{do:'open_source',args:{}});assert.equal(list[0].actionState,'done');
  assert.equal(list[1].type,'answer','不认识的 type 按 answer');assert.deepEqual(JSON.parse(JSON.stringify(list[1].action)),{do:'none',args:{}});});
+
+test('insight offer button: click handler sends the same POST with args.createIfMissing=true and reuses the owner / due kept in actionState.args (source and build)', ()=>{
+ const src=fs.readFileSync(__dirname+'/../web/src/25b-insight-action.js','utf8'), built=html;
+ for(const s of [src,built]){ assert.ok(/b\.dataset\.create==='1'/.test(s),'认 data-create 按钮'); assert.ok(/actionState&&it\.actionState\.args\)\|\|\{\}\),createIfMissing:true\}/.test(s),'沿用 actionState.args 并加 createIfMissing'); }
+ assert.ok(src.indexOf("b.dataset.create==='1'")<src.indexOf("if(d==='set_date'){"),'新建分支在 set_date 弹两句之前，不再重问');
+});

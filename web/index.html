@@ -1505,7 +1505,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   function insightTypeLabel(t){ return ({conflict:ui==='en'?'Mismatch':'对不上',recheck:ui==='en'?'Stalled':'空转',answer:ui==='en'?'Answer':'递答案'})[t]||''; }
   function insightActionLabel(t){ return ({conflict:ui==='en'?'Check & attach doc':'核对并附文档',recheck:ui==='en'?'Set a date':'定日期'})[t]||''; }
   function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
-  // 批 3：按钮 + 执行态 + 产物。点 = 批准（POST /insight-action，web/src/25b-insight-action.js）；等待期能撤回；失败能重试；做完显示正确值 / 原文 / 「打开文档」或任务链接。
+  // 批 3：按钮 + 执行态 + 产物。点 = 批准（POST /insight-action，web/src/25b-insight-action.js）；等待期能撤回；失败能重试；资料里没这条（offer）出「照会上说的新建」（再点带 args.createIfMissing）；做完显示正确值 / 原文 / 「打开文档」或任务链接。
   function insightActionHtml(x,t,label){
     const st=x.actionState||{}, s=st.status||'', en=ui==='en', d=(x.action&&x.action.do)||({conflict:'open_source',recheck:'set_date'})[t]||'';
     const btn=(txt,extra='')=>`<button class="btn sm insight-act" type="button" data-do="${esc(d)}" ${extra}>${txt}</button>`;
@@ -1513,6 +1513,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     if(s==='running') return `<div class="v ins-state">${en?'Running…':'执行中…'}</div>`;
     if(s==='failed') return `<div class="v ins-state err">${en?'Failed: ':'没成：'}${esc(st.error||'')}</div>${btn(en?'Retry':'重试',`data-retry="${st.uncertain?'confirm':'1'}"`)}`;
     if(s==='cancelled') return `<div class="v ins-state">${en?'Undone':'已撤回'}</div>${btn(label)}`;
+    if(s==='offer') return `<div class="v ins-state">${esc(st.message||(en?'Not in the records. Create it as said in the meeting?':'资料里没这条，要我照会上说的新建吗？'))}</div>${btn(en?'Create as said':'照会上说的新建',`data-create="1"`)}`;
     if(s==='done'){
       if(d==='open_source'){ const doc=x.doc||{}; return `<div class="v ins-res">${esc(x.correction||'')}</div>${x.quote?`<div class="v src">${en?'Quote':'原文'}：「${esc(x.quote)}」</div>`:''}${doc.url?`<button class="btn sm insight-open" type="button" data-url="${esc(doc.url)}" title="${esc(doc.title||'')}">${en?'Open document':'打开文档'}</button>`:(doc.title?`<div class="v src">${esc(doc.title)}${doc.linkError?`（${en?'no link':'链接没取到'}）`:''}</div>`:'')}${onePagerHtml(x)}`; }
       const task=x.task||{}; return `<div class="v ins-res">${en?'Task':'任务'}：${esc(task.owner||'')} · ${en?'due ':'截止 '}${esc(task.due||'')}${task.note?`（${esc(task.note)}）`:''}</div>${task.url?`<button class="btn sm insight-open" type="button" data-url="${esc(task.url)}">${en?'Open task':'打开任务'}</button>`:''}${onePagerHtml(x)}`;
@@ -3656,6 +3657,8 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
     if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only Aaron can run this.':'旁听只能看，动作要 Aaron 本人点。'); return; }
     const it=insightCardOf(b); if(!it) return;
     const d=b.dataset.do||''; let args={};
+    // offer 态的「照会上说的新建」：沿用上次填的负责人 / 截止（服务端存在 actionState.args），只加 createIfMissing，不再弹两句
+    if(b.dataset.create==='1'){ args={...((it.actionState&&it.actionState.args)||{}),createIfMissing:true}; await insightRun(it,d,args,''); return; }
     if(d==='set_date'){
       const a=(it.action&&it.action.args)||{};
       const owner=prompt(ui==='en'?'Owner (default: the person who promised):':'负责人（默认承诺人，留空 = 建给我自己）：', a.owner||a.who||''); if(owner===null) return;

@@ -83,8 +83,21 @@ test('openSource：写回 correction / quote / doc，找到才出冲突条；找
   const r = await IA.openSource({ card, env: { DECISION_BOARD_DIR: dir }, inspect: inspectOk });
   assert.equal(r.patch.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.ok(r.patch.quote.includes('6.3%')); assert.equal(r.patch.doc.url, 'https://example.test/docx/A2hQdjgAUoIV1vxecJzlFw57gId');
   assert.equal(r.highlight, '⚠️ 冲突：会上 流失率是 4.1%，记录 6.3%（决策板 D3 2026-09-17）');
-  const miss = await IA.openSource({ card: { ...card, source: '决策板 D8', refs: ['D8'], claim: '会上说预算 20M' }, env: { DECISION_BOARD_DIR: dir }, inspect: inspectOk });
-  assert.equal(miss.patch.correction, '资料里没有这个数'); assert.equal(miss.patch.quote, ''); assert.equal(miss.highlight, '');
+  assert.equal(r.sourceHit, true, '出处命中 → sourceHit true');
+  // 兜底 A（Aaron 2026-09-22 拍板）：查不到出处 → 不报死错、不写卡，回 offer 让人决定
+  const missCard = { ...card, id: 'c8', source: '决策板 D8', refs: ['D8'], claim: '会上说预算 20M', evidence: '预算是 20M' };
+  const miss = await IA.openSource({ card: missCard, env: { DECISION_BOARD_DIR: dir }, inspect: inspectOk });
+  assert.deepEqual(miss, { ok: false, uncertain: true, offer: 'create', message: '资料里没这条，要我照会上说的新建吗？', sourceHit: false });
+  // 再点带 createIfMissing：记一张待核 question 卡，卡片如实写「资料里没有这个数」，不出冲突条，sourceHit false
+  const mem = require(path.join(root, 'app/memory.js'));
+  const db = mem.open(fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-open-')));
+  const made = await IA.openSource({ card: missCard, args: { createIfMissing: true }, session: { id: 's1', title: '硬件周会' }, env: { DECISION_BOARD_DIR: dir }, db, inspect: inspectOk });
+  assert.equal(made.ok, true); assert.equal(made.sourceHit, false); assert.equal(made.patch.quote, ''); assert.equal(made.highlight, '');
+  if (db) {
+    assert.equal(made.patch.correction, '资料里没有这个数（已记冲突待核）'); assert.ok(made.memoryCardId);
+    const row = db.prepare('SELECT * FROM cards WHERE id=?').get(made.memoryCardId);
+    assert.equal(row.kind, 'question'); assert.equal(row.state, 'open'); assert.equal(row.needs_review, 1); assert.ok(row.text.includes('预算是 20M') && row.text.includes('决策板 D8'));
+  } else assert.equal(made.patch.correction, '资料里没有这个数');
 });
 
 // 假 lark-cli 的 execFile：记下每次参数；contact 搜人按名字回；task +create 按模式文件决定成 / 败
@@ -136,7 +149,7 @@ test('setDate：没传 owner 时默认承诺卡里的承诺人（Codex 8b2bdefd 
   let calls = [];
   let r = await IA.setDate({ card, args: {}, session: { id: 's1', title: '硬件周会' }, db, execImpl: fakeExec(calls) });
   let a = calls.find(x => x[1] === '+create');
-  assert.equal(a[a.indexOf('--assignee') + 1], 'ou_cary', '任务派给承诺人'); assert.equal(r.patch.task.owner, 'Cary Luo'); assert.equal(r.patch.task.ownerFrom, 'promise'); assert.equal(r.patch.task.note, '');
+  assert.equal(a[a.indexOf('--assignee') + 1], 'ou_cary', '任务派给承诺人'); assert.equal(r.patch.task.owner, 'Cary Luo'); assert.equal(r.patch.task.ownerFrom, 'promise'); assert.equal(r.patch.task.note, ''); assert.equal(r.sourceHit, true, '承诺卡命中');
   // 承诺卡没记承诺人 → 本人，且描述里说明原因
   const db2 = mem.open(fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-owner2-')));
   mem.putCard(db2, { id: 'p-none', kind: 'promise', text: 'BOM 那个表回头发给 Cary', owner: '', meeting_id: 'm-0912', meeting_title: '硬件例会', recorded_at: '2026-09-12T10:00:00Z' });
@@ -149,6 +162,27 @@ test('setDate：没传 owner 时默认承诺卡里的承诺人（Codex 8b2bdefd 
   calls = [];
   r = await IA.setDate({ card, args: { owner: 'Aaron' }, session: { id: 's1' }, db, execImpl: fakeExec(calls) });
   assert.equal(r.patch.task.ownerFrom, 'args'); assert.equal(calls.find(x => x[1] === '+create')[calls.find(x => x[1] === '+create').indexOf('--assignee') + 1], IA.SELF_OPEN_ID);
+});
+
+test('setDate 兜底 A/B（Aaron 2026-09-22 拍板）：有 memory.db 但查不到承诺卡 → 不建任务、回 offer；带 createIfMissing → 建任务 + 新承诺卡、sourceHit false；没 sqlite 句柄查不了 → 照旧建、sourceHit null', async (t) => {
+  const mem = require(path.join(root, 'app/memory.js'));
+  const db = mem.open(fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-offer-')));
+  if (!db) { t.diagnostic('这台 node 没有 sqlite，跳过'); return; }
+  mem.putCard(db, { id: 'p-other', kind: 'promise', text: '屏幕供应商短名单下周给', owner: 'Hannah Yin', meeting_id: 'm-0915', meeting_title: '硬件例会' });
+  const card = { id: 'r9', type: 'recheck', claim: '这件事 09-12《硬件例会》已承诺过（BOM 表发给 Cary），记录里没看到落地', evidence: 'BOM 表我回头发', source: '硬件例会 2026-09-12', action: { do: 'set_date', args: {} } };
+  assert.equal(IA.matchPromise(db, card), null, '库里那张承诺卡不是这件事');
+  let calls = [];
+  const off = await IA.setDate({ card, args: { owner: 'Cary Luo', due: '2026-10-01' }, session: { id: 's1' }, db, execImpl: fakeExec(calls) });
+  assert.deepEqual(off, { ok: false, uncertain: true, offer: 'create', message: IA.OFFER_MSG, sourceHit: false });
+  assert.equal(calls.length, 0, 'offer 时一个 lark-cli 都不调（不搜人、不建任务）');
+  assert.equal(db.prepare(`SELECT count(*) n FROM cards WHERE kind='promise'`).get().n, 1, 'offer 不写承诺卡');
+  calls = [];
+  const made = await IA.setDate({ card, args: { owner: 'Cary Luo', due: '2026-10-01', createIfMissing: true }, session: { id: 's1', title: '硬件周会' }, db, execImpl: fakeExec(calls) });
+  assert.equal(made.ok, true); assert.equal(made.sourceHit, false, '新建的 = 出处缺失'); assert.equal(made.patch.task.url, 'https://example.test/task/g-1'); assert.equal(made.patch.task.owner, 'Cary Luo');
+  const row = db.prepare('SELECT * FROM cards WHERE id=?').get(made.memoryCardId);
+  assert.ok(row && row.kind === 'promise' && row.state === 'pending' && row.due === '2026-10-01' && row.owner === 'Cary Luo', '照会上说的新建了承诺卡');
+  const plain = await IA.setDate({ card, args: {}, session: {}, db: null, execImpl: fakeExec([]) });
+  assert.equal(plain.ok, true); assert.equal(plain.sourceHit, null, '没 db 查不了，不计命中也不计缺失');
 });
 
 test('taskCreate：命令成功但回包没有链接也没有编号 → ok:false 且 uncertain（Codex 8b2bdefd F4）；setDate 不写 done', async () => {
@@ -214,6 +248,7 @@ test('POST /insight-action：鉴权、类型匹配、open_source 写回 + 冲突
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done');
     assert.equal(r.j.card.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.ok(r.j.card.quote.includes('6.3%')); assert.equal(r.j.card.doc.url, 'https://example.test/docx/A2hQdjgAUoIV1vxecJzlFw57gId');
     assert.equal(cli.calls().filter(x => x.startsWith('drive +inspect')).length, 1, '链接由 lark-cli 回读一次');
+    const h = await (await fetch(S.base + '/health?token=' + TOKEN)).json(); assert.deepEqual(h.sourceHit, { hit: 1, miss: 0 }, '兜底 B：出处命中记到 /health');
     await pause(150);
     const states = S.msgs.filter(m => m.type === 'insightAction' && m.cardId === cid).map(m => m.state.status);
     assert.deepEqual(states, ['queued', 'running', 'done'], 'ws 推了三段执行态');
@@ -224,7 +259,7 @@ test('POST /insight-action：鉴权、类型匹配、open_source 写回 + 冲突
     assert.equal(r.status, 200); assert.equal(r.j.alreadySent, true); assert.equal(cli.calls().filter(x => x.startsWith('drive +inspect')).length, 1);
     // 快照里带着产物和执行态（重连 / 旁听能接回来）
     const snap = await new Promise(res => { const ws2 = new WS('ws://127.0.0.1:' + port + '/?token=' + TOKEN + '&role=view'); ws2.once('message', d => { res(JSON.parse(d.toString())); ws2.close(); }); });
-    const c = (snap.session.factchecks || []).find(x => x.id === cid); assert.equal(c.actionState.status, 'done'); assert.equal(c.correction, '记录：6.3%（决策板 D3，2026-09-17）');
+    const c = (snap.session.factchecks || []).find(x => x.id === cid); assert.equal(c.actionState.status, 'done'); assert.equal(c.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.equal(c.sourceHit, 'hit', '卡片带 sourceHit，会后统计从它算');
     assert.ok(snap.session.highlights.some(h => /^⚠️ 冲突/.test(h.text)), '冲突条在会话里，会进会后总结');
   } finally { try { S.ws.close(); } catch (e) {} S.child.kill(); }
 });
@@ -234,12 +269,19 @@ test('POST /insight-action set_date：无 owner 建给本人；lark-cli 失败 �
   const S = await startServer({ dir, port, cli, kb });
   try {
     const cid = await S.addCard({ type: 'recheck', claim: '这件事 09-12《硬件例会》已承诺过，记录里没看到落地', evidence: 'BOM 表我回头发', source: '硬件例会 2026-09-12', why: '省他翻记录', action: { do: 'set_date', args: {} } });
+    // 兜底 A（Aaron 2026-09-22 拍板）：这场的 memory.db 里没有这件事的承诺卡 → 200 但 ok:false + offer，不调 lark-cli，卡片状态 offer 带这次的参数，/health sourceHit.miss+1
+    let r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: { due: '2026-10-08' }, confirmed: true });
+    assert.equal(r.status, 200); assert.equal(r.j.ok, false); assert.equal(r.j.uncertain, true); assert.equal(r.j.offer, 'create'); assert.equal(r.j.message, '资料里没这条，要我照会上说的新建吗？');
+    assert.equal(r.j.state.status, 'offer'); assert.deepEqual(r.j.state.args, { due: '2026-10-08' }); assert.ok(!r.j.card.task, 'offer 不写任务');
+    assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, 0, 'offer 不建任务');
+    let h = await (await fetch(S.base + '/health?token=' + TOKEN)).json(); assert.deepEqual(h.sourceHit, { hit: 0, miss: 1 }, '/health 记了一次缺失');
+    // 再点「照会上说的新建」= 同 POST 带 createIfMissing；不需要 retryConfirmed（offer 是 definite，收据已清）
     cli.mode('fail');
-    let r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: {}, confirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: { due: '2026-10-08', createIfMissing: true }, confirmed: true });
     assert.equal(r.status, 400); assert.equal(r.j.state.status, 'failed'); assert.match(r.j.error, /飞书拒绝/); assert.ok(!r.j.uncertain, '命令自己报错 = 确定没建成');
     assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, 1);
     cli.mode('');
-    r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: { due: '2026-10-08' }, confirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: { due: '2026-10-08', createIfMissing: true }, confirmed: true });
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done');
     assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e'); assert.equal(r.j.card.task.due, '2026-10-08'); assert.equal(r.j.card.task.owner, '本人');
     const creates = cli.calls().filter(x => x.startsWith('task +create')); assert.equal(creates.length, 2);
@@ -247,6 +289,7 @@ test('POST /insight-action set_date：无 owner 建给本人；lark-cli 失败 �
     assert.ok(!cli.calls().some(x => x.startsWith('contact')), '没 owner 不搜人');
     r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: {}, confirmed: true });
     assert.equal(r.j.alreadySent, true); assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, 2, '重复点不重建');
+    h = await (await fetch(S.base + '/health?token=' + TOKEN)).json(); assert.deepEqual(h.sourceHit, { hit: 0, miss: 1 }, '同一张卡 offer → 新建只记一次缺失');
     // 撤回：另一张卡，等待期改长（settings 热读），点了马上 cancel
     const cid2 = await S.addCard({ type: 'recheck', claim: '屏幕短名单 09-15《硬件例会》已承诺过，记录里没看到落地', evidence: '短名单我下周给', source: '硬件例会 2026-09-15', why: '省他翻记录', action: { do: 'set_date', args: {} } });
     const st = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')); st.INSIGHT_ACTION_GRACE_MS = 3000; fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(st));
@@ -260,25 +303,25 @@ test('POST /insight-action set_date：无 owner 建给本人；lark-cli 失败 �
     const st2 = JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')); st2.INSIGHT_ACTION_GRACE_MS = 0; fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(st2));
     const cid3 = await S.addCard({ type: 'recheck', claim: 'BOM 成本模型 09-17《硬件例会》已承诺过，记录里没看到落地', evidence: '成本模型我下周更新', source: '硬件例会 2026-09-17', why: '省他翻记录', action: { do: 'set_date', args: {} } });
     cli.mode('hang');
-    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: {}, confirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: { createIfMissing: true }, confirmed: true });
     assert.equal(r.status, 400); assert.equal(r.j.state.status, 'failed'); assert.equal(r.j.uncertain, true, '被超时杀掉 = 结果不明'); assert.equal(r.j.state.uncertain, true);
     cli.mode('');
-    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: {}, confirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: { createIfMissing: true }, confirmed: true });
     assert.equal(r.status, 409, '结果不明时普通 confirmed 不放行'); assert.match(r.j.error, /上次发送结果还没确认/); assert.equal(r.j.uncertain, true);
     const before = cli.calls().filter(x => x.startsWith('task +create')).length;
-    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: {}, confirmed: true, retryConfirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: { createIfMissing: true }, confirmed: true, retryConfirmed: true });
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done'); assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e');
     assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, before + 1, '带 retryConfirmed 才重来一次');
     // 命令成功但回包无链接无编号（Codex 8b2bdefd F4 / de29a735 复审）：走完整路由，卡片不写 done、状态 failed+uncertain，再点必须 retryConfirmed
     const cid4 = await S.addCard({ type: 'recheck', claim: '样机排期 09-18《硬件例会》已承诺过，记录里没看到落地', evidence: '排期我明天给', source: '硬件例会 2026-09-18', why: '省他翻记录', action: { do: 'set_date', args: {} } });
     cli.mode('empty');
-    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: {}, confirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: { createIfMissing: true }, confirmed: true });
     assert.equal(r.status, 400); assert.equal(r.j.state.status, 'failed'); assert.equal(r.j.uncertain, true); assert.match(r.j.error, /没有任务链接/);
     assert.ok(!r.j.state.task && !(r.j.card && r.j.card.task), '空回包不把空链接写进卡片');
     cli.mode('');
-    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: {}, confirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: { createIfMissing: true }, confirmed: true });
     assert.equal(r.status, 409, '空回包后普通 confirmed 不放行'); 
-    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: {}, confirmed: true, retryConfirmed: true });
+    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: { createIfMissing: true }, confirmed: true, retryConfirmed: true });
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done'); assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e');
   } finally { try { S.ws.close(); } catch (e) {} S.child.kill(); }
 });

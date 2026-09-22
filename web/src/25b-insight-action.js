@@ -40,6 +40,8 @@
     if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only Aaron can run this.':'旁听只能看，动作要 Aaron 本人点。'); return; }
     const it=insightCardOf(b); if(!it) return;
     const d=b.dataset.do||''; let args={};
+    // offer 态的「照会上说的新建」：沿用上次填的负责人 / 截止（服务端存在 actionState.args），只加 createIfMissing，不再弹两句
+    if(b.dataset.create==='1'){ args={...((it.actionState&&it.actionState.args)||{}),createIfMissing:true}; await insightRun(it,d,args,''); return; }
     if(d==='set_date'){
       const a=(it.action&&it.action.args)||{};
       const owner=prompt(ui==='en'?'Owner (default: the person who promised):':'负责人（默认承诺人，留空 = 建给我自己）：', a.owner||a.who||''); if(owner===null) return;

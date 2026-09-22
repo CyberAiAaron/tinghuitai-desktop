@@ -5,6 +5,7 @@
 //                  ——「Sonnet」是会中分诊的 live 档模型（settings 的 LLM_MODEL_LIVE 默认 sonnet）；这里按档位数，换了模型也不用改
 //   insights     = 场次 factchecks（看法卡）条数
 //   adopted      = 看法卡里被采纳的：rating === 'adopt'，或者那一个按钮已经执行完（actionState.status === 'done'）——点按钮 = 批准 = 采纳
+//   sourceHit    = {hit, miss}：按钮执行时出处 / 承诺卡查到没有（卡片字段 sourceHit 'hit' | 'miss'，路由写；Aaron 2026-09-22 拍板用它量一周再决定要不要前置核对）
 // 账本只读一遍：先按 sessionId 子串粗筛再 JSON.parse，usage.jsonl.1（滚过的那份）一起看。
 const fs = require('fs'), path = require('path');
 
@@ -33,14 +34,16 @@ function compute(sess, usageRows) {
   for (const c of Array.isArray(sess && sess.factchecks) ? sess.factchecks : []) {
     if (!c || typeof c !== 'object') continue;
     const key = c.id ? 'id:' + c.id : 'claim:' + String(c.claim || '');
-    const prev = byKey.get(key) || { adopted: false };
+    const prev = byKey.get(key) || { adopted: false, sourceHit: '' };
     prev.adopted = prev.adopted || c.rating === 'adopt' || !!(c.actionState && c.actionState.status === 'done');
+    if (!prev.sourceHit && (c.sourceHit === 'hit' || c.sourceHit === 'miss')) prev.sourceHit = c.sourceHit;
     byKey.set(key, prev);
   }
   const jevCalls = rows.filter(r => r && r.provider === 'jev').length;
   const sonnetCalls = rows.filter(r => r && r.provider !== 'jev' && LIVE_TIERS.has(String(r.tier || ''))).length;
   const adopted = [...byKey.values()].filter(x => x.adopted).length;
-  return { jevCalls, sonnetCalls, insights: byKey.size, adopted, at: Date.now() };
+  const sourceHit = { hit: [...byKey.values()].filter(x => x.sourceHit === 'hit').length, miss: [...byKey.values()].filter(x => x.sourceHit === 'miss').length };
+  return { jevCalls, sonnetCalls, insights: byKey.size, adopted, sourceHit, at: Date.now() };
 }
 
 function forSession(dataDir, sess) { return compute(sess, readUsageRows(dataDir, sess && sess.id)); }

@@ -107,6 +107,7 @@ function loadEnv() { return settings.load(); }
 const jevGate = require('./jev-gate');   // 逐句门卫：命中才立刻分诊（主动智能 F1）
 const pushWhitelist = require('./push-whitelist');   // 会中飞书提醒白名单（THT-R4）：点名本人 / 冲突类 / 本人带截止承诺才推，MEETING_PUSH 默认 off
 const JEV_TOTALS = { calls: 0, hits: 0, failures: 0 };   // 进程级累计，给 /health；每场自己的在 session.jev.stats
+const SOURCE_HIT = { hit: 0, miss: 0 };                 // 洞察卡动作执行时出处 / 承诺卡命中与否（F5 第五个数），进程级给 /health；每场的从卡片 sourceHit 算（app/session-stats.js）
 
 function readTriagePrompt() { try { const s = fs.readFileSync(INDEX_HTML, 'utf8'); const m = s.match(/const\s+TRIAGE\s*=\s*([`"'])([\s\S]*?)\1/); return m ? m[2] : ''; } catch (e) { return ''; } }
 // 「看法」的聪明来源 = 凝练的项目状态（Aaron 2026-09-17 定）。哪个文件、给多少字，见 app/context-pack.js 的那张表。
@@ -921,7 +922,7 @@ class Session {
     try {
       const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[]};
       // 批 4（F5）：四个数从 usage.jsonl（本场 sessionId 的行）和场次自己算，落进场次文件，会后台直接显示；算不出不影响这场
-      try { sess.stats = sessionStats.forSession(DATA, sess); log(`会后统计 ${this.id}：Jev ${sess.stats.jevCalls} 次，Sonnet ${sess.stats.sonnetCalls} 次，洞察 ${sess.stats.insights} 条，采纳 ${sess.stats.adopted} 条`); } catch (e) { log('会后统计失败（不影响这场）' + e.message); }
+      try { sess.stats = sessionStats.forSession(DATA, sess); log(`会后统计 ${this.id}：Jev ${sess.stats.jevCalls} 次，Sonnet ${sess.stats.sonnetCalls} 次，洞察 ${sess.stats.insights} 条，采纳 ${sess.stats.adopted} 条，出处命中 ${sess.stats.sourceHit.hit} / 缺失 ${sess.stats.sourceHit.miss}`); } catch (e) { log('会后统计失败（不影响这场）' + e.message); }
       // 这一场里，你纠正过的词有没有再错。这是「回流到底有没有用」的唯一证据。
       try {
         const mem = require('./memory');
@@ -1936,6 +1937,8 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     setState({ status: 'running', do: act, at: Date.now() }); push();
     const insightActions = require('./insight-actions');
     let db = null; try { db = require('./memory').open(DATA); } catch (e) {}
+    // 兜底 B：一张卡只记一次命中 / 缺失（offer 之后再点「新建」不重复计），卡片字段 sourceHit 跟场次落盘，会后统计从卡片算
+    const markSourceHit = hit => { if (card.sourceHit) return; card.sourceHit = hit ? 'hit' : 'miss'; SOURCE_HIT[hit ? 'hit' : 'miss']++; };
     try {
       const receipt = await sendGate.send({
         dataDir: DATA, kind: 'insight-action', body: j, meta: { id: sid, cardId, do: act },
@@ -1950,6 +1953,9 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
             return { patch: r.patch, url: r.attachment.path, refId: '' };
           }
           const r = act === 'open_source' ? await insightActions.openSource(ctx) : await insightActions.setDate(ctx);
+          // 兜底 A（Aaron 2026-09-22 拍板）：查不到出处 / 承诺卡 → 不算失败也不算做完，抛 definite（门禁清收据，再点不用 retryConfirmed），路由回 offer
+          if (r && r.ok === false && r.offer) { const e = Error(r.message || insightActions.OFFER_MSG); e.offer = r.offer; e.definite = true; throw e; }
+          if (typeof r.sourceHit === 'boolean') markSourceHit(r.sourceHit);
           Object.assign(card, r.patch);
           if (r.highlight) { const h = { id: 'i' + sess.idTag + (sess.itemSeq = (sess.itemSeq || 0) + 1), at: Date.now(), text: r.highlight, sourceRefs: [] }; sess.highlights.push(h); try { sess.broadcast({ type: 'feedback', highlights: [h], todos: [], factchecks: [] }); } catch (e) {} }
           return { patch: r.patch, url: r.url || '', refId: r.refId || '' };
@@ -1967,6 +1973,14 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       log('insight-action ' + sid + ' ' + cardId + ' ' + act + (receipt.alreadySent ? '（已做过，未重做）' : ''));
       return reply(200, { ok: true, state: getState(), card: cardView(), ...(receipt.alreadySent ? { alreadySent: true } : {}) });
     } catch (e) {
+      if (e.offer) {
+        // 资料里没这条：状态 offer，带上这次的参数，前端出「照会上说的新建」按钮；再点 = 同 POST 带 args.createIfMissing:true
+        markSourceHit(false);
+        const keep = Object.fromEntries(['owner', 'due', 'title'].filter(k => typeof args[k] === 'string' && args[k]).map(k => [k, args[k].slice(0, 100)]));
+        setState({ status: 'offer', do: act, at: Date.now(), offer: e.offer, message: String(e.message || '').slice(0, 200), args: keep }); push(); sess.checkpoint(false);
+        log('insight-action offer ' + sid + ' ' + cardId + ' ' + act + '（资料里没这条，等 Aaron 决定是否新建）');
+        return reply(200, { ok: false, uncertain: true, offer: e.offer, message: getState().message, state: getState(), card: cardView() });
+      }
       setState({ status: 'failed', do: act, at: Date.now(), error: String(e.message || e).slice(0, 200), ...(e.uncertain ? { uncertain: true } : {}) }); push();
       log('insight-action failed ' + sid + ' ' + cardId + ' ' + act + ' ' + e.message);
       return reply(e.code === 409 ? 409 : 400, { ok: false, error: getState().error, state: getState(), ...(e.uncertain ? { uncertain: true } : {}) });
@@ -2508,6 +2522,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     // 逐句门卫（主动智能 F1）：enabled = 设置为 on 且有密钥；calls/hits/failures 是本进程累计；sessions 是正在开的每场自己的数
     jev: (g => ({ enabled: g.enabled, available: g.available, requested: g.requested, threshold: g.threshold, minGapMs: g.minGapMs, ...JEV_TOTALS,
       sessions: Object.fromEntries([...SESSIONS.values()].filter(s => !s.finalized && s.jev).map(s => [s.id, s.jev.snapshot()])) }))(jevGate.settingsOf(loadEnv())),
+    sourceHit: { ...SOURCE_HIT },   // F5 第五个数（进程级）：洞察卡动作执行时出处 / 承诺卡命中 / 缺失
     threadTokensToday: cardThread.usageToday().tokens, threadUsageToday: cardThread.usageToday(), threadQueue: cardThread.status(),   // 卡片对话框今天花了多少（第③批，给 Aaron 看额度）
     audioRetention: retention.status(DATA, audioRetentionDays()), pid: process.pid, startedAt: SERVER_STARTED_AT, version: SERVER_VERSION, assistantVersion:1, mode: 'online', activeSessions: [...SESSIONS.values()].filter(s=>!s.finalized).length, workHubError, audioSaveFailures:[...SESSIONS.values()].filter(s=>s.audioSaveError).length, recoveryNeeded:recoveryNeeded(), archiveNeedsAttention:meetingPipeline.list().filter(j=>j.status==='error'||(j.status==='partial'&&!(j.summaryGenerated&&j.fullTextVerified))).length   /* 总结已出、全文已核、只剩「转写有缺口」告警的，是完成不是待处理（2026-09-15 Aaron 定） */   /* empty 是终态，不算待处理 */ })); }
   // D6（2026-09-22）：默认不带逐字稿。原来这条路把 pending 里近百场的逐字稿整个打包，约 9MB，

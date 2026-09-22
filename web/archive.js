@@ -41,6 +41,7 @@ function renderPostStats(s){
     parts.push('<span title="usage.jsonl live 档">'+(en?'Sonnet calls':'Sonnet 调用')+' <b>'+n(st.sonnetCalls)+'</b></span>');
     parts.push('<span>'+(en?'Insights':'洞察')+' <b>'+n(st.insights)+'</b></span>');
     parts.push('<span title="adopt 反馈或按钮已执行">'+(en?'Adopted':'被采纳')+' <b>'+n(st.adopted)+'</b></span>');
+    if(st.sourceHit&&typeof st.sourceHit==='object') parts.push('<span title="按钮执行时出处 / 承诺卡查到没有">'+(en?'Source hit / miss':'出处命中 / 缺失')+' <b>'+n(st.sourceHit.hit)+'</b> / <b>'+n(st.sourceHit.miss)+'</b></span>');
   }
   for(const a of att){
     const href='/asr-relay/'+String(a.path).replace(/^\/+/,'')+'&token='+encodeURIComponent(settings.relayToken||'');

@@ -18,7 +18,19 @@ test('compute：jev 按 provider 数（失败行也算）；Sonnet 按 live 档�
   ] };
   const st = S.compute(sess, rows);
   assert.equal(st.jevCalls, 3); assert.equal(st.sonnetCalls, 3); assert.equal(st.insights, 4); assert.equal(st.adopted, 2);
-  assert.deepEqual(S.compute({ id: 'x' }, []), { ...S.compute({ id: 'x' }, []), jevCalls: 0, sonnetCalls: 0, insights: 0, adopted: 0 });
+  assert.deepEqual(st.sourceHit, { hit: 0, miss: 0 }, '第五个数：没有按钮执行过 → 0/0');
+  assert.deepEqual(S.compute({ id: 'x' }, []), { ...S.compute({ id: 'x' }, []), jevCalls: 0, sonnetCalls: 0, insights: 0, adopted: 0, sourceHit: { hit: 0, miss: 0 } });
+});
+
+test('compute：sourceHit 第五个数（Aaron 2026-09-22 拍板兜底 B）：卡片 sourceHit hit / miss 各数一次，同卡重复只算一次，别的值不算', () => {
+  const sess = { id: 's5', factchecks: [
+    { id: 'a', type: 'conflict', actionState: { status: 'done' }, sourceHit: 'hit' }, { id: 'a', sourceHit: 'hit' },
+    { id: 'b', type: 'recheck', actionState: { status: 'offer' }, sourceHit: 'miss' },
+    { id: 'c', type: 'recheck', actionState: { status: 'done' }, sourceHit: 'miss' },
+    { id: 'd', type: 'answer' }, { id: 'e', type: 'conflict', sourceHit: 'junk' },
+  ] };
+  const st = S.compute(sess, []);
+  assert.deepEqual(st.sourceHit, { hit: 1, miss: 2 }); assert.equal(st.insights, 5); assert.equal(st.adopted, 2, 'offer 不算采纳');
 });
 
 test('compute：同一张卡重复出现（同 id 两条，一条 rating、一条 actionState）只算一张、采纳只算一次；没 id 按 claim 归并', () => {
