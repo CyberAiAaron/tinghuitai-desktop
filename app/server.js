@@ -56,8 +56,9 @@ const PENDING_DIR = path.join(DATA,'pending');
 const replayRuns = new Set();
 const replayStates = new Map();
 const AUDIO_DIR = path.join(DATA,'audio');
-const RECONNECT_GRACE_MS = 10 * 60000;   // 断线 10 分钟内重连续场
-const SILENCE_END_MS = 12 * 60000;       // 12 分钟无 final 收尾
+// 两个收尾阈值只在测试进程（THT_TEST）里允许用环境变量调短，生产永远是 10 / 12 分钟。
+const RECONNECT_GRACE_MS = (process.env.THT_TEST && Number(process.env.THT_GRACE_MS) > 0) ? Number(process.env.THT_GRACE_MS) : 10 * 60000;   // 断线 10 分钟内重连续场
+const SILENCE_END_MS = (process.env.THT_TEST && Number(process.env.THT_SILENCE_MS) > 0) ? Number(process.env.THT_SILENCE_MS) : 12 * 60000;       // 12 分钟无 final 收尾
 const QUEUE_MAX_SEC = 600;               // 火山断线期间最多缓存 10 分钟音频，重连后回灌补转
 
 function log(m) { try { logRotate.rotateIfBig(LOG_PATH, { max: LOG_MAX_BYTES }); fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} }
@@ -251,7 +252,14 @@ class Session {
     // 每 4 分钟按最近说过的话重新检索一次，让调出来的旧决定跟得上当前话题。
     this.memoryTimer = setInterval(() => this.refreshMemory(), 240000);
     if (this.memoryTimer.unref) this.memoryTimer.unref();
-    this.endTimer = setInterval(() => { if (Date.now() - this.lastAudioTs > SILENCE_END_MS) this.finalize('12min未收到音频'); }, 60000);
+    // R1（2026-09-22）：12 分钟没收到音频就自动收尾，这条原来不看连接状态。
+    // 手机锁屏 / 切到后台时 WS 还连着、只是没有音频上行，解锁回来会已经被结掉，后半场全丢且页面无感。
+    // 规矩改成：这场只要还有一个 OPEN 的说话人连接，就不自动收尾——真断了会走 removeClient 那条 10 分钟宽限。
+    this.endTimer = setInterval(() => {
+      if (Date.now() - this.lastAudioTs <= SILENCE_END_MS) return;
+      if (this.hasOpenSpeaker()) { if (!this.silentNoted) { this.silentNoted = true; log('12min 无音频但说话人还连着，不自动收尾 ' + this.id); } return; }
+      this.finalize('12min未收到音频');
+    }, Math.min(60000, SILENCE_END_MS));
     this.stalled = false;
     this.stallTimer = setInterval(() => this.checkStall(), 15000);   // 90秒无 final 或火山连接断开 → 主动推 stall，别只写日志（2026-09-04 0730 信 漏洞3）
     this.journalTimer=setInterval(()=>this.checkpoint(),5000);
@@ -319,6 +327,13 @@ class Session {
   }
   addClient(ws) { this.clients.add(ws);if(this.audioSaveError&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'error',message:this.audioSaveError})); }
   removeClient(ws) { this.clients.delete(ws); }
+  // R1 / R2（2026-09-22）：会不会「自动收尾」要看这场还有没有活着的说话人连接。
+  // 观众（role=view）不算——旁听的人开着页面不代表会还在开；反过来，手机锁屏后 WS 还连着、
+  // 只是暂时没有音频，那是「还在开会」，12 分钟静音不该把它判死。
+  hasOpenSpeaker() {
+    for (const c of this.clients) if (c && c.__thtRole === 'speaker' && c.readyState === WebSocket.OPEN) return true;
+    return false;
+  }
   broadcast(o) { const s = JSON.stringify(o); for (const c of this.clients) { try { if (c.readyState === WebSocket.OPEN) c.send(s); } catch (e) {} } }
   snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names } }; }
   // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
@@ -722,7 +737,12 @@ class Session {
     if (!lines.length) return; larkPush((en ? '🎙️ Live alert\n' : '🎙️ 会中提醒\n') + lines.slice(0, 5).join('\n')); this.lastPushTs = Date.now(); log('push ' + Math.min(lines.length, 5));
   }
   endVolc() { if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN) { try { this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, NEG_WITH_SEQ, Buffer.alloc(0), -this.seq, false)); } catch (e) {} setTimeout(() => { try { this.volcWs.close(); } catch (e) {} }, 1200); } }
-  scheduleGrace(reason) { if (this.finalized) return; if (this.graceTimer) clearTimeout(this.graceTimer); this.graceTimer = setTimeout(() => this.finalize(reason), RECONNECT_GRACE_MS); log(`grace ${Math.round(RECONNECT_GRACE_MS / 60000)}min ${this.id}`); }
+  // R2（2026-09-22）：旧连接的 close 事件可能晚于新连接的 start 到达（手机切网、页面刷新都会这样）。
+  // 那时这场其实已经有一条新的说话人连接在跑了，却还是被装上 10 分钟收尾定时器；
+  // 中间只要没人再动它，一条正在开的会就被结掉。所以：还有 OPEN 的说话人连接就不装。
+  scheduleGrace(reason) { if (this.finalized) return;
+    if (this.hasOpenSpeaker()) { log('还有在线的说话人连接，不装收尾定时器 ' + this.id); return; }
+    if (this.graceTimer) clearTimeout(this.graceTimer); this.graceTimer = setTimeout(() => this.finalize(reason), RECONNECT_GRACE_MS); log(`grace ${Math.round(RECONNECT_GRACE_MS / 60000)}min ${this.id}`); }
   cancelGrace() { if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = null; log('grace cancelled (续场) ' + this.id); } }
   async closeAudio() {
     if (this.audioFd !== null && this.audioFd !== undefined) { try { fs.closeSync(this.audioFd); } catch (e) {} this.audioFd = null; }
@@ -2156,7 +2176,7 @@ wss.on('connection', (ws, req) => {
       let msg; try { msg = JSON.parse(data.toString()); } catch (e) { return; }
       if (msg.type === 'view') { attachView(); return; }
       if (msg.type === 'start') {
-        role = 'speaker'; rate = Number(msg.rate)||16000; const sid = msg.sessionId || null;
+        role = 'speaker'; ws.__thtRole = 'speaker'; rate = Number(msg.rate)||16000; const sid = msg.sessionId || null;   // R1/R2：收尾前要能数出「这场还有几个在线的说话人连接」
         if((sid&&!/^[a-zA-Z0-9_-]{1,100}$/.test(sid))||rate<8000||rate>192000){ws.close(4400,'invalid session');return;}
         if(sid&&(SESSIONS.get(sid)?.finalized||SESSIONS.get(sid)?.finalizing||journal.read(path.join(DATA,'state','live-sessions',sid+'.json'))?.complete)){ws.close(4409,'session is ending');return;}
         if (sid && SESSIONS.has(sid)) {
