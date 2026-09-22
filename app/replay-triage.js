@@ -7,7 +7,7 @@ const norm = s => String(s || '').toLowerCase().replace(/[\s，。、；;,.!！?
 const text = s => String(s || '').trim().slice(0, 500);
 const fields = { highlights: 'text', todos: 'text', factchecks: 'claim' };
 
-async function replay(session, ask) {
+async function replay(session, ask, onProgress = () => {}) {
   const rows = Array.isArray(session.transcript) ? session.transcript : [];
   if (rows.length < 30 || (session.highlights || []).length || session.replay?.doneAt) {
     return { skipped: true, reason: 'not-eligible' };
@@ -15,7 +15,9 @@ async function replay(session, ask) {
   const out = structuredClone(session);
   for (const kind of Object.keys(fields)) out[kind] = Array.isArray(out[kind]) ? out[kind] : [];
   let added = 0;
+  const total = Math.ceil(rows.length / 40);
   for (let start = 0; start < rows.length; start += 40) {
+    try { onProgress(Math.floor(start / 40) + 1, total); } catch (e) {}
     const chunk = rows.slice(start, start + 40).filter(r => r && text(r.text));
     if (!chunk.length) continue;
     const refs = chunk.map(r => String(r.id || '')).filter(Boolean);
