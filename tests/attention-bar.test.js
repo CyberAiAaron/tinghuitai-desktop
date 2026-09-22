@@ -8,14 +8,37 @@ const freePort=()=>new Promise(r=>{const s=net.createServer();s.listen(0,'127.0.
 const mem=require('../app/memory'),ops=require('../app/memory-ops');
 const TOKEN='a'.repeat(40);
 
-test('failedSummary：还会重试的和已停止重试的分开数；没有失败就是 0 / 0',()=>{
+test('failedSummary：还会重试的和已停止重试的分开数；没有失败就是 0 / 0',(t)=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'livemate-attn-'));
  try{
-  const db=mem.open(dir);if(!db)return;   // 本机 node 没有 sqlite 时记忆功能整体关闭，不测
+  const db=mem.open(dir);if(!db){t.skip('本机 node 没有 sqlite，记忆功能整体关闭');return;}
   assert.deepEqual(ops.failedSummary(dir),{retrying:0,givenUp:0});
   const put=(id,status,attempts)=>db.prepare("INSERT INTO ingested(meeting_id,input_hash,status,at,attempts) VALUES(?,?,?,?,?)").run(id,'h',status,new Date().toISOString(),attempts);
   put('a','failed',1);put('b','failed',ops.MAX_TOTAL_ATTEMPTS);put('c','done',0);put('d','claiming',0);
   assert.deepEqual(ops.failedSummary(dir),{retrying:1,givenUp:1});
+ }finally{mem.closeAll?.();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+// Codex 初审（f679ecb3）指出：要证明「模型没返回 / 返回不是 JSON」不会被当成功，得真跑一次 ingest，不能只手插 failed 行。
+// memory-ops.ingest 的 finally{finish()} 在 ok 没置真时把这场写成 status='failed'、attempts+1——这里就是钉住这条路。
+test('ingest 真跑：模型没返回、返回不是 JSON 两种结果都进失败账（还会重试档）；成功一次就出账',async(t)=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'livemate-attn-ingest-'));
+ try{
+  const db=mem.open(dir);if(!db){t.skip('本机 node 没有 sqlite，记忆功能整体关闭');return;}
+  const rows=Array.from({length:30},(_,i)=>({id:'g'+i,at:i*5,text:'这一场讨论了新品定义的第 '+i+' 个问题，大家意见不一，Aaron 说下周再定'}));
+  const sess=id=>({id,title:'会 '+id,start:'2026-09-22T01:00:00.000Z',transcript:rows,highlights:[],todos:[],factchecks:[]});
+  const r1=await ops.ingest(dir,sess('nm'),async()=>null,()=>{});
+  assert.deepEqual({skipped:r1.skipped,reason:r1.reason},{skipped:true,reason:'no-model'});
+  const r2=await ops.ingest(dir,sess('bj'),async()=>'这不是 JSON',()=>{});
+  assert.deepEqual({skipped:r2.skipped,reason:r2.reason},{skipped:true,reason:'bad-json'});
+  assert.deepEqual(ops.failedSummary(dir),{retrying:2,givenUp:0},'两种失败都要在账上，且是「还会重试」档');
+  const row=db.prepare("SELECT status,attempts FROM ingested WHERE meeting_id='nm'").get();
+  assert.equal(row.status,'failed');assert.equal(row.attempts,1);
+  // 反例：同一场再抽一次、模型这次给了合法 JSON → 出账
+  const good=JSON.stringify({cards:[]});
+  const r3=await ops.ingest(dir,sess('nm'),async()=>good,()=>{});
+  assert.ok(!r3.skipped||r3.reason!=='no-model','成功那次不该再报 no-model：'+JSON.stringify(r3));
+  assert.deepEqual(ops.failedSummary(dir),{retrying:1,givenUp:0});
  }finally{mem.closeAll?.();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
