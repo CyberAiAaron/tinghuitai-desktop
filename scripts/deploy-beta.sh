@@ -22,6 +22,8 @@ HEADNOW=$(git rev-parse HEAD); LAST=$(cat "$DATA/state/last-deployed-commit" 2>/
 if [ "$HEADNOW" = "$LAST" ]; then echo "和上次装的是同一个提交，保留原来的回退快照"; else ( cd "$PROG" && node scripts/snapshot-prev.js ) || { echo "回退快照失败，停"; exit 1; }; fi
 cp "$DATA/settings.json" "$DATA/settings.json.before-deploy-$(date +%Y%m%d-%H%M%S)"
 for d in app web scripts tests; do rsync -a --delete --exclude '__pycache__' "$d/" "$PROG/$d/"; done
+# 要和这次重启一起做的数据切换（例如换工作台库）放在 THT_PRE_RESTART 指的脚本里：文件已同步、进程还没重启时跑，失败就停在这里不重启
+[ -z "${THT_PRE_RESTART:-}" ] || bash "$THT_PRE_RESTART" || { echo "重启前步骤失败，停：文件已同步到安装目录但没重启，手动 launchctl kickstart -k gui/$(id -u)/$LABEL 即可上新代码"; exit 1; }
 BEFORE=$(health | field pid)
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
 for i in $(seq 1 30); do sleep 1; NOW=$(health | field pid); [ -n "$NOW" ] && [ "$NOW" != "$BEFORE" ] && break; done
