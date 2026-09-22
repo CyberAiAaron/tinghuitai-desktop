@@ -170,6 +170,7 @@ function stubCli(dir) {
   fs.writeFileSync(bin, `#!/bin/bash
 printf '%s' "$*" | tr '\\n' ' ' >> ${JSON.stringify(logFile)}; printf '\\n' >> ${JSON.stringify(logFile)}
 if [ -f ${JSON.stringify(mode)} ] && [ "$(cat ${JSON.stringify(mode)})" = "fail" ] && [ "$2" = "+create" ]; then echo '{"ok":false,"error":{"message":"飞书拒绝"}}'; exit 0; fi
+if [ -f ${JSON.stringify(mode)} ] && [ "$(cat ${JSON.stringify(mode)})" = "empty" ] && [ "$2" = "+create" ]; then echo '{"ok":true,"data":{}}'; exit 0; fi
 if [ -f ${JSON.stringify(mode)} ] && [ "$(cat ${JSON.stringify(mode)})" = "hang" ] && [ "$2" = "+create" ]; then sleep 5; echo '{"ok":true,"data":{"task":{"guid":"g-late","url":"https://example.test/task/g-late"}}}'; exit 0; fi
 case "$1 $2" in
   "task +create") echo '{"ok":true,"data":{"task":{"guid":"g-e2e","url":"https://example.test/task/g-e2e"}}}' ;;
@@ -268,5 +269,16 @@ test('POST /insight-action set_date：无 owner 建给本人；lark-cli 失败 �
     r = await S.post({ id: 'ia-e2e', cardId: cid3, do: 'set_date', args: {}, confirmed: true, retryConfirmed: true });
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done'); assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e');
     assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, before + 1, '带 retryConfirmed 才重来一次');
+    // 命令成功但回包无链接无编号（Codex 8b2bdefd F4 / de29a735 复审）：走完整路由，卡片不写 done、状态 failed+uncertain，再点必须 retryConfirmed
+    const cid4 = await S.addCard({ type: 'recheck', claim: '样机排期 09-18《硬件例会》已承诺过，记录里没看到落地', evidence: '排期我明天给', source: '硬件例会 2026-09-18', why: '省他翻记录', action: { do: 'set_date', args: {} } });
+    cli.mode('empty');
+    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: {}, confirmed: true });
+    assert.equal(r.status, 400); assert.equal(r.j.state.status, 'failed'); assert.equal(r.j.uncertain, true); assert.match(r.j.error, /没有任务链接/);
+    assert.ok(!r.j.state.task && !(r.j.card && r.j.card.task), '空回包不把空链接写进卡片');
+    cli.mode('');
+    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: {}, confirmed: true });
+    assert.equal(r.status, 409, '空回包后普通 confirmed 不放行'); 
+    r = await S.post({ id: 'ia-e2e', cardId: cid4, do: 'set_date', args: {}, confirmed: true, retryConfirmed: true });
+    assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done'); assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e');
   } finally { try { S.ws.close(); } catch (e) {} S.child.kill(); }
 });
