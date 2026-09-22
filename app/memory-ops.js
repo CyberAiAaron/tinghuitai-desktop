@@ -366,4 +366,13 @@ function skipRetry(dataDir, mid, why = '') {
     db.prepare("UPDATE ingested SET status='failed',attempts=?,at=? WHERE meeting_id=?").run(MAX_TOTAL_ATTEMPTS, mem.now(), String(mid));
   } catch (e) {}
 }
-module.exports = { ingest, retrieve, toPromptBlock, project, terms, sessionText, failedMeetings, skipRetry, EXTRACT_PROMPT };
+// THT-R2：记忆写入失败要在会中看得见。这里只数不改：还会自动重试的（attempts 没打满）和已经停止重试的（打满 6 次，
+// 只能人来点）分开数，页面上「会自动重试」和「已停止重试」是两句不一样的话。
+function failedSummary(dataDir) {
+  try {
+    const db = mem.open(dataDir); if (!db) return { retrying: 0, givenUp: 0 };
+    const rows = db.prepare("SELECT COALESCE(attempts,0) AS attempts FROM ingested WHERE status='failed'").all();
+    return { retrying: rows.filter(r => r.attempts < MAX_TOTAL_ATTEMPTS).length, givenUp: rows.filter(r => r.attempts >= MAX_TOTAL_ATTEMPTS).length };
+  } catch (e) { return { retrying: 0, givenUp: 0 }; }
+}
+module.exports = { ingest, retrieve, toPromptBlock, project, terms, sessionText, failedMeetings, failedSummary, skipRetry, EXTRACT_PROMPT, MAX_TOTAL_ATTEMPTS };

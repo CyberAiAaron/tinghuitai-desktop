@@ -21,6 +21,28 @@
     bar.hidden = !on || llmDownNow;
     const m = $('#llm-degraded-msg'); if (m) m.textContent = on ? (msg || '首选模型没回应，已临时改用备用模型；要点和总结照常出。') : '';
   }
+  // THT-R2 归档 / 记忆失败红条：服务端算好一份「待处理」账（/health.attention 与 type:'attention' 广播是同一份），
+  // 这里只负责把数字说成人话。「会自动重试」和「已停止重试」分开说——后者只能他去会议列表点「重试整理」。
+  function attentionText(a){
+    const en = ui === 'en', parts = [];
+    const one = (name, retrying, givenUp) => {
+      if (!retrying && !givenUp) return;
+      const bits = [];
+      if (givenUp) bits.push(en ? `${givenUp} stopped retrying, needs you` : `${givenUp} 场已停止重试，要你来点`);
+      if (retrying) bits.push(en ? `${retrying} will retry automatically` : `${retrying} 场会自动重试`);
+      parts.push(name + (en ? ': ' : '：') + bits.join(en ? ', ' : '，'));
+    };
+    one(en ? 'Archive failed' : '归档失败', a.archiveRetrying, a.archiveGivenUp);
+    one(en ? 'Memory write failed' : '记忆写入失败', a.memoryRetrying, a.memoryGivenUp);
+    return parts.join(en ? ' · ' : '；') + (en ? '. Recording and transcript are unaffected.' : '。录音和转写不受影响。');
+  }
+  function setAttention(a){
+    const bar = $('#attn-bar'); if (!bar) return;
+    const on = !!(a && a.total > 0);
+    bar.hidden = !on;
+    const m = $('#attn-msg'); if (m) m.textContent = on ? attentionText(a) : '';
+  }
+  $('#attn-open') && ($('#attn-open').onclick = () => { const b = $('#b-hist'); if (b) b.click(); });
   $('#llm-bar-setup') && ($('#llm-bar-setup').onclick = () => openSettings('llm'));
   function updateReadyBar(){
     const bar = $('#ready-bar'); if (!bar) return;

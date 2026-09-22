@@ -426,6 +426,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   <div class="review-bar" id="review-bar" hidden><span>📖</span><span data-i18n="rv_label">回看</span><b id="review-title"></b><span class="sp"></span><button class="btn sm" id="review-note" data-i18n="rv_note">纪要 / 下载分享</button><button class="btn sm primary" id="review-exit" data-i18n="rv_exit">回到当前</button></div>
   <div class="llm-bar degraded" id="llm-degraded-bar" hidden><b>已改用备用模型</b><span id="llm-degraded-msg"></span></div>
   <div class="llm-bar" id="llm-bar" hidden><b>模型没回应</b><span id="llm-bar-msg"></span><span style="flex:1"></span><button type="button" class="btn sm" id="llm-bar-setup">去设置里检测</button></div>
+  <div class="llm-bar" id="attn-bar" hidden><b>会后处理有失败</b><span id="attn-msg"></span><span style="flex:1"></span><button type="button" class="btn sm" id="attn-open">去会议列表处理</button></div>
   <div class="ready-bar" id="ready-bar" hidden>
     <button type="button" class="rb-chip" id="rb-asr"></button>
     <button type="button" class="rb-chip" id="rb-llm"></button>
@@ -1250,6 +1251,28 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     bar.hidden = !on || llmDownNow;
     const m = $('#llm-degraded-msg'); if (m) m.textContent = on ? (msg || '首选模型没回应，已临时改用备用模型；要点和总结照常出。') : '';
   }
+  // THT-R2 归档 / 记忆失败红条：服务端算好一份「待处理」账（/health.attention 与 type:'attention' 广播是同一份），
+  // 这里只负责把数字说成人话。「会自动重试」和「已停止重试」分开说——后者只能他去会议列表点「重试整理」。
+  function attentionText(a){
+    const en = ui === 'en', parts = [];
+    const one = (name, retrying, givenUp) => {
+      if (!retrying && !givenUp) return;
+      const bits = [];
+      if (givenUp) bits.push(en ? `${givenUp} stopped retrying, needs you` : `${givenUp} 场已停止重试，要你来点`);
+      if (retrying) bits.push(en ? `${retrying} will retry automatically` : `${retrying} 场会自动重试`);
+      parts.push(name + (en ? ': ' : '：') + bits.join(en ? ', ' : '，'));
+    };
+    one(en ? 'Archive failed' : '归档失败', a.archiveRetrying, a.archiveGivenUp);
+    one(en ? 'Memory write failed' : '记忆写入失败', a.memoryRetrying, a.memoryGivenUp);
+    return parts.join(en ? ' · ' : '；') + (en ? '. Recording and transcript are unaffected.' : '。录音和转写不受影响。');
+  }
+  function setAttention(a){
+    const bar = $('#attn-bar'); if (!bar) return;
+    const on = !!(a && a.total > 0);
+    bar.hidden = !on;
+    const m = $('#attn-msg'); if (m) m.textContent = on ? attentionText(a) : '';
+  }
+  $('#attn-open') && ($('#attn-open').onclick = () => { const b = $('#b-hist'); if (b) b.click(); });
   $('#llm-bar-setup') && ($('#llm-bar-setup').onclick = () => openSettings('llm'));
   function updateReadyBar(){
     const bar = $('#ready-bar'); if (!bar) return;
@@ -2120,7 +2143,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   // 那是第四个恢复入口；现在只记状态，由启动时那一个恢复面板统一处理。
   let macRecovery=false;
   const macRecoveryNeeded=()=>macRecovery;
-  async function checkMac(){ if (!cfg.relayToken && !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) { macOnline = false; try { updateModeChip(); } catch(e){} return false; } try { const r = await fetch(`${relayBase()}/health?token=${encodeURIComponent(cfg.relayToken)}`, {cache:'no-store', signal: AbortSignal.timeout(4000)}); macOnline = r.ok;if(r.ok){const h=await r.json();archiveAttention=h.archiveNeedsAttention||0;if(!!h.llmDown!==llmDownNow)setLlmDown(!!h.llmDown,h.llmReason?('原因 '+h.llmReason+'。要点和总结已暂停；录音和转写不受影响，会后可以补跑。'):'');try{setLlmDegraded(!!h.llmDegraded,h.llmDegradedReason?('首选模型没回应（'+h.llmDegradedReason+'），已临时改用备用模型；要点和总结照常出。'):'');}catch(e){}macRecovery=!!h.recoveryNeeded;} } catch(e) { macOnline = false; } try { updateModeChip(); updateAssistantIdentity(); } catch(e){} return macOnline; }
+  async function checkMac(){ if (!cfg.relayToken && !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) { macOnline = false; try { updateModeChip(); } catch(e){} return false; } try { const r = await fetch(`${relayBase()}/health?token=${encodeURIComponent(cfg.relayToken)}`, {cache:'no-store', signal: AbortSignal.timeout(4000)}); macOnline = r.ok;if(r.ok){const h=await r.json();archiveAttention=h.archiveNeedsAttention||0;if(!!h.llmDown!==llmDownNow)setLlmDown(!!h.llmDown,h.llmReason?('原因 '+h.llmReason+'。要点和总结已暂停；录音和转写不受影响，会后可以补跑。'):'');try{setLlmDegraded(!!h.llmDegraded,h.llmDegradedReason?('首选模型没回应（'+h.llmDegradedReason+'），已临时改用备用模型；要点和总结照常出。'):'');}catch(e){}macRecovery=!!h.recoveryNeeded;try{setAttention(h.attention);}catch(e){}} } catch(e) { macOnline = false; } try { updateModeChip(); updateAssistantIdentity(); } catch(e){} return macOnline; }
   function resolveMode(){
     const v = el.lang && el.lang.value; if (v && v !== 'auto') return v;
     if (!macOnline) return 'ime';
@@ -2520,6 +2543,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       else if (m.type === 'stall') note(m.message || (T('stall_relay')||'中转报告采音异常。'), true);
       else if (m.type === 'llm_down') setLlmDown(true, m.message||'');
       else if (m.type === 'llm_degraded') setLlmDegraded(!!m.on, m.message||'');
+      else if (m.type === 'attention') { try { setAttention(m.attention); } catch(e){} }
       else if (m.type === 'llm_up') { setLlmDown(false); note(ui==='en'?'Model is back; analysis resumes.':'模型已恢复，分析继续'); }
       else if (m.type === 'error') note('中转报错：' + (m.message||''), true);
     };
