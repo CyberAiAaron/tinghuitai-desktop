@@ -22,7 +22,7 @@ test('settingsOf：on 且有密钥才 enabled；阈值 / 间隔非法回默认',
   assert.equal(G.settingsOf({ JEV_GATE: 'on' }).enabled, false, '没密钥不能启用');
   assert.equal(G.settingsOf({ JEV_GATE: 'off', JEV_API_KEY: 'x' }).enabled, false);
   const s = G.settingsOf({ ...ENV, JEV_THRESHOLD: 'abc', JEV_MIN_GAP_MS: '-1' });
-  assert.equal(s.enabled, true); assert.equal(s.threshold, 0.5); assert.equal(s.minGapMs, 25000);
+  assert.equal(s.enabled, true); assert.equal(s.threshold, 0.5); assert.equal(s.minGapMs, 2000);
   assert.equal(G.settingsOf({ ...ENV, JEV_THRESHOLD: '0.7', JEV_MIN_GAP_MS: '300' }).threshold, 0.7);
   assert.equal(G.buildState(['甲', '乙'], '丙'), '上文：甲\n上文：乙\n当前句：丙');
   assert.equal(G.buildState([], '丙'), '当前句：丙');

@@ -7,14 +7,14 @@
 //   · 失败 = 未命中：超时 3 秒、重试 1 次，仍失败只记 failures，不阻塞转写、不抛。
 //   · 状态 = 前两句 + 当前句；两道题 worth（noul）/ kind（choice）。
 //   · 命中 = noul ≥ JEV_THRESHOLD（默认 0.5）且 kind ≠ none。
-//   · 两次触发最少间隔 JEV_MIN_GAP_MS（默认 25000，回放实测 25s 窗口≈90 次 Sonnet/38 分钟，与需求单口径一致）；间隔内的命中合并成一次延后触发。
+//   · 两次触发最少间隔 JEV_MIN_GAP_MS（默认 2000，Aaron 2026-09-22 拍板；09-21 那场 315 句回放：2s 纯间隔 151 次、叠 12s 分诊锁 134 次，8s 为 143 / 134，实际上限由分诊时长决定）；间隔内的命中合并成一次延后触发。
 //   · JEV_GATE 不是 on、或没有 JEV_API_KEY：一次都不调，行为与没有这个模块完全一样。
 //   · 接口地址写死；只有测试进程（THT_TEST）能用 THT_JEV_URL 指到本机假服务。
 const { recordUsage } = require('./llm');
 
 const JEV_URL = (process.env.THT_TEST && process.env.THT_JEV_URL) || 'https://api.typesafe.ai/v1/systemone';
 const MODEL = 'jev-latest';
-const DEFAULT_THRESHOLD = 0.5, DEFAULT_MIN_GAP_MS = 25000, TIMEOUT_MS = 3000, RETRIES = 1;
+const DEFAULT_THRESHOLD = 0.5, DEFAULT_MIN_GAP_MS = 2000, TIMEOUT_MS = 3000, RETRIES = 1;
 const KINDS = ['decision', 'todo', 'promise', 'claim', 'risk', 'none'];
 
 const QUESTIONS = {
