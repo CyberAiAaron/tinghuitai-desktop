@@ -2,7 +2,7 @@
   const I18N = {
     zh:{}, // zh 用 HTML 里的原文
     en:{
-      unverified:'Grounded · rate it',speaker_count:'Known speaker count (0 = estimate)',asr_engine:'Recorded audio engine',local_asr:'On this Mac · transcription & speaker separation',cloud_asr:'On this Mac · transcribe and archive to Feishu',asr_hint:'Local results appear in Workspace. Speaker IDs need manual naming.',work_hub:'Workspace',tasks:'Tasks',save_hub:'Save to workspace',meeting_tasks:'Meeting tasks',close:'Close',task_hint:'Keep action items separate. Save to your workspace to manage projects, owners and progress.',brand:'Meeting LiveMate', tagline:'Your live meeting companion',
+      unverified:'From your project memory',speaker_count:'Known speaker count (0 = estimate)',asr_engine:'Recorded audio engine',local_asr:'On this Mac · transcription & speaker separation',cloud_asr:'On this Mac · transcribe and archive to Feishu',asr_hint:'Local results appear in Workspace. Speaker IDs need manual naming.',work_hub:'Workspace',tasks:'Tasks',save_hub:'Save to workspace',meeting_tasks:'Meeting tasks',close:'Close',task_hint:'Keep action items separate. Save to your workspace to manage projects, owners and progress.',brand:'Meeting LiveMate', tagline:'Your live meeting companion',
       m_auto:'Auto (Mac online → Volc, offline → IME)', m_asr:'Volcano ASR (via Mac, best)',
       m_tab:'Online meeting - in browser (tab audio + mic)', m_ime:'IME dictation (WeChat / Doubao)', m_browser:'Browser recognition',
       b_pull:'Pull from Mac', pull_wait:'Pulling from Mac...', pull_ok:'Restored ', pull_ok2:' session(s).',
@@ -64,7 +64,7 @@
       e_tr:'Tap “Start”, put the phone on the table. Keep this page in the foreground and the device awake. Locking a phone or switching apps may pause audio capture.',
       e_tr_live:'Listening…', e_tr_none:'Nothing in this session yet.',
       e_hl:'Analyzed about every 25s. Conflicts in red, to-dos in green.',
-      e_ck:'Likely right / may be wrong / worth knowing, plus free-form reminders — checked against the project state, each with a quote. Nothing here means nothing worth saying yet.',
+      e_ck:'When the room hits something your project memory already answers, the answer shows up here. Empty = nothing yet.',
       e_sum:'Appears here after the session ends.', e_hist:'No sessions on this device yet.',
       v_true:'likely true', v_false:'likely wrong', v_unsure:'not sure',
       unfinished:'unfinished', sent:'lines', notes:'notes', checks:'checks', pending:'pending upload',

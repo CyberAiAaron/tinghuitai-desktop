@@ -68,9 +68,9 @@
           cur = Object.assign(newSession('view', 'view'), S, {viewOnly:true}); resetSigs(); stickBottom = true; render(); el.src.textContent = '🎙 ' + (m.session.source||'另一台设备') + ' 在采音'; updateStatusIdle(); } } else { viewLive = false; updateStatusIdle(); } }
       else if (!running && cur && cur.viewOnly) {
         if(m.type==='assistantAck'){assistantAck(m);return;}
-      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names'])if(restored[key]!==undefined)cur[key]=restored[key];persist();resetSigs();render();}
+      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names','calendar'])if(restored[key]!==undefined)cur[key]=restored[key];cur.nameFixCount=(m.session.nameFixes||[]).length;persist();resetSigs();render();}
       else if (m.type === 'partial') { interim = m.text||''; render(); }
-        else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||''}); render(); }
+        else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||'', seg: m.seg||''}); render(); }
         else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
@@ -85,6 +85,7 @@
         else if (m.type === 'summary' && m.text) { cur.summary = m.text; render(); }
         else if (m.type === 'ended') { viewLive = false; cur.end = m.at||Date.now(); updateStatusIdle(); el.src.textContent = '已结束'; }
         else if (m.type === 'names' && m.names) { cur.names = m.names; render(); }
+        else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
       } };
     viewWs.onclose = () => { viewWs = null; viewLive = false; if (!running) { updateStatusIdle(); setTimeout(()=>{ checkMac().then(viewerConnect); }, 15000); } };
   }
@@ -151,16 +152,28 @@
     if(n){ persist(); render(); }
   }
 
+  // 洞察去重（0.6.14）：claim 去标点后前 12 字相同 → 同一件事，保留最新那条（原位替换，位置不动，时间取新的）。
+  // 不做「一条包含另一条」的判断：短句会把只是提到同一个词的长句吞掉（Codex b0d361a5 复审 major）。
+  const insightNorm = t => String(t||'').replace(/[\s“”"'‘’「」『』（）()，。、,.!?！？：:；;…—\-·]/g,'');
+  function sameInsight(a,b){ const x=insightNorm(a), y=insightNorm(b); if(!x||!y) return false; return x.slice(0,12)===y.slice(0,12); }
+  function mergeInsights(list, incoming, at){
+    let n=0;
+    for(const x of (incoming||[])){
+      if(!x||!x.claim) continue;
+      const row={id:x.id, sourceRefs:x.sourceRefs, at:x.at||at||Date.now(), claim:x.claim, kind:x.kind||'insight', source:x.source||'', why:x.why||x.note||'', refs:Array.isArray(x.refs)?x.refs:[], verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||x.why||'', label:x.label, evidence:x.evidence};
+      const i=list.findIndex(o=>o&&sameInsight(o.claim,x.claim));
+      if(i>=0){ const old=list[i]; if(old.rating) row.rating=old.rating; if(old.comment) row.comment=old.comment; list[i]=row; }
+      else list.push(row);
+      n++;
+    }
+    return n;
+  }
   function applyFeedback(m){
     const at = Date.now(); let n = 0;
     const seenH = new Set([...cur.highlights.map(x=>x.text), ...cur.todos.map(x=>x.text)]);
-    const seenC = new Set(cur.factchecks.map(x=>x.claim));
     (m.highlights||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.highlights.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text}); n++; } });
     (m.todos||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.todos.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text, owner:x.owner||'', how:x.how||''}); n++; } });
-    // 同一 claim 再来一次时补齐 kind/label/evidence（早期结果可能缺这三项，缺了就渲染成「旧版初判」）
-    (m.factchecks||[]).forEach(x=>{ if (!(x&&x.claim)) return;
-      if (seenC.has(x.claim)) { const o=cur.factchecks.find(f=>f.claim===x.claim); if (o) { if (!o.kind&&x.kind) o.kind=x.kind; if (!o.label&&x.label) o.label=x.label; if (!o.evidence&&x.evidence) o.evidence=x.evidence; } return; }
-      seenC.add(x.claim); cur.factchecks.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, claim:x.claim, verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||'', kind:x.kind, label:x.label, evidence:x.evidence}); n++; });
+    n += mergeInsights(cur.factchecks, [...(m.insights||[]), ...(m.factchecks||[])], at);
     if (n) { persist(); render(); buzz(); }
   }
 

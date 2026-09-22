@@ -1,12 +1,16 @@
 'use strict';
-module.exports=async function(req,res,u,{isLocal,localReason,settings,active,testModel}){
+module.exports=async function(req,res,u,{isLocal,localReason,settings,active,testModel,tokenOk}){
  const bootstrap=u.pathname==='/tinghuitai/bootstrap.js',setup=u.pathname==='/setup';
  const detect=u.pathname==='/setup/detect',agent=u.pathname==='/setup/agent';
  if(!bootstrap&&!setup&&!detect&&!agent&&u.pathname!=='/setup/test')return false;
  const json=(code,j)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(j));return true;};
  // 非本机一律 403（跨站页面连 bootstrap.js 都不该拿到）；原因写在 403 的正文里，
  // 首页自己 fetch('/setup') 就能读到并展示，跨站页面因为没有 CORS 读不到。
- if(!isLocal){const why=(typeof localReason==='function'?localReason():'')||'页面来源不是本机';return json(403,{error:'设置只能在本机打开：'+why});}
+ // 手机 / 外网页面（funnel 进来）拿不到 bootstrap.js，也就没有 boot 状态，「开始听会」会被
+ // asrConfigured/macAsrAvailable 全空卡住（09-22 手机复现）。只读的就绪状态（不含任何密钥）
+ // 允许带口令的远端 GET /setup 读到；写操作和 bootstrap.js 仍然只认本机。
+ const remoteRead=!isLocal&&setup&&req.method==='GET'&&typeof tokenOk==='function'&&tokenOk(req.headers['x-tht-token']||u.searchParams.get('token'));
+ if(!isLocal&&!remoteRead){const why=(typeof localReason==='function'?localReason():'')||'页面来源不是本机';return json(403,{error:'设置只能在本机打开：'+why});}
  const c=settings.load();
  const macAsr=(()=>{try{return require('./mac-asr').available();}catch(e){return false;}})();
  const asrLocal=c.ASR_PROVIDER==='mac';
@@ -21,6 +25,8 @@ module.exports=async function(req,res,u,{isLocal,localReason,settings,active,tes
   const dest=String(req.headers['sec-fetch-dest']||''),site=String(req.headers['sec-fetch-site']||'');
   if(dest==='script'&&site&&site!=='same-origin')return json(403,{error:'bootstrap.js 只能由本机同源页面加载（当前 '+site+'）'});
   res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end('window.THT_BOOT='+JSON.stringify({...publicState,relayToken:c.RELAY_TOKEN})+';');return true;}
+ // 远端只给就绪状态这几个字段（Codex 09-22 审核意见）：base / model / resource / archive 这类内部配置只留本机
+ if(setup&&req.method==='GET'&&remoteRead){const {ready,asrConfigured,asrProvider,macAsrAvailable,modelConfigured,agentLabel}=publicState;return json(200,{ready,asrConfigured,asrProvider,macAsrAvailable,modelConfigured,agentLabel});}
  if(setup&&req.method==='GET')return json(200,publicState);
  // 本机装没装 AI 命令行：装了就不用申请 API Key
  if(detect&&req.method==='GET'){const found=require('./cli-llm').detect();return json(200,{found:Object.keys(found),provider:c.LLM_PROVIDER||''});}

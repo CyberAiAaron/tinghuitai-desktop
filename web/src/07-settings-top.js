@@ -7,7 +7,7 @@
   };
   async function loadServerSettings(){
     try {
-      const r = await fetch('/setup', {cache:'no-store'});
+      const r = await fetch('/setup', {cache:'no-store', headers:{'x-tht-token':cfg.relayToken||''}});
       if (!r.ok) return;
       const c = await r.json();
       boot = Object.assign({}, boot, c);

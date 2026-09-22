@@ -49,16 +49,18 @@
   $('#rb-llm') && ($('#rb-llm').onclick = () => openSettings('llm'));
   // 设置页在另一个窗口改完，回到这里要能自己刷新状态
   async function refreshBoot(){
-    try { const r = await fetch('/setup', {cache:'no-store'}); if (r.ok) { boot = Object.assign({}, boot, await r.json()); } } catch(e){}
+    try { const r = await fetch('/setup', {cache:'no-store', headers:{'x-tht-token':cfg.relayToken||''}}); if (r.ok) { boot = Object.assign({}, boot, await r.json()); } } catch(e){}
     updateReadyBar();
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshBoot(); });
+  // 手机 / 外网窗口拿不到 bootstrap.js（THT_BOOT 为空），开局就用口令读一次就绪状态，否则「开始听会」被当成没接转写（09-22）
+  if (!window.THT_BOOT) refreshBoot();
 
   function assistantIdentity(config,online){
     return 'MyAgent';
   }
   let serverModelIdentity='MyAgent';
-  fetch('/setup').then(r=>r.ok?r.json():null).then(c=>{if(c){serverModelIdentity=assistantIdentity({key:'server-held',model:c.model||'',provider:c.provider||''},true);updateAssistantIdentity();}}).catch(()=>{});
+  fetch('/setup',{cache:'no-store',headers:{'x-tht-token':cfg.relayToken||''}}).then(r=>r.ok?r.json():null).then(c=>{if(c){serverModelIdentity=assistantIdentity({key:'server-held',model:c.model||'',provider:c.provider||''},true);updateAssistantIdentity();}}).catch(()=>{});
   function updateAssistantIdentity(){const name=serverModelIdentity;$('#b-assistant').textContent=name;$('#assistant-name').textContent=name;$('#assistant-panel').setAttribute('aria-label',name);}
   const assistantPending=new Map();let assistantBusy=false,assistantUndo=null,assistantLastRule='',assistantTrigger=null;
   const A=window.LiveMateCore;

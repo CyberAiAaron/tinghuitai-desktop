@@ -1,0 +1,66 @@
+'use strict';
+// 静默纠名（2026-09-22 第①批）：app/name-fix.js 是纯函数，这里只测替换规则本身。
+//   正例 3：中文别名（星宇→新宇）、中文→拉丁别名（露娜→Luna）、拉丁近音自动认（dearra→Daria）
+//   反例 2：非人名的同音词不动（新余 / 路那 / carry）、≤1 字的别名不收
+//   另外：撤销过的组合（ignore）不再改；改过的每一条都带 from/to
+const { test } = require('node:test'), assert = require('node:assert/strict');
+const fs = require('fs'), os = require('os'), path = require('path');
+const nf = require('../app/name-fix');
+
+const ROSTER = ['Shawn Liu', 'Daria', 'Luna Min', '王新宇', 'Cary Luo'];
+const table = () => nf.buildTable(ROSTER, { aliases: { '星宇': '新宇', '露娜': 'Luna', '新': '王新宇' }, ignore: [] });
+
+test('正例：中文别名按名单纠正，记录 from/to', () => {
+  const r = nf.fix('星宇说这个方案明天定', table());
+  assert.equal(r.text, '新宇说这个方案明天定');
+  assert.deepEqual(r.changes, [{ from: '星宇', to: '新宇' }]);
+});
+
+test('正例：中文听写的英文名（露娜）改回 Luna，且已经写对的 Luna 不重复算', () => {
+  const r = nf.fix('露娜和 Luna 是同一个人', table());
+  assert.equal(r.text, 'Luna和 Luna 是同一个人');
+  assert.equal(r.changes.length, 1);
+});
+
+test('正例：拉丁名近音（dearra→Daria）按读音键 + 编辑距离自动认，整词替换', () => {
+  const r = nf.fix('dearra will join, Daria confirmed', table());
+  assert.equal(r.text, 'Daria will join, Daria confirmed');
+  assert.deepEqual(r.changes, [{ from: 'dearra', to: 'Daria' }]);
+});
+
+test('反例：非人名的同音 / 近音词不动（新余、路那、carry）', () => {
+  const src = '新余的路那么远，carry on 就好';
+  const r = nf.fix(src, table());
+  assert.equal(r.text, src);
+  assert.equal(r.changes.length, 0);
+});
+
+test('反例：≤1 字的别名不进表，单字不会被改', () => {
+  const t = table();
+  assert.equal(t.exact.has('星'), false);
+  const r = nf.fix('星期三再说', t);
+  assert.equal(r.text, '星期三再说');
+  assert.equal(r.changes.length, 0);
+});
+
+test('撤销过的组合进 ignore 后不再改；ignore 文件原子写、读不到就当空', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-namefix-')), file = path.join(dir, 'name-aliases.json');
+  assert.deepEqual(nf.readAliasFile(file), { aliases: {}, ignore: [] });
+  const cur = nf.addIgnore(file, [{ seg: 'g1', from: '星宇', to: '新宇' }]);
+  assert.deepEqual(cur.ignore, ['星宇→新宇']);
+  const t = nf.buildTable(ROSTER, { aliases: { '星宇': '新宇' }, ignore: nf.readAliasFile(file).ignore });
+  assert.equal(nf.fix('星宇来了', t).text, '星宇来了');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('反例：别名指向名单外的词不生效（Codex 复审 major #2）', () => {
+  // 目标「李四」「Bob」都不在 ROSTER（全名 / 去姓的名 / 拉丁单词）里 → 不建规则；指向「Shawn Liu」整串全名的照收
+  const t = nf.buildTable(ROSTER, { aliases: { '张三': '李四', 'bobby': 'Bob', '小刘': 'Shawn Liu', '星宇': '新宇' }, ignore: [] });
+  assert.equal(t.exact.has('张三'), false);
+  assert.equal(t.exact.has('bobby'), false);
+  assert.equal(t.exact.get('小刘'), 'Shawn Liu');
+  assert.equal(t.exact.get('星宇'), '新宇');
+  const r = nf.fix('张三和 bobby 都不在名单里', t);
+  assert.equal(r.text, '张三和 bobby 都不在名单里');
+  assert.deepEqual(r.changes, []);
+});

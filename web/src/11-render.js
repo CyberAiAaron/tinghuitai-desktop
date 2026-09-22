@@ -43,6 +43,7 @@
   function render(){
     if (!cur) return;
     if(applyCorrections(cur)){resetSigs();persist();}
+    renderCalendar();
     const tr = cur.transcript;
     const nTr = tr.length + '|' + (tr.length?tr[tr.length-1].at:'') + '|' + interim.length + '|' + JSON.stringify(cur.names||{})+'|'+ui+'|'+JSON.stringify(cur.i18n?.[ui]?.map||{}).length;
     if (nTr !== sigTr) {
@@ -61,7 +62,7 @@
       const first = sigHl === '';
       sigHl = nHl;
       // 原始要点仍可编辑；凝练正文不覆盖原始记录。
-      const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}${x.stale?' stale':''}${x.revised?' revised':''}${x.recomputed&&!x.stale?' recomputed':''}${x.pendingFix?' pending':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:(x.at?hms(x.at).slice(0,5):'')}</span><div>${esc(tt(x.text))}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}${x.k==='todo'?`<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button>`:''}</div></div>`;
+      const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}${x.stale?' stale':''}${x.revised?' revised':''}${x.recomputed&&!x.stale?' recomputed':''}${x.pendingFix?' pending':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:(x.at?hms(x.at).slice(0,5):'')}</span><div>${esc(tt(x.text))}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}${x.k==='todo'?`<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button>`:''}${threadHtml(x.id||'',x.k,x.text)}</div></div>`;
 
       const pinned=$('#hl-pinned');
       // 他手动收起过的议题，记在这里；换了一个「正在聊」的议题时才重新自动展开
@@ -143,8 +144,9 @@
     if (nCk !== sigCk) {
       const first = sigCk === '';
       sigCk = nCk;
-      keepScroll(el.ck, () => { el.ck.innerHTML = cks.length ? cks.map((x,i)=>`<div class="card ck kind-${esc(kindOf(x))}${(!first&&i===cks.length-1)?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" title="${ui==='en'?'Tap to edit · long-press to leave a line':'点一下改或删 · 长按留一句话'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${esc(kindLabel(kindOf(x),ui==='en',x))}</span>${esc(tt(x.claim))}<div class="v">${esc(tt(x.note||''))}</div>${x.evidence?`<div class="v ev">“${esc(x.evidence)}”</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}<div class="fb"><button type="button" data-fb="useful" class="${x.rating==='useful'?'on':''}">${ui==='en'?'Useful':'有用'}</button><button type="button" data-fb="useless" class="${x.rating==='useless'?'on':''}">${ui==='en'?'Useless':'没用'}</button><button type="button" data-fb="adopt" class="${x.rating==='adopt'?'on':''}">${ui==='en'?'Adopt':'采纳'}</button></div></div></div>`).join('') : `<div class="empty">${T('e_ck')||'对照项目状态给你的判断：可能正确 / 可能不对 / 值得知道，加它自己起名的提醒。空着 = 暂时没什么值得说的。'}</div>`; }); if (first) el.ck.scrollTop = el.ck.scrollHeight;
+      keepScroll(el.ck, () => { el.ck.innerHTML = viewListHtml(cks, first); }); if (first) el.ck.scrollTop = el.ck.scrollHeight;
     }
+    const myTodosEl=$('#my-todos'); if(myTodosEl){ const h=myTodosHtml(cur.todos||[]); if(myTodosEl.dataset.sig!==h){ myTodosEl.dataset.sig=h; myTodosEl.innerHTML=h; myTodosEl.hidden=!h; } }
     el.ctr.textContent = tr.length; el.chl.textContent = items.length; el.cck.textContent = cks.length;
     const nSum = (cur.summary || '') + '|' + ui + '|' + (cur.i18n && cur.i18n[ui] ? JSON.stringify(cur.i18n[ui]).length : 0);
     if (nSum !== sigSum) { sigSum = nSum; const sumTxt = tt(cur.summary); el.sum.innerHTML = cur.summary ? esc(sumTxt) : `<span class="empty">${T('e_sum')||'结束后会出现在这里。'}</span>`; }
@@ -157,12 +159,31 @@
   function viewJunk(x){return !x||!x.kind&&(VIEW_JUNK_RE.test(x.note||'')||VIEW_JUNK_RE.test(x.claim||''));}
   function kindOf(x){const k=x&&x.kind; if(k==='view'||k==='note') return 'other'; const v=String(x&&x.verdict); return k||(v==='false'?'doubt':v==='true'?'ok':'legacy');}
   function kindLabel(k,en,x){if(k==='other'&&x&&x.label) return x.label; return ({ok:en?'Likely right':'可能正确',fix:en?'You meant':'你说的是',link:en?'Connects to':'联想',add:en?'Context':'补充',know:en?'Worth knowing':'值得知道',doubt:en?'May be wrong':'可能不对',legacy:en?'Old version':'旧版初判',other:en?'Note':'提醒'})[k]||(en?'Note':'提醒');}
+  // 看法卡（0.6.14 减法版）：只有 claim + 一行灰字 source · why + 对话框占位；不带标签、不带有用/没用/采纳。最新 8 条平铺，更早的折进「更早 N 条」。
+  const VIEW_SHOW = 8;
+  function viewCard(x, fresh){ const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); return `<div class="card ck${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div>${esc(tt(x.claim))}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  function viewListHtml(cks, first){
+    if(!cks.length) return `<div class="empty">${T('e_ck')||'讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。'}</div>`;
+    const older=cks.slice(0,Math.max(0,cks.length-VIEW_SHOW)), recent=cks.slice(-VIEW_SHOW);
+    const fold=older.length?`<details class="ck-older"><summary>${ui==='en'?('Earlier '+older.length):('更早 '+older.length+' 条')}</summary>${older.map(x=>viewCard(x,false)).join('')}</details>`:'';
+    return fold+recent.map((x,i)=>viewCard(x,!first&&i===recent.length-1)).join('');
+  }
+  // 本人待办常驻条：owner 是本人 / 我，或没写 owner 但模型给了 how（prompt 里「未指定但明显该他做」才给 how）。最新 5 条，其余折叠。
+  const SELF_OWNER=/^(本人|我|我自己|自己|me|myself|self|aaron(\s*wang)?)$/i;
+  function isMyTodo(x){ if(!x||!x.text||x.done) return false; const o=String(x.owner||'').trim(); return SELF_OWNER.test(o) || (!o && !!String(x.how||'').trim()); }
+  function myTodosHtml(todos){
+    const mine=(todos||[]).filter(isMyTodo).sort((a,b)=>(a.at||0)-(b.at||0));
+    if(!mine.length) return '';
+    const recent=mine.slice(-5).reverse(), older=mine.slice(0,Math.max(0,mine.length-5)).reverse();
+    const line=x=>`<div class="my-todo" data-fix="hl" data-kind="todo" data-key="${esc(x.text)}">${esc(tt(x.text))}</div>`;
+    return `<div class="my-todos-label">${ui==='en'?'Mine':'本人待办'} <span class="count">${mine.length}</span></div>`+recent.map(line).join('')+(older.length?`<details class="my-todos-older"><summary>${ui==='en'?('Earlier '+older.length):('更早 '+older.length+' 条')}</summary>${older.map(line).join('')}</details>`:'');
+  }
   function viewItemOf(card){ if(!cur||!card) return null; const id=card.dataset.id, key=card.dataset.key; return (cur.factchecks||[]).find(x=>id&&x.id===id) || (cur.factchecks||[]).find(x=>x.claim===key) || null; }
   async function sendViewFeedback(it,rating,comment){ if(!it) return; it.rating=rating; if(comment!==undefined) it.comment=comment; persist(); sigCk='\u0000'; render();
     try{ const r=await fetch(relayBase()+'/view-feedback?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:cur.id,id:it.id||'',kind:it.kind||'',claim:it.claim||'',rating:rating||'',comment:it.comment||''}),signal:AbortSignal.timeout(4000)}); if(!r.ok) throw new Error('HTTP '+r.status); it.fbSynced=true; }
     catch(e){ it.fbSynced=false; note((ui==='en'?'Saved here; Mac not reached: ':'已记在本机，没送到 Mac：')+e.message,true); } persist(); }
-  el.ck.addEventListener('click', e => { const b=e.target.closest('button[data-fb]'); if(!b) return; e.stopPropagation(); e.preventDefault(); const it=viewItemOf(b.closest('.card')); if(!it) return; const r=b.dataset.fb; sendViewFeedback(it, it.rating===r?'':r); }, true);
-  (function(){ let t=null, fired=false; let x0=0,y0=0; const arm=e=>{ fired=false; const c=e.target.closest('.card.ck'); if(!c||e.target.closest('button')) return; x0=e.clientX; y0=e.clientY; t=setTimeout(()=>{ fired=true; setTimeout(()=>{ fired=false; },700); const it=viewItemOf(c); if(!it) return; const line=prompt(ui==='en'?'One line for this view (what was off / what you want more of):':'给这条看法留一句话（哪里不对 / 想多要什么）：', it.comment||''); if(line===null) return; sendViewFeedback(it, it.rating||'', line.trim().slice(0,300)); },550); };
+  // 有用 / 没用 / 采纳 三个按钮 0.6.14 去掉（Aaron 09-22）；反馈改走每张卡下的对话框（第③批）。
+  (function(){ let t=null, fired=false; let x0=0,y0=0; const arm=e=>{ fired=false; const c=e.target.closest('.card.ck'); if(!c||e.target.closest('button')||e.target.closest('.thread')) return; x0=e.clientX; y0=e.clientY; t=setTimeout(()=>{ fired=true; setTimeout(()=>{ fired=false; },700); const it=viewItemOf(c); if(!it) return; const line=prompt(ui==='en'?'One line for this view (what was off / what you want more of):':'给这条看法留一句话（哪里不对 / 想多要什么）：', it.comment||''); if(line===null) return; sendViewFeedback(it, it.rating||'', line.trim().slice(0,300)); },550); };
     const disarm=()=>{ if(t){clearTimeout(t);t=null;} };
     el.ck.addEventListener('pointerdown',arm); el.ck.addEventListener('pointermove',e=>{ if(t&&(Math.abs(e.clientX-x0)>10||Math.abs(e.clientY-y0)>10)) disarm(); }); el.ck.addEventListener('pointerup',disarm); el.ck.addEventListener('pointercancel',disarm); el.ck.addEventListener('pointerleave',disarm,true);
     el.ck.addEventListener('click', e=>{ if(fired){ fired=false; e.stopPropagation(); e.preventDefault(); } }, true); })();

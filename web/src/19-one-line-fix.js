@@ -344,9 +344,9 @@
   };
   el.tr.addEventListener('click',e=>{const b=e.target.closest('[data-asr-expand]');if(b){const raw=b.nextElementSibling;raw.hidden=!raw.hidden;b.textContent=raw.hidden?'异常重复转写 · 展开原文':'收起异常原文';return;}const c=e.target.closest('[data-fix="tr"]');if(c&&cur&&!cur.viewOnly)openFix(c);});
   el.tr.addEventListener('keydown',e=>{if(e.target.closest('[data-asr-expand]'))return;if(e.key==='Enter'||e.key===' '){const c=e.target.closest('[data-fix="tr"]');if(c&&cur&&!cur.viewOnly){e.preventDefault();openFix(c);}}});
-  $('#hl-pinned').addEventListener('click',e=>{const c=e.target.closest('.card[data-fix]');if(c&&cur&&!cur.viewOnly)openFix(c);});
-  el.hl.addEventListener('click', e => { const c = e.target.closest('.card[data-fix]'); if (c && cur && !cur.viewOnly) openFix(c); });
-  el.ck.addEventListener('click', e => { const c = e.target.closest('.card[data-fix]'); if (c && cur && !cur.viewOnly) openFix(c); });
+  $('#hl-pinned').addEventListener('click',e=>{if(e.target.closest('.thread'))return;const c=e.target.closest('.card[data-fix]');if(c&&cur&&!cur.viewOnly)openFix(c);});
+  el.hl.addEventListener('click', e => { if (e.target.closest('.thread')) return; const c = e.target.closest('.card[data-fix]'); if (c && cur && !cur.viewOnly) openFix(c); });
+  el.ck.addEventListener('click', e => { if (e.target.closest('.thread')) return; const c = e.target.closest('.card[data-fix]'); if (c && cur && !cur.viewOnly) openFix(c); });
 
   async function selfTest(){
     const m = $('#k-msg'); m.textContent = T('t_ask')||'选会议标签页，记得打开「同时分享标签页音频」…';

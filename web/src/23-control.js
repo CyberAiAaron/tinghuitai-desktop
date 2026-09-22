@@ -12,6 +12,7 @@
   el.start.onclick = async () => {
     if(!await checkMac()){note(ui==='en'?'Recording service unavailable. Reopen the installed app.':'录音服务未连接，请重新打开听会台；无需重复填写模型 Key。',true);return;}
     await loadServerSettings();
+    if (!window.THT_BOOT) await refreshBoot();   // 远端窗口：boot 只能靠带口令的 /setup 拿，点开始前再确认一次（09-22）
     // 一把钥匙都没配的人，点开始时直接按本机转写起：不用注册、不用填任何东西。
     // 这一步也会顺带拉起系统的语音识别授权弹窗。这台机器用不了本机转写才去设置页。
     if (!boot.asrConfigured) {
