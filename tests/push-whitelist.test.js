@@ -31,15 +31,25 @@ test('开关关（默认）：候选照样数出来（分诊没少），推送�
   assert.deepEqual(new pw.Gate({}).consider(batch, 1000), [], '没配 MEETING_PUSH 等于 off');
 });
 
-test('开关开：第一轮推出 5 条；同内容再来不重复；节流期内新内容压住；过了间隔新内容再推', () => {
+test('开关开：5 条候选一轮只放 3 条（和正文 3 行一致），挤掉的 2 条不记 seen；同内容再来不重复；节流期内新内容压住；过了间隔新内容再推', () => {
   const g = new pw.Gate(env);
-  assert.equal(g.consider(batch, 1000).length, 5);
-  assert.deepEqual(g.consider(batch, 2000), [], '同一批再来一遍不再推'); assert.equal(g.stats().lastSkip, 'dup');
+  const first = g.consider(batch, 1000);
+  assert.equal(first.length, 3); assert.equal(g.stats().lastSkip, 'cap'); assert.equal(g.stats().suppressed, 2);
+  assert.ok(first.every(x => !('key' in x)), '内部去重键不外泄');
+  assert.equal(g.consider(batch, 2000).length, 0, '节流期内：挤掉的 2 条也不补推'); assert.equal(g.stats().lastSkip, 'throttle');
+  assert.deepEqual(g.consider(batch, 200000), [], '同一批过了间隔再来：5 条都已 seen，不再推'); assert.equal(g.stats().lastSkip, 'dup');
+  const g2 = new pw.Gate(env); g2.consider(batch, 1000);
+  assert.equal(g2.consider(batch, 200000).length, 2, '过了间隔、没有节流那一轮：被 cap 挤掉的 2 条还能推');
+  const g3 = new pw.Gate({ ...env, MEETING_PUSH_MIN_GAP_MS: '0' }); g3.consider(batch, 1000); g3.consider(batch, 1001); g3.consider(batch, 1002);
+  assert.equal(g3.stats().pushed, 5); assert.equal(g3.stats().lastSkip, 'dup');
+  const g4 = new pw.Gate(env);
+  g4.consider(batch, 1000); g4.consider(batch, 200000);
+  assert.equal(g4.stats().pushed, 5, '两轮把 5 条推完');
   const more = { highlights: [{ text: 'Aaron 能不能今天定 D6？' }] };
-  assert.deepEqual(g.consider(more, 60000), [], '120 秒内新内容压住'); assert.equal(g.stats().lastSkip, 'throttle');
-  assert.deepEqual(g.consider(more, 200000), [], '节流期压住的内容已记成 seen，不补推');
-  assert.equal(g.consider({ highlights: [{ text: 'Aaron 你定一下 D8 的量级' }] }, 200001).length, 1, '过了间隔、新内容 → 推');
-  assert.equal(g.stats().pushed, 6);
+  assert.deepEqual(g4.consider(more, 260000), [], '120 秒内新内容压住'); assert.equal(g4.stats().lastSkip, 'throttle');
+  assert.deepEqual(g4.consider(more, 400000), [], '节流期压住的内容已记成 seen，不补推');
+  assert.equal(g4.consider({ highlights: [{ text: 'Aaron 你定一下 D8 的量级' }] }, 400001).length, 1, '过了间隔、新内容 → 推');
+  assert.equal(g4.stats().pushed, 6);
 });
 
 test('formatMessage：一条一行带原因标签，最多 3 行', () => {

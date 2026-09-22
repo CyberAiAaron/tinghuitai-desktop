@@ -4,13 +4,14 @@
 //   ① 点名本人：要点 / 待办 / 洞察文字里出现本人名字（MEETING_PUSH_SELF_NAMES，逗号分隔）或「本人」，且是明确提问 / 交办
 //   ② 冲突类：insights 里 type = conflict 的，或 highlights 以「⚠️ 冲突」开头的
 //   ③ 本人承诺：todos 里 owner 是本人，且文字带明确截止日期
-// 节流：两次推送最短间隔 MEETING_PUSH_MIN_GAP_MS（默认 120 秒）；同一内容（去标点前 24 字）本场只推一次。
+// 节流：两次推送最短间隔 MEETING_PUSH_MIN_GAP_MS（默认 120 秒）；同一内容（去标点前 24 字）本场只推一次；一轮最多 MAX_PER_PUSH = 3 条（超出的不发、不记 seen，计入 suppressed，日志写「cap」；Codex 270d1c31 复审：以前 Gate 放 5 条、正文只发 3 条）。
 // 开关：MEETING_PUSH = on 才推，默认 off = 零推送；开关只管推送，不碰分诊。
 // 纯函数 + 一个小状态对象，不发网络请求；真正发飞书由 app/server.js 的 larkPush 经工具层（app/tools）发出。
 
 const DATE_RE = /(20\d{2}[-/.年])?\d{1,2}[-/月]\d{1,2}(日|号)?(?!\d)|(下|本|这)周[一二三四五六日天]?|周[一二三四五六日天]|月底|今天|明天|后天|(\d{1,2}|[一二三]十?[一二三四五六七八九]?)号前|之前|以前/;
 const CONFLICT_RE = /^\s*⚠️?\s*(冲突|Conflict)/i;
 const ASK_RE = /[？?]|请|麻烦|能不能|可以吗|你来|你去|你负责|你定|你看|由你|交给你|问你|@|确认一下|拍一下|拍板/;
+const MAX_PER_PUSH = 3;
 const norm = s => String(s || '').replace(/[\s“”"'‘’「」『』（）()，。、,.!?！？：:；;…—\-·⚠️]/g, '').slice(0, 24);
 
 function selfNames(env = {}) {
@@ -61,14 +62,20 @@ class Gate {
     if (!cands.length) return [];
     if (!this.enabled) { this.suppressed += cands.length; this.lastSkip = 'off'; return []; }
     const fresh = [];
-    for (const c of cands) { const k = norm(c.text); if (!k || this.seen.has(k)) { this.suppressed++; continue; } this.seen.add(k); fresh.push(c); }
+    for (const c of cands) { const k = norm(c.text); if (!k || this.seen.has(k)) { this.suppressed++; continue; } fresh.push({ ...c, key: k }); }
     if (!fresh.length) { this.lastSkip = 'dup'; return []; }
     if (this.lastPushAt && now - this.lastPushAt < this.minGapMs) {
-      // 节流期内：这些内容已记成 seen，不会再推；R4 要的是「稀」，不是「晚一点补推」
+      // 节流期内：这些内容记成 seen、不再推；R4 要的是「稀」，不是「晚一点补推」
+      for (const c of fresh) this.seen.add(c.key);
       this.suppressed += fresh.length; this.lastSkip = 'throttle'; return [];
     }
-    this.lastPushAt = now; this.pushed += fresh.length; this.lastSkip = '';
-    return fresh;
+    // 一轮最多 3 条（和 formatMessage 一致）；挤掉的不记 seen，下轮再命中还有机会
+    const send = fresh.slice(0, MAX_PER_PUSH), capped = fresh.length - send.length;
+    for (const c of send) this.seen.add(c.key);
+    this.suppressed += capped; this.lastSkip = capped ? 'cap' : '';
+    if (capped) this.log(`push cap: ${capped} 条本轮不发`);
+    this.lastPushAt = now; this.pushed += send.length;
+    return send.map(({ key, ...c }) => c);
   }
   stats() { return { enabled: this.enabled, considered: this.considered, pushed: this.pushed, suppressed: this.suppressed, lastSkip: this.lastSkip }; }
 }
@@ -80,4 +87,4 @@ function formatMessage(title, items) {
   return `【听会台 · 会中提醒】${title || ''}\n${lines.join('\n')}`;
 }
 
-module.exports = { pick, Gate, selfNames, mentionsSelf, enabled, formatMessage, norm };
+module.exports = { pick, Gate, selfNames, mentionsSelf, enabled, formatMessage, norm, MAX_PER_PUSH };
