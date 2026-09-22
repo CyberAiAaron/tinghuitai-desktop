@@ -12,6 +12,7 @@ const http = require('http');
 const journal = require('./session-journal');
 const throttle = require('./write-throttle');
 const sendGate = require('./send-gate');   // 真外发的确认 + 幂等门禁（X6），和 slack-share 同一套规矩
+const INSIGHT_PENDING = new Map();         // 洞察卡动作等待期（可撤回）：'<sid>/<cardId>' → { cancel }（批 3，POST /insight-action）
 const logRotate = require('./log-rotate');
 const retention = require('./retention');   // 录音保留期：只删 audio/ 下超期录音，文字永不删  // D7：events.log / usage.jsonl / view-feedback.jsonl 超 10MB 滚成 .1
 const transcriptPick = require('./transcript-pick');  // D5：同一场会「用哪份转写」的唯一一份规则
@@ -1877,6 +1878,69 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       return reply(r.ok || r.reply ? 200 : (r.status || 404), r);
     }
   }
+  // 主动智能批 3（需求单 F3 / F4）：洞察卡上那一个按钮。POST /insight-action {id, cardId, do, args, confirmed, retryConfirmed}
+  //   do = open_source（conflict 卡：摘原文 + 附文档链接 + highlights 加冲突条）| set_date（recheck 卡：建飞书任务 + 承诺卡写截止）| cancel（撤回还在等待期的那次）
+  //   鉴权照 /thread：观众（role=view）和手机副口令只能看；幂等走 app/send-gate.js（同 cardId 同 do 不重做；上次结果不明要 retryConfirmed）。
+  //   点击 = 批准，服务端不自动执行；执行前有 INSIGHT_ACTION_GRACE_MS（默认 2500）的等待期，期间 do:'cancel' 能撤回；执行态用 ws {type:'insightAction'} 推给页面。
+  if (p.endsWith('/insight-action')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method'); }
+    if (u.searchParams.get('role') === 'view') return reply(403, { ok: false, error: '旁听角色只能看，不能替 Aaron 发起操作' });
+    if (!(isLocalReq(req) || tokenOk({ RELAY_TOKEN: env0.RELAY_TOKEN }, u.searchParams.get('token')))) return reply(403, { ok: false, error: '这个口令只能看，不能替 Aaron 发起操作' });
+    const parts = []; let size = 0;
+    for await (const c of req) { parts.push(c); size += c.length; if (size > 8000) return reply(413, { ok: false, error: '请求太长' }); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
+    const sid = String(j.id || ''), cardId = String(j.cardId || ''), act = String(j.do || '');
+    if (!/^[A-Za-z0-9_.:-]{1,100}$/.test(sid) || !/^[A-Za-z0-9_.:-]{1,80}$/.test(cardId)) return reply(400, { ok: false, error: '编号不对' });
+    const sess = SESSIONS.get(sid);
+    if (!sess || sess.finalized) return reply(404, { ok: false, error: '这场会不在进行中' });
+    const card = (sess.factchecks || []).find(x => x && x.id === cardId);
+    if (!card) return reply(404, { ok: false, error: '找不到这张卡' });
+    const push = () => { try { sess.broadcast({ type: 'insightAction', cardId, state: card.actionState || null, card: { correction: card.correction, quote: card.quote, doc: card.doc, task: card.task } }); } catch (e) {} };
+    const pendingKey = sid + '/' + cardId;
+    if (act === 'cancel') {
+      const pend = INSIGHT_PENDING.get(pendingKey);
+      if (!pend) return reply(409, { ok: false, error: card.actionState && card.actionState.status === 'done' ? '已经执行完了，撤不回' : '没有在等待执行的动作' });
+      pend.cancel(); return reply(200, { ok: true, state: 'cancelled' });
+    }
+    const { ACTION_OF } = require('./insight-filter');
+    if (!['open_source', 'set_date'].includes(act)) return reply(400, { ok: false, error: 'do 只能是 open_source / set_date / cancel' });
+    if (ACTION_OF[card.type || 'answer'] !== act) return reply(400, { ok: false, error: '这类卡没有这个动作' });
+    if (card.actionState && card.actionState.status === 'done') return reply(200, { ok: true, alreadySent: true, state: card.actionState, card: { correction: card.correction, quote: card.quote, doc: card.doc, task: card.task } });
+    if (INSIGHT_PENDING.has(pendingKey) || (card.actionState && ['queued', 'running'].includes(card.actionState.status))) return reply(409, { ok: false, error: '这条正在执行，请勿重复点击' });
+    try { sendGate.requireConfirmed(j); } catch (e) { return reply(400, { ok: false, error: e.message }); }
+    const args = j.args && typeof j.args === 'object' && !Array.isArray(j.args) ? j.args : {};
+    // 等待期：点错了能撤回；测试把 INSIGHT_ACTION_GRACE_MS 设 0
+    const grace = Math.max(0, Math.min(15000, Number(env0.INSIGHT_ACTION_GRACE_MS ?? 2500) || 0));
+    card.actionState = { status: 'queued', do: act, at: Date.now() }; push();
+    const waited = await new Promise(resolve => { let t = null; const pend = { cancel: () => { if (t) clearTimeout(t); INSIGHT_PENDING.delete(pendingKey); resolve(false); } }; INSIGHT_PENDING.set(pendingKey, pend); t = setTimeout(() => { INSIGHT_PENDING.delete(pendingKey); resolve(true); }, grace); });
+    if (!waited) { card.actionState = { status: 'cancelled', do: act, at: Date.now() }; push(); return reply(200, { ok: true, state: card.actionState }); }
+    card.actionState = { status: 'running', do: act, at: Date.now() }; push();
+    const insightActions = require('./insight-actions');
+    let db = null; try { db = require('./memory').open(DATA); } catch (e) {}
+    try {
+      const receipt = await sendGate.send({
+        dataDir: DATA, kind: 'insight-action', body: j, meta: { id: sid, cardId, do: act },
+        key: ['insight-action', sid, cardId, act],
+        run: async () => {
+          const ctx = { card, args, session: { id: sess.id, title: sess.title }, env: env0, db, dataDir: DATA, log };
+          const r = act === 'open_source' ? await insightActions.openSource(ctx) : await insightActions.setDate(ctx);
+          Object.assign(card, r.patch);
+          if (r.highlight) { const h = { id: 'i' + sess.idTag + (sess.itemSeq = (sess.itemSeq || 0) + 1), at: Date.now(), text: r.highlight, sourceRefs: [] }; sess.highlights.push(h); try { sess.broadcast({ type: 'feedback', highlights: [h], todos: [], factchecks: [] }); } catch (e) {} }
+          return { patch: r.patch, url: r.url || '', refId: r.refId || '' };
+        },
+      });
+      if (receipt.alreadySent && receipt.patch && !card.correction && !card.task) Object.assign(card, receipt.patch);   // 上次执行完没来得及写卡：按收据补
+      card.actionState = { status: 'done', do: act, at: Date.now(), ...(receipt.alreadySent ? { alreadySent: true } : {}) }; push();
+      log('insight-action ' + sid + ' ' + cardId + ' ' + act + (receipt.alreadySent ? '（已做过，未重做）' : ''));
+      return reply(200, { ok: true, state: card.actionState, card: { correction: card.correction, quote: card.quote, doc: card.doc, task: card.task }, ...(receipt.alreadySent ? { alreadySent: true } : {}) });
+    } catch (e) {
+      card.actionState = { status: 'failed', do: act, at: Date.now(), error: String(e.message || e).slice(0, 200), ...(e.uncertain ? { uncertain: true } : {}) }; push();
+      log('insight-action failed ' + sid + ' ' + cardId + ' ' + act + ' ' + e.message);
+      return reply(e.code === 409 ? 409 : 400, { ok: false, error: card.actionState.error, state: card.actionState, ...(e.uncertain ? { uncertain: true } : {}) });
+    }
+  }
   // 看法反馈：有用 / 没用 / 采纳 一击 + 一句话。写账本，并回流到这一场后续的 triage prompt（Aaron 2026-09-17：靠反馈收敛）。
   if (p.endsWith('/view-feedback')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
@@ -2492,6 +2556,10 @@ wss.on('connection', (ws, req) => {
       // 只在测试进程里存在（THT_TEST）：灌一条 final，按需立刻跑一次分诊。
       // 会中分析的 prompt 要有 ASR 出的 final 才拼得出来，测试里没有真 ASR，
       // 金样测试（tests/context-golden.test.js）靠这个口子抓「真正发出去的那份 system + user」。
+      else if (msg.type === '__test_insight' && process.env.THT_TEST) {
+        // 测试钩子：直接塞一张洞察卡（批 3 路由测试用，不经模型）
+        if (session && msg.card && typeof msg.card === 'object') { const c = { kind: 'insight', verdict: 'true', at: Date.now(), ...msg.card }; c.id = c.id || 'i' + session.idTag + (session.itemSeq = (session.itemSeq || 0) + 1); session.factchecks.push(c); try { ws.send(JSON.stringify({ type: '__test_insight_ok', id: c.id })); } catch (e) {} }
+      }
       else if (msg.type === '__test_final' && process.env.THT_TEST) {
         if (session) {
           session.onMacResult({ type: 'final', text: String(msg.text || '') });

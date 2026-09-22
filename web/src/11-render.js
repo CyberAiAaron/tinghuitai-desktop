@@ -166,7 +166,21 @@
   function insightType(x){ return ['conflict','recheck','answer'].includes(x&&x.type)?x.type:'answer'; }
   function insightTypeLabel(t){ return ({conflict:ui==='en'?'Mismatch':'对不上',recheck:ui==='en'?'Stalled':'空转',answer:ui==='en'?'Answer':'递答案'})[t]||''; }
   function insightActionLabel(t){ return ({conflict:ui==='en'?'Check & attach doc':'核对并附文档',recheck:ui==='en'?'Set a date':'定日期'})[t]||''; }
-  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?`<button class="btn sm insight-act" type="button" disabled data-do="${esc((x.action&&x.action.do)||'')}" title="${ui==='en'?'Coming in the next release':'下一版接通'}">${act}</button>`:''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  // 批 3：按钮 + 执行态 + 产物。点 = 批准（POST /insight-action，web/src/25b-insight-action.js）；等待期能撤回；失败能重试；做完显示正确值 / 原文 / 「打开文档」或任务链接。
+  function insightActionHtml(x,t,label){
+    const st=x.actionState||{}, s=st.status||'', en=ui==='en', d=(x.action&&x.action.do)||({conflict:'open_source',recheck:'set_date'})[t]||'';
+    const btn=(txt,extra='')=>`<button class="btn sm insight-act" type="button" data-do="${esc(d)}" ${extra}>${txt}</button>`;
+    if(s==='queued') return `<div class="v ins-state">${en?'Starting…':'即将执行…'} <button class="btn sm insight-cancel" type="button">${en?'Undo':'撤回'}</button></div>`;
+    if(s==='running') return `<div class="v ins-state">${en?'Running…':'执行中…'}</div>`;
+    if(s==='failed') return `<div class="v ins-state err">${en?'Failed: ':'没成：'}${esc(st.error||'')}</div>${btn(en?'Retry':'重试',`data-retry="${st.uncertain?'confirm':'1'}"`)}`;
+    if(s==='cancelled') return `<div class="v ins-state">${en?'Undone':'已撤回'}</div>${btn(label)}`;
+    if(s==='done'){
+      if(d==='open_source'){ const doc=x.doc||{}; return `<div class="v ins-res">${esc(x.correction||'')}</div>${x.quote?`<div class="v src">${en?'Quote':'原文'}：「${esc(x.quote)}」</div>`:''}${doc.url?`<button class="btn sm insight-open" type="button" data-url="${esc(doc.url)}" title="${esc(doc.title||'')}">${en?'Open document':'打开文档'}</button>`:(doc.title?`<div class="v src">${esc(doc.title)}${doc.linkError?`（${en?'no link':'链接没取到'}）`:''}</div>`:'')}`; }
+      const task=x.task||{}; return `<div class="v ins-res">${en?'Task':'任务'}：${esc(task.owner||'')} · ${en?'due ':'截止 '}${esc(task.due||'')}${task.note?`（${esc(task.note)}）`:''}</div>${task.url?`<button class="btn sm insight-open" type="button" data-url="${esc(task.url)}">${en?'Open task':'打开任务'}</button>`:''}`;
+    }
+    return btn(label);
+  }
   function viewListHtml(cks, first){
     if(!cks.length) return `<div class="empty">${T('e_ck')||'讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。'}</div>`;
     const older=cks.slice(0,Math.max(0,cks.length-VIEW_SHOW)), recent=cks.slice(-VIEW_SHOW);

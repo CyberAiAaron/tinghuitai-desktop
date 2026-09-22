@@ -336,6 +336,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
 @keyframes fixwait{from{background-position:200% 0}to{background-position:-200% 0}}
 .card .v.memo{white-space:pre-wrap;color:var(--text)}
 .card.ck .v.src{color:var(--muted);font-size:12px;margin-top:3px}
+.card.ck .v.ins-res{font-weight:600;margin-top:4px} .card.ck .v.ins-state{color:var(--muted);font-size:12px;margin-top:4px} .card.ck .v.ins-state.err{color:var(--conf)} .card.ck .insight-act,.card.ck .insight-open,.card.ck .insight-cancel{margin-top:6px}
 /* 卡片对话框（第③批）：折叠态只有一条输入线；有消息后是消息列，你在右、agent 在左 */
 .thread{margin-top:6px;display:flex;flex-direction:column;gap:4px}.thread .th-in{width:100%;box-sizing:border-box;border:0;border-bottom:1px solid transparent;background:transparent;color:var(--text);font:inherit;font-size:13px;padding:3px 0;outline:none;opacity:.55;transition:opacity .15s}.card:hover .thread .th-in,.meeting-task:hover .thread .th-in,.thread.open .th-in,.thread .th-in:focus{opacity:1;border-bottom-color:var(--line)}.thread .th-in:focus{border-bottom-color:var(--live,var(--text))}.thread .th-in:disabled{opacity:.4}
 .th-msg{max-width:92%;padding:5px 9px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}.th-msg.me{align-self:flex-end;background:color-mix(in srgb,var(--text) 10%,var(--panel-2));border-bottom-right-radius:3px}.th-msg.ai{align-self:flex-start;background:var(--panel,var(--panel-2));border:1px solid var(--line);border-bottom-left-radius:3px}.th-msg.err{color:var(--conf)}
@@ -1503,7 +1504,21 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   function insightType(x){ return ['conflict','recheck','answer'].includes(x&&x.type)?x.type:'answer'; }
   function insightTypeLabel(t){ return ({conflict:ui==='en'?'Mismatch':'对不上',recheck:ui==='en'?'Stalled':'空转',answer:ui==='en'?'Answer':'递答案'})[t]||''; }
   function insightActionLabel(t){ return ({conflict:ui==='en'?'Check & attach doc':'核对并附文档',recheck:ui==='en'?'Set a date':'定日期'})[t]||''; }
-  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?`<button class="btn sm insight-act" type="button" disabled data-do="${esc((x.action&&x.action.do)||'')}" title="${ui==='en'?'Coming in the next release':'下一版接通'}">${act}</button>`:''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  // 批 3：按钮 + 执行态 + 产物。点 = 批准（POST /insight-action，web/src/25b-insight-action.js）；等待期能撤回；失败能重试；做完显示正确值 / 原文 / 「打开文档」或任务链接。
+  function insightActionHtml(x,t,label){
+    const st=x.actionState||{}, s=st.status||'', en=ui==='en', d=(x.action&&x.action.do)||({conflict:'open_source',recheck:'set_date'})[t]||'';
+    const btn=(txt,extra='')=>`<button class="btn sm insight-act" type="button" data-do="${esc(d)}" ${extra}>${txt}</button>`;
+    if(s==='queued') return `<div class="v ins-state">${en?'Starting…':'即将执行…'} <button class="btn sm insight-cancel" type="button">${en?'Undo':'撤回'}</button></div>`;
+    if(s==='running') return `<div class="v ins-state">${en?'Running…':'执行中…'}</div>`;
+    if(s==='failed') return `<div class="v ins-state err">${en?'Failed: ':'没成：'}${esc(st.error||'')}</div>${btn(en?'Retry':'重试',`data-retry="${st.uncertain?'confirm':'1'}"`)}`;
+    if(s==='cancelled') return `<div class="v ins-state">${en?'Undone':'已撤回'}</div>${btn(label)}`;
+    if(s==='done'){
+      if(d==='open_source'){ const doc=x.doc||{}; return `<div class="v ins-res">${esc(x.correction||'')}</div>${x.quote?`<div class="v src">${en?'Quote':'原文'}：「${esc(x.quote)}」</div>`:''}${doc.url?`<button class="btn sm insight-open" type="button" data-url="${esc(doc.url)}" title="${esc(doc.title||'')}">${en?'Open document':'打开文档'}</button>`:(doc.title?`<div class="v src">${esc(doc.title)}${doc.linkError?`（${en?'no link':'链接没取到'}）`:''}</div>`:'')}`; }
+      const task=x.task||{}; return `<div class="v ins-res">${en?'Task':'任务'}：${esc(task.owner||'')} · ${en?'due ':'截止 '}${esc(task.due||'')}${task.note?`（${esc(task.note)}）`:''}</div>${task.url?`<button class="btn sm insight-open" type="button" data-url="${esc(task.url)}">${en?'Open task':'打开任务'}</button>`:''}`;
+    }
+    return btn(label);
+  }
   function viewListHtml(cks, first){
     if(!cks.length) return `<div class="empty">${T('e_ck')||'讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。'}</div>`;
     const older=cks.slice(0,Math.max(0,cks.length-VIEW_SHOW)), recent=cks.slice(-VIEW_SHOW);
@@ -2193,6 +2208,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         else if (m.type === 'condensed') applyCondensed(m);
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
+        else if (m.type === 'insightAction') applyInsightAction(m);
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
         else if (m.type === 'condensed') applyCondensed(m);
@@ -2278,8 +2294,9 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       if(!x||!x.claim) continue;
       const row={id:x.id, sourceRefs:x.sourceRefs, at:x.at||at||Date.now(), claim:x.claim, kind:x.kind||'insight', source:x.source||'', why:x.why||x.note||'', refs:Array.isArray(x.refs)?x.refs:[], verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||x.why||'', label:x.label, evidence:x.evidence, type:['conflict','recheck','answer'].includes(x.type)?x.type:'answer', action:(x.action&&typeof x.action==='object'&&typeof x.action.do==='string')?{do:x.action.do,args:x.action.args||{}}:{do:'none',args:{}}};
       const i=list.findIndex(o=>o&&sameInsight(o.claim,x.claim));
-      if(i>=0){ const old=list[i]; if(old.rating) row.rating=old.rating; if(old.comment) row.comment=old.comment; if(old.actionState) row.actionState=old.actionState; list[i]=row; }
+      if(i>=0){ const old=list[i]; if(old.rating) row.rating=old.rating; if(old.comment) row.comment=old.comment; for(const k of ['actionState','correction','quote','doc','task']) if(old[k]!==undefined&&x[k]===undefined) row[k]=old[k]; list[i]=row; }
       else list.push(row);
+      for(const k of ['actionState','correction','quote','doc','task']) if(x[k]!==undefined&&row[k]===undefined) row[k]=x[k];   // 服务端快照里带执行态和产物的，接回来
       n++;
     }
     return n;
@@ -2478,6 +2495,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         else if (m.type === 'stale') markStale(m);
         else if (m.type === 'feedback') applyFeedback(m);
         else if (m.type === 'thread') applyThreadMsg(m);
+        else if (m.type === 'insightAction') applyInsightAction(m);
         else if (m.type === 'calendar' || m.type === 'namefix' || m.type === 'namefix_undone') applyCalendarMsg(m);
         else if (m.type === 'snapshot' && m.session) { cur.calendar = m.session.calendar || null; if (m.session.threads && typeof m.session.threads === 'object') cur.threads = m.session.threads; cur.nameFixCount = (m.session.nameFixes || []).length; persist(); renderCalendar(); }   // 续场 / 重连时把日历和纠名计数接回来
       else if (m.type === 'summary' && m.text) { cur.summary = m.text; cur.relayHandled = true; persist(); render(); }
@@ -3585,6 +3603,55 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
   });
   document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('th-in')) { const box = e.target.closest('.thread'); if (box) threadDrafts.set(box.dataset.cardId, e.target.value); } });
   setInterval(() => { try { threadSync(); } catch(e){} }, 1500);
+
+  // ===== 主动智能批 3：洞察卡上的那一个按钮（点 = 批准，服务端替他做） =====
+  // POST /insight-action {id, cardId, do, args, confirmed:true[, retryConfirmed]}；执行态由 ws {type:'insightAction'} 推回来（applyInsightAction）。
+  // set_date 先问两句（负责人默认承诺人、截止默认今天 +7），按取消就什么都不发。旁听（viewOnly）不出按钮动作。
+  function insightCardOf(node){ const c=node.closest('.card.ck'); if(!c||!cur) return null; const id=c.dataset.id; return (cur.factchecks||[]).find(x=>id&&x.id===id)||null; }
+  function shDate(plus){ const d=new Date(Date.now()+8*3600e3+(plus||0)*86400e3); return d.toISOString().slice(0,10); }
+  async function insightPost(body){
+    const r=await fetch(relayBase()+'/insight-action?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(90000)});
+    let j=null; try{ j=await r.json(); }catch(e){}
+    if(!j) throw Error(ui==='en'?'No reply from Mac':'Mac 没有回应');
+    return j;
+  }
+  function applyInsightAction(m){
+    if(!cur||!m||!m.cardId) return;
+    const it=(cur.factchecks||[]).find(x=>x.id===m.cardId); if(!it) return;
+    if(m.state) it.actionState=m.state;
+    if(m.card){ for(const k of ['correction','quote','doc','task']) if(m.card[k]!==undefined&&m.card[k]!==null) it[k]=m.card[k]; }
+    persist(); resetSigs(); render();
+  }
+  async function insightRun(it, doAct, args, retry){
+    if(!cur||!cur.id) return;
+    const body={id:cur.id,cardId:it.id,do:doAct,args:args||{},confirmed:true};
+    if(retry==='confirm') body.retryConfirmed=true;
+    it.actionState={status:'queued',do:doAct,at:Date.now()}; resetSigs(); render();
+    try{
+      const j=await insightPost(body);
+      if(j.state) it.actionState=j.state;
+      if(j.card){ for(const k of ['correction','quote','doc','task']) if(j.card[k]!==undefined&&j.card[k]!==null) it[k]=j.card[k]; }
+      if(!j.ok&&!j.state) it.actionState={status:'failed',do:doAct,at:Date.now(),error:j.error||'',uncertain:!!j.uncertain};
+    }catch(e){ it.actionState={status:'failed',do:doAct,at:Date.now(),error:e.message||String(e)}; }
+    persist(); resetSigs(); render();
+  }
+  el.ck.addEventListener('click', async e=>{
+    const b=e.target.closest('button'); if(!b) return;
+    if(b.classList.contains('insight-open')){ e.stopPropagation(); const url=b.dataset.url||''; if(!url) return; let abs=''; try{ abs=new URL(url,location.href).href; }catch(err){ return; } window.open(abs,'_blank','noopener'); return; }
+    if(b.classList.contains('insight-cancel')){ e.stopPropagation(); const it=insightCardOf(b); if(!it) return; try{ await insightPost({id:cur.id,cardId:it.id,do:'cancel'}); }catch(err){} return; }
+    if(!b.classList.contains('insight-act')) return;
+    e.stopPropagation();
+    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only Aaron can run this.':'旁听只能看，动作要 Aaron 本人点。'); return; }
+    const it=insightCardOf(b); if(!it) return;
+    const d=b.dataset.do||''; let args={};
+    if(d==='set_date'){
+      const a=(it.action&&it.action.args)||{};
+      const owner=prompt(ui==='en'?'Owner (default: the person who promised):':'负责人（默认承诺人，留空 = 建给我自己）：', a.owner||a.who||''); if(owner===null) return;
+      const due=prompt(ui==='en'?'Due date (YYYY-MM-DD):':'截止日期（YYYY-MM-DD）：', shDate(7)); if(due===null) return;
+      args={owner:owner.trim().slice(0,60),due:due.trim().slice(0,10)};
+    }
+    await insightRun(it,d,args,b.dataset.retry||'');
+  }, true);
 
   // ===== 有新版就在右下角提示，点一下就地更新（只换程序，凭据和会议不动）=====
   (function updater(){

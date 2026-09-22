@@ -63,4 +63,32 @@ async function resolveIds(names, opts = {}) {
   return { ok: true, ids, missing, users: hits };
 }
 
-module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, clip, norm };
+// 文档 token → 可打开的链接与标题。只读；域名由 lark-cli 回读（drive +inspect 的 data.url），不在代码里手拼（需求单 §3）。
+// 失败返回 {ok:false,error}，调用方自己决定退路（例如只写来源名不附链接）。
+async function docInspect(token, opts = {}) {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9]{10,64}$/.test(t)) return { ok: false, error: '文档 token 不像样' };
+  const r = await runCli(['drive', '+inspect', '--url', t, '--type', 'docx', '--as', 'user', '--format', 'json'], { timeout: 12000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: false };
+  const d = (r.json && r.json.data) || {};
+  const url = String(d.url || '').trim();
+  if (!/^https:\/\//.test(url)) return { ok: false, error: 'lark-cli 没回链接' };
+  return { ok: true, url, title: clip(d.title || '', 120), token: String(d.token || t) };
+}
+
+// 建一条飞书任务（洞察卡「定日期」用，批 3）。写类：调用方自己过确认门禁再来。返回 {ok,url,id} 或 {ok:false,error,uncertain}
+async function taskCreate({ summary, description = '', assignee = '', due = '' }, opts = {}) {
+  const s = clip(String(summary || '').trim(), 120);
+  if (!s) return { ok: false, error: '任务标题是空的' };
+  const a = ['task', '+create', '--summary', s];
+  if (description) a.push('--description', clip(description, 2000));
+  if (/^(?:ou_|cli_)[A-Za-z0-9]{1,64}$/.test(assignee)) a.push('--assignee', assignee);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(due)) a.push('--due', due);   // 裸 YYYY-MM-DD（1.0.96 的 date: 前缀会解析失败）
+  a.push('--as', 'user', '--format', 'json');
+  const r = await runCli(a, { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const dig = (o, ...ps) => { for (const p of ps) { const v = p.split('.').reduce((x, k) => (x && typeof x === 'object' ? x[k] : undefined), o); if (v != null && v !== '') return String(v); } return ''; };
+  return { ok: true, url: dig(r.json, 'data.task.url', 'data.url'), id: dig(r.json, 'data.task.guid', 'data.task.task_id', 'data.guid') };
+}
+
+module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, clip, norm };
