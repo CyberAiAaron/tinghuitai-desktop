@@ -74,7 +74,7 @@ test('④ gateWindow：命中 ±5 ∪ 未分诊增量，升序去重、不越界
 });
 
 test('⑤ PackDelta：首次 full，同 hash → 一行占位 + same，hash 变 → 重带 full；stamp 带 contextDelta', () => {
-  const d = new T.PackDelta();
+  const d = new T.PackDelta({ enabled: true });
   const pack = { hash: 'abc123', text: '【项目状态】'.padEnd(500, '字'), parts: [{ key: 'project-state', version: 'v1' }] };
   const a = d.apply(pack); assert.equal(a.delta, 'full'); assert.equal(a.text, pack.text);
   const b = d.apply({ ...pack }); assert.equal(b.delta, 'same'); assert.match(b.text, /同上一次分诊/); assert.match(b.text, /abc123/); assert.ok(b.text.length < 80); assert.equal(b.fullChars, 500);
@@ -84,7 +84,11 @@ test('⑤ PackDelta：首次 full，同 hash → 一行占位 + same，hash 变 
   assert.equal(d.apply({ hash: 'x', text: '' }).text, '', '空资料原样过，不算 full 也不算 same');
   assert.deepEqual(CP.stamp(b), { contextHash: 'abc123', contextParts: [{ key: 'project-state', version: 'v1' }], contextDelta: 'same' });
   assert.equal('contextDelta' in CP.stamp(pack), false, '没经过 PackDelta 的调用不带这一列');
-  assert.match(server, /this\.packDelta = new triageFast\.PackDelta\(\)/); assert.match(server, /this\.packDelta\.apply\(contextPack\.build\(this\.env, \{ purpose: 'live'/);
+  assert.match(server, /this\.packDelta = new triageFast\.PackDelta\(\{ enabled: triageFast\.PackDelta\.enabledIn\(env\) \}\)/);
+  // 默认关：不给 enabled / TRIAGE_CONTEXT_DELTA 不是 '1' → 每轮 full、原文不动
+  const off = new T.PackDelta(); assert.equal(off.apply(pack).delta, 'full'); const o2 = off.apply({ ...pack }); assert.equal(o2.delta, 'full'); assert.equal(o2.text, pack.text); assert.equal(off.snapshot().same, 0);
+  assert.equal(T.PackDelta.enabledIn({}), false); assert.equal(T.PackDelta.enabledIn({ TRIAGE_CONTEXT_DELTA: '0' }), false); assert.equal(T.PackDelta.enabledIn({ TRIAGE_CONTEXT_DELTA: '1' }), true);
+  assert.match(fs.readFileSync(path.join(root, 'app/config.js'), 'utf8'), /TRIAGE_CONTEXT_DELTA:'0'/, '默认关'); assert.match(server, /this\.packDelta\.apply\(contextPack\.build\(this\.env, \{ purpose: 'live'/);
 });
 
 test('⑥ 定时器：gate on 120 s 兜底、off 25 s；server.js 用它', () => {

@@ -296,7 +296,7 @@ class Session {
     this.jev = new jevGate.Gate({ env, dataDir: DATA, sessionId: this.id, log, onTrigger: () => this.runTriage({ gate: true }) });
     if (this.jev.requested && !this.jev.available) log('JEV_GATE=on 但没有 JEV_API_KEY，门卫不启用 ' + this.id);
     this.triageTimer = setInterval(() => this.runTriage(), triageFast.triageInterval(this.jev.enabled));
-    this.packDelta = new triageFast.PackDelta();   // 批 5：项目背景一场只全量带一次，hash 不变就占位
+    this.packDelta = new triageFast.PackDelta({ enabled: triageFast.PackDelta.enabledIn(env) });   // 批 5：TRIAGE_CONTEXT_DELTA='1' 才占位，默认每轮全量
     // 会中提醒白名单（app/push-whitelist.js）：分诊结果先过它，命中才 larkPush；默认 off = 零推送，分诊不受影响。
     this.pushGate = new pushWhitelist.Gate(env, { log });
     // 开场检索用的是会议标题和参会人，会开到一半议题往往已经变了。

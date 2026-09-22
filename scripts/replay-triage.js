@@ -6,6 +6,7 @@
 //   before = 改前拼法：已有条目整条回传、无输出瘦身、2000 输出上限、每轮全量带项目资料
 //   after  = 改后拼法（app/triage-fast.js）：已有条目 id+20 字、输出瘦身规则、700 上限（接口路才生效）、资料 hash 不变占位；思考沿用命令行默认
 //   after-nothink = after + MAX_THINKING_TOKENS=0（LLM_LIVE_THINKING='0'，批 5 实测后加的一项）
+//   after-nothink-nodelta = after-nothink 但资料占位关（TRIAGE_CONTEXT_DELTA='0'，现在的默认配置）
 // 每组 ≤ rounds 次调用（--group both = before + after + after-nothink 三组）。输出：条目数（h/t/f）、每次耗时中位 / p90、输出 token 中位、输入 token 中位，并排落到 --out。
 // 逐次原始数据落 <out>.jsonl。用量不记进生产账本（不调 noteUsage；dataDir 只当 cwd）。
 // 注意：回放没有 Jev（不调门卫），after 组衡量的是 ①③⑤ 三项（输出瘦身 / existed 摘要 / 资料占位）；② 门卫窗口和 ④ 定时器由单测覆盖。
@@ -24,7 +25,7 @@ let file = ''; for (let i = 0; i < args.length; i++) { if (VALUED.has(args[i])) 
 if (!file) { console.error('缺场次 JSON'); process.exit(2); }
 const rounds = Math.max(1, Math.min(15, Number(opt('rounds', 15))));
 const group = opt('group', 'both');
-const GROUPS = ['before', 'after', 'after-nothink'];
+const GROUPS = ['before', 'after', 'after-nothink', 'after-nothink-nodelta'];
 if (group !== 'both' && !GROUPS.includes(group)) { console.error('--group 只认 ' + GROUPS.join(' / ') + ' / both'); process.exit(2); }
 const out = opt('out', path.join(process.cwd(), 'fast-compare.txt'));
 const dataDir = opt('data', path.join(os.homedir(), 'Library/Application Support/TinghuitaiAaron'));
@@ -53,9 +54,9 @@ function parseItems(raw) {
 }
 
 async function runGroup(mode) {
-  const fast = mode !== 'before', nothink = mode === 'after-nothink';
+  const fast = mode !== 'before', nothink = mode.startsWith('after-nothink'), nodelta = mode === 'after-nothink-nodelta';
   const state = { highlights: [], todos: [], factchecks: [], memoryBlock: sess.memoryBlock || '' };
-  const delta = new T.PackDelta();
+  const delta = new T.PackDelta({ enabled: !nodelta });
   const per = Math.ceil(rows.length / rounds);
   const log = [];
   let last = 0, seq = 0;

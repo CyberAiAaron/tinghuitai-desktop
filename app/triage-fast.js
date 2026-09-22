@@ -10,15 +10,15 @@
 //   ② outputRules      提示词尾巴：只输出新增；text ≤40 字、why ≤30 字、evidence 只引原句片段 ≤40 字
 //   ③ MAX_OUTPUT_TOKENS 700（原 2000）。只对接口那条路（app/llm.js openai，max_tokens）生效；claude 命令行不设硬上限——
 //      实测 CLAUDE_CODE_MAX_OUTPUT_TOKENS 超限是整次报错不是截断（见 app/cli-llm.js 头注）。
-//   ③b liveThinking     分诊关思考（LLM_LIVE_THINKING 默认 '0'）。这一条不在 Aaron 拍板的六项里，是实测后加的：
+//   ③b liveThinking     分诊默认不带思考（LLM_LIVE_THINKING='0'，设 '1' 恢复）。这一条不在 Aaron 拍板的六项里，是实测后加的：
 //      那 2,000 多输出 token 里大半是思考（一次 4 条要点正文 212 字、output_tokens 2,278），提示词瘦身砍不到它；不关思考到不了 ≤10 s。
 //   ④ gateWindow       Jev 命中触发的分诊：只带命中句 ±5 句 + 还没分诊过的增量，不再整段 8000 字
-//   ⑤ PackDelta        项目背景 / 记忆块一场会只在第一次分诊全量带；之后 hash 不变就换成一行占位，用量账 contextDelta 记 same / full
+//   ⑤ PackDelta        项目背景 / 记忆块一场会只在第一次分诊全量带；之后 hash 不变就换成一行占位，用量账 contextDelta 记 same / full。默认关（TRIAGE_CONTEXT_DELTA='1' 才开）
 //   ⑥ triageInterval   JEV_GATE=on → 120 s 兜底、只补漏；off → 25 s 全量（与改前一致）
 //
 // ⚠️ ⑤ 的前提是模型「记得上一次」。claude -p 每次都是新进程，模型其实看不到上一次那份资料；
 //    占位省的是输入 token，代价是那一轮没有项目背景可对照（conflict / answer 类洞察会少）。这是 Aaron 拍板的取舍，
-//    回放对照（scripts/replay-triage.js --compare）把两组的条目数并排给他看。
+//    回放对照（scripts/replay-triage.js --compare）把两组的条目数并排给他看。→ 主对话 09-22 拍板：默认关，'1' 才开。
 const crypto = require('crypto');
 
 const MAX_OUTPUT_TOKENS = 700;
@@ -66,10 +66,13 @@ function gateWindow({ marks = [], lastTriageIndex = 0, endIndex = 0, window = HI
 }
 
 // ⑤ 一场会一个 PackDelta：第一次全量，之后 hash 相同就给占位行。hash 变了（记忆块 4 分钟刷新、文件改了）重带全文并记新 hash。
+// enabled=false（默认，TRIAGE_CONTEXT_DELTA='0'）：每轮原样全量带，只记 delta:'full'；主对话 2026-09-22 拍板默认关、代码保留。
 class PackDelta {
-  constructor() { this.lastHash = ''; this.full = 0; this.same = 0; }
+  constructor({ enabled = false } = {}) { this.enabled = !!enabled; this.lastHash = ''; this.full = 0; this.same = 0; }
+  static enabledIn(env) { return String((env && env.TRIAGE_CONTEXT_DELTA) || '').trim() === '1'; }
   apply(pack) {
     if (!pack || !pack.text) return pack;
+    if (!this.enabled) { this.lastHash = pack.hash || ''; this.full++; return { ...pack, delta: 'full' }; }
     if (pack.hash && pack.hash === this.lastHash) {
       this.same++;
       return { ...pack, delta: 'same', fullChars: pack.text.length,
