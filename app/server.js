@@ -191,7 +191,6 @@ async function askModel(env, system, user, maxTokens, tier, trace) {
   llm.noteUsage(DATA, r, { system, user, tier: tier || 'post', sessionId: (trace && trace.sessionId) || '', purpose: (trace && trace.purpose) || '', pack: (trace && trace.pack) || null });
   return r.text;
 }
-function larkPush() { /* No automatic external messages in the standalone edition. */ }
 
 const SERVER_STARTED_AT = new Date().toISOString();
 const SERVER_VERSION = (() => {
@@ -204,7 +203,8 @@ const SERVER_VERSION = (() => {
 const SESSIONS = new Map();  // sessionId -> Session
 
   // 纯语气词的一行（嗯 / 啊 / 哦 / um…）：真实会议里占 14%–21%，不发给模型。「对 / 好 / 是 / 行」是表态，不算。
-  function fillerASR(text){return typeof text==='string'&&/^(嗯|啊|哦|噢|呃|额|哎|唉|诶|欸|哈|呀|呵|um+|uh+|mm+|hmm+|ah+|oh+)+$/i.test(text.replace(/[\s，。、,.!?！？…~—-]+/g,''));}
+  // 正则只有一份，在 app/shared/filler.json（Python 会后管线读的是同一份，见 app/filler.js）。
+  const fillerASR = require('./filler').isFiller;
   function repeatedASR(text){return typeof text==='string'&&text.length>=80&&/(.{1,24}?[。！？,.!?，、;；\s]+)\1{7,}/u.test(text);}
 
 class Session {
@@ -233,7 +233,7 @@ class Session {
     try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
     try { this.audioFd = fs.openSync(this.audioPath, 'a'); } catch (e) { this.audioFd = null;this.audioSaveError='Mac 录音文件无法创建，请保留并导出浏览器录音备份。'; log('audio open fail ' + e.message); }
-    this.lastTriageIndex = 0; this.charsSinceTriage = 0; this.lastPushTs = 0; this.triaging = false; this.finalized = false; this.graceTimer = null;
+    this.lastTriageIndex = 0; this.charsSinceTriage = 0; this.triaging = false; this.finalized = false; this.graceTimer = null;
     this.dedupSeen = new Map();   // final 幂等去重：key(见 isDuplicateFinal) -> 首次出现时间，8s 内重复的 final 只广播/入库一次（2026-09-04 0800 信 补2）
     this.spkMarks = [];   // 线上会说话人标记（页面 spk 帧：who=me|them），随 transcript 落场次；0800 信 task2，等页面上线
     this.triagePrompt = readTriagePrompt(); this.viewFeedback = [];
@@ -722,20 +722,13 @@ class Session {
         const stamp = a => { for (const x of a) { if (!x) continue; x.id = 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1); x.sourceRefs = segIds.map(id => ({ segId: id })); } return a; };
         // 置信度不采信模型自述：说「大概率对/可能有误」必须能在最新转写里指出依据；指不出就降成「拿不准」
         if (Array.isArray(j.factchecks)) { const hay = viewNorm(recent); const before = j.factchecks.length; j.factchecks = j.factchecks.filter(f => !viewIsJunk(f)).filter(f => { normalizeView(f); return viewGrounded(f, hay); }); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} views without verbatim evidence`); }
-        const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`); this.maybePush(fb); }
+        const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`); }
     } catch (e) { log('triage exc ' + e.message); }
     this.triaging = false;
     try { if (recentForDeep && this.hitsTrigger(recentForDeep)) this.runDeepPass(recentForDeep, segIdsForDeep, epochForDeep); } catch (e) {}
   }
-  maybePush(fb) {
-    if (Date.now() - this.lastPushTs < 120000) return;
-    const en = this.uiLang === 'en';
-    const lines = [];
-    for (const h of fb.highlights) { const ht = h.text || ''; if (/^⚠️\s*(冲突|Conflict)/i.test(ht)) lines.push('⚠️ ' + ht.replace(/^⚠️\s*(冲突|Conflict)\s*[:：]?\s*/i, '')); }
-    for (const t of fb.todos) if (t.text && (!t.owner || /我|自己/i.test(t.owner))) lines.push('📌 ' + t.text + (t.owner ? `（${t.owner}）` : ''));
-    for (const f of fb.factchecks) if (f.verdict === 'false' && f.claim) lines.push((en ? '❓ Doubt: ' : '❓ 存疑：') + f.claim + (f.note ? ' — ' + f.note : ''));
-    if (!lines.length) return; larkPush((en ? '🎙️ Live alert\n' : '🎙️ 会中提醒\n') + lines.slice(0, 5).join('\n')); this.lastPushTs = Date.now(); log('push ' + Math.min(lines.length, 5));
-  }
+  // S7（2026-09-22）：桌面版不推飞书会中提醒。原来这里有一个 maybePush → larkPush 的空调用链，
+  // larkPush 是空函数、日志却写「push N」，像发了其实没发。两个服务并成一个后，会中提醒在 runTriage 末尾接入。
   endVolc() { if (this.volcWs && this.volcWs.readyState === WebSocket.OPEN) { try { this.volcWs.send(buildFrame(AUDIO_ONLY_REQUEST, NEG_WITH_SEQ, Buffer.alloc(0), -this.seq, false)); } catch (e) {} setTimeout(() => { try { this.volcWs.close(); } catch (e) {} }, 1200); } }
   // R2（2026-09-22）：旧连接的 close 事件可能晚于新连接的 start 到达（手机切网、页面刷新都会这样）。
   // 那时这场其实已经有一条新的说话人连接在跑了，却还是被装上 10 分钟收尾定时器；
@@ -1025,7 +1018,7 @@ function archiveHubSession(session,job,originalInput){
  if(job.speakerWarning){result.names={};result.transcript=(selected.transcript||[]).map(row=>{const clean={...row,speakerUncertain:true};for(const k of ['speaker','spk','who'])delete clean[k];return clean;});}
  return result;
 }
-const meetingPipeline=require('./meeting-pipeline')({dir:path.join(DATA,'state/meeting-pipeline'),idle:()=>![...SESSIONS.values()].some(s=>!s.finalized),log,onComplete:(session,job,originalInput)=>{const authoritative=archiveHubSession(session,job,originalInput);if(!authoritative.archiveVerified)throw Error('归档回读未确认，未更新工作台');const source=workHub.hub.ingestSession(authoritative);if(!source)throw Error('工作台尚未恢复，归档文档已保留');if(source){source.url=job.url;source.archiveVerified=authoritative.archiveVerified;source.archiveNote=authoritative.archiveNote||'';source.transcript=authoritative.transcript;source.speakerCount=job.speakerCount;source.speakerWarning=job.speakerWarning||'';workHub.hub.save();}
+const meetingPipeline=require('./meeting-pipeline')({dir:path.join(DATA,'state/meeting-pipeline'),idle:()=>![...SESSIONS.values()].some(s=>!s.finalized),log,onComplete:(session,job,originalInput)=>{const authoritative=archiveHubSession(session,job,originalInput);if(!authoritative.archiveVerified)throw Error('归档回读未确认，未更新工作台');const source=workHub.hub.ingestSession(authoritative);if(!source)throw Error('工作台尚未恢复，归档文档已保留');if(source){source.url=job.url;source.archiveVerified=authoritative.archiveVerified;source.archiveNote=authoritative.archiveNote||'';source.transcript=authoritative.transcript;source.speakerCount=job.speakerCount;source.speakerWarning=job.speakerWarning||'';source.gapWarning=job.gapWarning||'';workHub.hub.save();}
   // P-17：「重新整理」是唯一入口，所以归档跑完要顺手把后面几样补齐：
   // 回看页的新版数据（以前只有它自己那个按钮会做）和这一场的会议记忆（以前只在收尾时写一次）。
   afterArchive(String(job.sessionId||''));}});
@@ -1037,7 +1030,9 @@ function afterArchive(sid){
     const mem=require('./memory').open(DATA);
     const n=mem?mem.prepare('SELECT COUNT(*) c FROM cards WHERE meeting_id=?').get(sid).c:1;
     if(n)return;
-    const sess=JSON.parse(fs.readFileSync(path.join(PENDING_DIR,'sess-'+sid+'.json'),'utf8'));
+    // S1（2026-09-22）：离线回传的会落盘名是 offline-<sha>.json，写死 sess- 前缀这类会永远写不进记忆
+    const f=pendingFileFor(sid);if(!f)throw Error('原始记录已不在');
+    const sess=JSON.parse(fs.readFileSync(f,'utf8'));
     const ops=require('./memory-ops');
     ops.ingest(DATA,sess,(a,b)=>askModel(loadEnv(),a,b,2000,'post'),log)
       .then(()=>ops.project(DATA,path.join(MEMORY_PROJECTION_DIR,'meeting-memory.md'),log))
@@ -1085,7 +1080,40 @@ const memRetryTimer=setInterval(()=>{
 },900000);
 if(memRetryTimer.unref)memRetryTimer.unref();
 const startupRecoveryDir=path.join(DATA,'state','live-sessions');
-const startupRecoveryIds=fs.existsSync(startupRecoveryDir)?fs.readdirSync(startupRecoveryDir).filter(f=>f.endsWith('.json')).map(f=>journal.read(path.join(startupRecoveryDir,f))).filter(s=>s&&!s.complete).map(s=>s.id):[];
+// R10（2026-09-22）：上一次进程没收尾的会（journal 还是 !complete、浏览器也没再连回来）以前只在 /health 里数一下，
+// 谁也不去收，pending 里没有这场、归档也永远排不上。现在启动后延迟一会儿把「超过 30 分钟没更新、当前没有连接」的
+// journal 补收尾：按 finalize 同一套字段落 pending → 进工作台 → 排归档 → journal 标 complete。之后每 15 分钟再扫一遍，
+// 免得启动那一刻还不够老的那场永远没人管。阈值只在测试进程里可调（THT_RECOVERY_DELAY_MS / THT_ORPHAN_AGE_MS）。
+const STARTUP_RECOVERY_DELAY_MS=(process.env.THT_TEST&&Number(process.env.THT_RECOVERY_DELAY_MS)>0)?Number(process.env.THT_RECOVERY_DELAY_MS):45000;
+const ORPHAN_AGE_MS=(process.env.THT_TEST&&Number(process.env.THT_ORPHAN_AGE_MS)>0)?Number(process.env.THT_ORPHAN_AGE_MS):30*60000;
+function recoverOrphanJournal(s,file){
+  const startTs=s.startTs||s.updated||Date.now(),endTs=s.updated||Date.now();
+  const sess={id:s.id,title:s.title||'',start:new Date(startTs).toISOString(),end:new Date(endTs).toISOString(),mode:'online-火山',source:s.source||'',endReason:'启动时补收尾：上次进程没结束这场',names:s.names||{},brief:s.brief||'',fixes:s.fixes||[],lang:'auto',localLanguage:'auto',forceLocalTranscribe:false,transcriptionGapSeconds:s.transcriptionGapSeconds||0,browserGapSeconds:s.browserGapSeconds||0,notes:s.notes||'',hlGroups:s.hlGroups||null,recoveryStatus:'recovered-at-startup',transcript:Array.isArray(s.transcript)?s.transcript:[],highlights:s.highlights||[],todos:s.todos||[],factchecks:s.factchecks||[],summary:s.summary||'',uiLang:s.uiLang||'zh',audioPath:s.audioPath||'',audioSaveError:s.audioSaveError||''};
+  const hasText=sess.transcript.some(x=>x&&x.text),hasAudio=!!(sess.audioPath&&fs.existsSync(sess.audioPath)&&fs.statSync(sess.audioPath).size>3200);
+  let outcome='empty';
+  if(hasText||hasAudio){
+    const pendingPath=path.join(PENDING_DIR,'sess-'+s.id+'.json');
+    if(!fs.existsSync(pendingPath))journal.write(pendingPath,sess);   // 已经有 pending 的（比如上次 finalize 写完 pending 才崩）不覆盖
+    if(hasText){try{workHub.hub.ingestSession(sess);workHub.hub.save();}catch(e){log('孤儿会进工作台失败 '+s.id+' '+e.message);}}
+    try{meetingPipeline.enqueue(sess);outcome='queued';}catch(e){outcome='saved';log('孤儿会排归档失败（pending 已落盘）'+s.id+' '+e.message);}
+  }
+  journal.write(file,{...s,complete:true,recoveredAt:Date.now()});
+  log('启动补收尾 '+s.id+' '+outcome+' 句数='+sess.transcript.length);
+  return outcome;
+}
+function recoverOrphans(){
+  if(!fs.existsSync(startupRecoveryDir))return 0;let n=0;
+  for(const f of fs.readdirSync(startupRecoveryDir)){
+    if(!f.endsWith('.json'))continue;const file=path.join(startupRecoveryDir,f);const s=journal.read(file);
+    if(!s||s.complete||!s.id||SESSIONS.has(s.id))continue;
+    if(Date.now()-(s.updated||s.startTs||0)<ORPHAN_AGE_MS)continue;   // 还不够老：可能是刚断线、还在 10 分钟宽限里
+    try{recoverOrphanJournal(s,file);n++;}catch(e){log('启动补收尾失败 '+s.id+' '+e.message);}
+  }
+  return n;
+}
+const orphanTimer=setTimeout(()=>{try{recoverOrphans();}catch(e){log('启动补收尾扫描出错 '+e.message);}
+  const again=setInterval(()=>{try{recoverOrphans();}catch(e){log('补收尾扫描出错 '+e.message);}},15*60000);if(again.unref)again.unref();},STARTUP_RECOVERY_DELAY_MS);
+if(orphanTimer.unref)orphanTimer.unref();
 function recoveryNeeded(){if(!fs.existsSync(startupRecoveryDir))return 0;return fs.readdirSync(startupRecoveryDir).filter(f=>f.endsWith('.json')).map(f=>journal.read(path.join(startupRecoveryDir,f))).filter(s=>s&&!s.complete&&!SESSIONS.has(s.id)).length;}
 let crashedSinceStart = 0;
 // 请求处理器都是 async，一处未捕获就会终止进程，正在录的会议连同未落盘的部分一起没了。
@@ -1392,8 +1420,8 @@ async function handleRequest(req, res) {
     // 重跑归档（有归档任务才有得跑）+ 按最新格式收敛（不管有没有归档任务都要做）。
     // 只有两件都没得做时才算失败。
     let job=null, jobErr='';
-    const file=path.join(PENDING_DIR,'sess-'+rid+'.json');
-    const hasSession=fs.existsSync(file);
+    const file=pendingFileFor(rid);   // S1：sess- 和 offline- 两种落盘名都认，离线回传的会也能重新整理
+    const hasSession=!!file;
     if(!hasSession)try{ job=meetingPipeline.retry(rid); }catch(e){ jobErr=e.message||String(e); }
     if(!job&&!hasSession){ res.writeHead(400); return res.end(jobErr||'找不到这一场'); }
     let needsReplay=false;

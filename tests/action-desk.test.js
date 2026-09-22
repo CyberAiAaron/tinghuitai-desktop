@@ -299,6 +299,19 @@ test('路由与外发门禁：只有 do:"send" 会碰 lark-cli，其余动作和
     assert.equal(f1.configured, true);
     assert.equal(JSON.stringify(f1.items), JSON.stringify(f2.items));
 
+    // 第 20 条（2026-09-22）：处理台的每次模型调用都要进用量账，带资料的那几次要有 contextHash / contextParts
+    const usage = fs.readFileSync(path.join(dir, 'state', 'usage.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    const byPurpose = p => usage.filter(u => u.purpose === p);
+    for (const p of ['actions.classify', 'actions.calendar', 'actions.position', 'actions.focus'])
+      assert.ok(byPurpose(p).length >= 1, '处理台的 ' + p + ' 这次调用没记进用量账');
+    for (const p of ['actions.classify', 'actions.calendar', 'actions.position'])
+      assert.equal(byPurpose(p)[0].sessionId, sid, p + ' 没记会议 id');
+    const focusRow = byPurpose('actions.focus')[0];
+    assert.ok(focusRow.contextHash && /^[0-9a-f]{8,}$/i.test(focusRow.contextHash), '带了项目文件的调用要记 contextHash，拿到的是 ' + JSON.stringify(focusRow.contextHash));
+    assert.ok(Array.isArray(focusRow.contextParts) && focusRow.contextParts.length >= 1, '带了项目文件的调用要记 contextParts');
+    assert.equal(byPurpose('actions.focus').length, 1, '焦点一天只算一次，账上也只能有一行');
+    assert.equal(byPurpose('actions.classify')[0].tier, 'post');
+
     // 打叉 → 撤销
     const dropId = A.cards.find(c => c.kind === 'self').id;
     assert.equal((await post('/meeting-action', { id: sid, cardId: dropId, do: 'dismiss' })).card.state, 'dismissed');
