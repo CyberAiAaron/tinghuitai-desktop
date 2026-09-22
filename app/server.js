@@ -1241,7 +1241,7 @@ const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getB
 // 卡片对话框（第③批）：每条消息起一次本机 claude -p。开着的场次改内存对象，结束的场次改 pending 文件。
 const cardThread=require('./card-thread').create({dataDir:DATA,log,getLive:id=>{const s=SESSIONS.get(id);return s&&!s.finalized?s:null;},
   readFile:id=>{const f=pendingFileFor(id);return f?journal.read(f):null;},writeFile:(id,obj)=>{const f=pendingFileFor(id);if(f)journal.write(f,obj);},
-  model:process.env.THT_THREAD_MODEL||'sonnet',timeoutMs:Number(process.env.THT_THREAD_TIMEOUT_MS)||120000,maxConcurrent:Number(process.env.THT_THREAD_CONCURRENCY)||2,mcp:process.env.THT_THREAD_MCP||(()=>{try{return loadEnv().THREAD_MCP||'';}catch(e){return '';}})()});   // 配置不完整时也要能起来（tests/request-error.test.js）
+  model:process.env.THT_THREAD_MODEL||'sonnet',timeoutMs:Number(process.env.THT_THREAD_TIMEOUT_MS)||120000,maxConcurrent:Number(process.env.THT_THREAD_CONCURRENCY)||2,maxQueue:Number(process.env.THT_THREAD_QUEUE_MAX)||20,killGraceMs:Number(process.env.THT_THREAD_KILL_GRACE_MS)||5000,mcp:process.env.THT_THREAD_MCP||(()=>{try{return loadEnv().THREAD_MCP||'';}catch(e){return '';}})()});   // 配置不完整时也要能起来（tests/request-error.test.js）
 // 任何一条路由里抛出的异常都在这里兜住：以前异常变成未处理的 Promise，请求永远不回包、页面一直转圈。
 const server = http.createServer((req, res) => {
   handleRequest(req, res).catch(e => {
@@ -1809,16 +1809,22 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
       const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
       const sid = decodeURIComponent(m[1]), cardId = m[2] ? decodeURIComponent(m[2]) : '';
+      // sid 必须是这台机器上真有的一场（开着的在 SESSIONS，结束的在 pending 目录），不是就 404，别的都不做
+      if (!(SESSIONS.has(sid) || pendingFileFor(sid))) return reply(404, { ok: false, error: '找不到这场会' });
       if (req.method === 'GET') { const t = cardThread.threadsOf(sid); return t ? reply(200, { ok: true, threads: t, ...cardThread.status() }) : reply(404, { ok: false, error: '找不到这场会' }); }
       if (req.method !== 'POST' || !cardId) { res.writeHead(405); return res.end('method'); }
+      // 写（起 agent、可能替 Aaron 建日历 / 发消息）只认本机或主口令：观众（role=view）和手机副口令（PHONE_TOKENS）只能读（Codex 94dd3aa4）
+      if (u.searchParams.get('role') === 'view') return reply(403, { ok: false, error: '旁听角色只能看，不能替 Aaron 发起操作' });
+      if (!(isLocalReq(req) || tokenOk({ RELAY_TOKEN: env0.RELAY_TOKEN }, u.searchParams.get('token')))) return reply(403, { ok: false, error: '这个口令只能看，不能替 Aaron 发起操作' });
       const parts = []; let size = 0;
       for await (const c of req) { parts.push(c); size += c.length; if (size > 16000) return reply(413, { ok: false, error: '请求太长' }); }
       let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
       const text = String(j.text || '').replace(/\s+$/, '').slice(0, 2000);
       if (!text.trim()) return reply(400, { ok: false, error: '空消息' });
       const r = await cardThread.ask({ sessionId: sid, cardId, text, card: j.card && typeof j.card === 'object' ? j.card : null });
+      if (r.status === 429) return reply(429, r);   // 排队满（app/card-thread.js maxQueue）：前端提示等一会，这条消息没进线程
       if (r.ok || r.reply) { const live = SESSIONS.get(sid); if (live) { try { live.broadcast({ type: 'thread', cardId, messages: r.messages }); } catch (e) {} } }
-      return reply(r.ok || r.reply ? 200 : 404, r);
+      return reply(r.ok || r.reply ? 200 : (r.status || 404), r);
     }
   }
   // 看法反馈：有用 / 没用 / 采纳 一击 + 一句话。写账本，并回流到这一场后续的 triage prompt（Aaron 2026-09-17：靠反馈收敛）。

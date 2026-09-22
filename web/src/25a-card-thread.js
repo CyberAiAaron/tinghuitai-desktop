@@ -29,6 +29,8 @@
       const r = await fetch(relayBase()+'/thread/'+encodeURIComponent(sid)+'/'+encodeURIComponent(key)+'?token='+encodeURIComponent(cfg.relayToken||''),
         { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text, card:{ kind: box.dataset.cardKind||'', text: box.dataset.cardText||'' } }), signal: AbortSignal.timeout(200000) });
       const j = await r.json().catch(() => ({}));
+      if (r.status === 429) throw new Error(ui==='en' ? 'too many waiting, try again in a moment' : '排队的太多了，等一会再发');   // 服务端队列满（app/card-thread.js maxQueue）：这条没进服务端线程，本地留一条错误让他重发
+      if (r.status === 403) throw new Error(j.error || (ui==='en' ? 'this view cannot act for Aaron' : '这个入口只能看，不能替 Aaron 操作'));
       if (!r.ok && !j.reply) throw new Error(j.error || ('HTTP '+r.status));
       if (cur && String(cur.id) === String(sid)) { cur.threads = cur.threads || {}; cur.threads[key] = Array.isArray(j.messages) && j.messages.length ? j.messages : [...list, { role:'agent', text: j.reply||'', at: Date.now() }]; }
     } catch(e) {

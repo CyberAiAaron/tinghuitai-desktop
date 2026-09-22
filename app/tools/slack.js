@@ -70,4 +70,18 @@ reg.register({
   },
 });
 
-module.exports = { probe, SCOPES };
+// 通用一跳：给 slack-cli.js（卡片对话框里的 tht-slack）用，地址只在这里和 slack-share.js 出现（tests/tools-architecture.test.js）。
+// 口令只进 Authorization 头，返回值里不带它；失败不抛，回 {ok:false,error}。
+async function call(token, method, params, fetchImpl, timeoutMs = 20000) {
+  const f = fetchImpl || globalThis.fetch;
+  if (typeof f !== 'function') return { ok: false, error: '这个 Node 没有 fetch' };
+  if (!token) return { ok: false, error: '没有 Slack 口令' };
+  try {
+    const r = await f(API + method, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params || {}).toString(), signal: AbortSignal.timeout(timeoutMs) });
+    const j = await r.json();
+    if (!j || !j.ok) return { ok: false, error: 'Slack 拒绝：' + clip((j && j.error) || ('http_' + r.status), 60) };
+    return { ok: true, data: j };
+  } catch (e) { return { ok: false, error: 'Slack 连不上：' + clip(e.message, 100) }; }
+}
+
+module.exports = { probe, SCOPES, call };

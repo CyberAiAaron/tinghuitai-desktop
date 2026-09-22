@@ -39,6 +39,11 @@ test('why 反例：泛词、太短、含禁词的整条丢', () => {
   for (const w of ['有帮助', '很有帮助', '值得注意', '供参考', '重要', '注意', '相关信息', '很重要。', '有用', '背景信息'])
     assert.equal(whyOk(w), false, '应当拦下：' + w);
   assert.equal(whyOk('对他有用'), false, '4 字、没说省了什么');
+  // Codex 94dd3aa4：泛词前后加几个字凑够 8 字也不放（以前只拦整句全等）
+  assert.equal(whyOk('这条很有帮助'), false, '泛词片段「很有帮助」加了主语');
+  assert.equal(whyOk('对项目很重要'), false, '泛词片段「很重要」加了对象');
+  assert.equal(whyOk('这条信息对大家都很有价值'), false, '泛词片段夹在长句里');
+  assert.equal(whyOk('这个参数很重要，已经在 D3 拍过'), true, '同一句说清了「已经」拍过就过');
   assert.equal(ok({ claim: 'CDCP 已延期', source: '决策板 D1', why: '值得注意' }), null);
   assert.equal(ok({ claim: 'CDCP 已延期', source: '决策板 D1', why: '建议他去确认一下' }), null, '禁词「建议」');
   assert.equal(ok({ claim: '这条无法核实', source: '决策板 D1', why: '省一次查找' }), null, '禁词在 claim 里');

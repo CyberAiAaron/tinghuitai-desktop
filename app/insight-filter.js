@@ -3,11 +3,12 @@
 //   claim  ≤30 字（prompt 里就是这个数；以前截 60，等于没限制）
 //   source 必须命中一处「具体出处」——【本场背景】里出现过的文档 / 章节标题、团队名单或参会人的名字、日期（9-5 / 09-05 / 9月5日）、
 //          决策编号 D1–D9、会中时间戳（[125s] / 12:30 / 01:02:03）。命不中就整条丢。
-//   why    必须说清省了本人哪一步：含「省 / 不用 / 已 / 已经 / 直接」之一；否则要 ≥8 字且不是泛词（有帮助 / 值得注意 …）。
+//   why    必须说清省了本人哪一步：含「省 / 不用 / 已 / 已经 / 直接」之一；否则要 ≥8 字且整句里没有泛词片段（有帮助 / 很重要 / 值得关注 …，出现在任何位置都算）。
 // 返回 null = 丢弃。ctx = { brief, names }：brief 是用户填的本场背景原文，names 是参会人 + 团队名单。
 const INSIGHT_BAN = /无法核实|需确认|待核实|需要确认|待确认|建议|应该|可以考虑|听错|说错|口误|cannot (be )?verif|not verifiable|you should|consider /i;
-// why 里的泛词：整句去标点后就是这些词（或以它们收尾）的，等于什么都没说
-const WHY_GENERIC = /^(很|非常|比较|挺|较)?(有帮助|有用|有价值|有意义|值得注意|值得关注|需要注意|需要关注|重要|很重要|供参考|参考|提醒|注意|相关|有关|背景信息|补充信息|知识点|信息)(。|！|!)?$/;
+// why 里的泛词片段：出现在任何位置都算空话（「这条很有帮助」「对项目很重要」），除非同一句里说清了省了哪一步（WHY_SAVES）。
+// Codex 94dd3aa4 复审：以前只拦整句全等，前后加几个字就放过去了。
+const WHY_GENERIC = /(有帮助|有用|有价值|有意义|值得注意|值得关注|值得留意|需要注意|需要关注|重要|供参考|参考价值|背景信息|补充信息|知识点|相关信息|作为参考|提醒一下|helpful|useful|important|worth noting|for reference)/i;
 const WHY_SAVES = /省|不用|已|已经|直接|saves?|skip|already|no need/i;
 const DATE_RE = /(?:20\d{2}[-/.年])?\d{1,2}[-/月]\d{1,2}(?!\d)/;
 const DECISION_RE = /\bD\d\b/;
@@ -37,11 +38,12 @@ function sourceGrounded(source, ctx) {
   return false;
 }
 
+// 顺序：先看有没有说清省了哪一步（含「省 / 不用 / 已 / 已经 / 直接」之一 → 过）；否则去标点后 ≥8 字，且整句里不许出现泛词片段。
 function whyOk(why) {
   const w = String(why || '').trim(); if (!w) return false;
   if (WHY_SAVES.test(w)) return true;
   const flat = strip(w); if ([...flat].length < 8) return false;
-  return !WHY_GENERIC.test(w.replace(/\s/g, ''));
+  return !WHY_GENERIC.test(flat);
 }
 
 function normalizeInsight(f, ctx) {
