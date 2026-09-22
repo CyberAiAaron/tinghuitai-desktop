@@ -129,6 +129,17 @@ test('briefNote：三级编号、结论加粗、待办表；没认的人写「�
   assert.equal(nameIn('S3 准备材料，S1 review', m), '未认人 准备材料，Cary Luo review');
 });
 
+test('buildMarkdown 逐字稿段：认了名的写真名，没认的写「未认人」，同一人连续发言只标一次，整段不出现 S 码', () => {
+  const md = share.buildMarkdown(fx.session, '');
+  const tr = md.slice(md.indexOf('## 逐字稿'));
+  assert.ok(!/\bS[0-9]\b/.test(tr), '逐字稿段出现了 S 码：' + (tr.match(/.*\bS[0-9]\b.*/) || [''])[0]);
+  assert.ok(tr.includes('**Cary Luo**') && tr.includes('**未认人**'));
+  // 样例 10 句：0,1,2,1,3,0,1,2,0,3 → 显示名 未认人,Cary,未认人,Cary,未认人×2,Cary,未认人×3 → 相邻相同只标一次 = 7 个标签
+  assert.equal((tr.match(/^\*\*[^*]+\*\*$/gm) || []).length, 7, '换人才标一次；几个没认的人连着说算同一个「未认人」标签');
+  assert.equal(share.__test.who({ names: { S2: 'Val' } }, '2'), 'Val', 'names 里存 S2 这种老写法也认');
+  assert.equal(share.__test.who({}, ''), '', '没有说话人字段就不标');
+});
+
 test('briefNote：REQ-004 上限只压模型产出——核心结论最多 3 条、overview 待办最多 5 条；处理台卡片是他自己维护的，一条不截', () => {
   const many = clone(fx.enhanced);
   many.brief.overview.conclusions = ['a', 'b', 'c', 'd', 'e'];

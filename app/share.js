@@ -16,7 +16,7 @@ function clock(sec) {
 const who = (session, spk) => {
   const names = session.names || {};
   const k = String(spk == null ? '' : spk);
-  return names[k] || names['S' + k] || (k === '' ? '' : 'S' + k);
+  return names[k] || names['S' + k] || (k === '' ? '' : '未认人');   // 09-22 Aaron 定：分享出去的逐字稿也不出现 S0 / S1，没认的写「未认人」
 };
 
 // 一份文件里两段：上面是给人看的纪要，下面是逐字稿。
