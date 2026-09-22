@@ -152,13 +152,27 @@
     if(n){ persist(); render(); }
   }
 
+  // 洞察去重（0.6.14）：claim 去标点后前 12 字相同、或一条包含另一条 → 同一件事，保留最新那条（原位替换，位置不动，时间取新的）。
+  const insightNorm = t => String(t||'').replace(/[\s“”"'‘’「」『』（）()，。、,.!?！？：:；;…—\-·]/g,'');
+  function sameInsight(a,b){ const x=insightNorm(a), y=insightNorm(b); if(!x||!y) return false; if(x.slice(0,12)===y.slice(0,12)) return true; return x.includes(y)||y.includes(x); }
+  function mergeInsights(list, incoming, at){
+    let n=0;
+    for(const x of (incoming||[])){
+      if(!x||!x.claim) continue;
+      const row={id:x.id, sourceRefs:x.sourceRefs, at:x.at||at||Date.now(), claim:x.claim, kind:x.kind||'insight', source:x.source||'', why:x.why||x.note||'', refs:Array.isArray(x.refs)?x.refs:[], verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||x.why||'', label:x.label, evidence:x.evidence};
+      const i=list.findIndex(o=>o&&sameInsight(o.claim,x.claim));
+      if(i>=0){ const old=list[i]; if(old.rating) row.rating=old.rating; if(old.comment) row.comment=old.comment; list[i]=row; }
+      else list.push(row);
+      n++;
+    }
+    return n;
+  }
   function applyFeedback(m){
     const at = Date.now(); let n = 0;
     const seenH = new Set([...cur.highlights.map(x=>x.text), ...cur.todos.map(x=>x.text)]);
-    const seenC = new Set(cur.factchecks.map(x=>x.claim));
     (m.highlights||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.highlights.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text}); n++; } });
     (m.todos||[]).forEach(x=>{ if (x&&x.text && !/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x.text) && !seenH.has(x.text)) { seenH.add(x.text); cur.todos.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, text:x.text, owner:x.owner||'', how:x.how||''}); n++; } });
-    (m.factchecks||[]).forEach(x=>{ if (x&&x.claim && !seenC.has(x.claim)) { seenC.add(x.claim); cur.factchecks.push({id:x.id, sourceRefs:x.sourceRefs, at:x.at||at, claim:x.claim, verdict:['true','false','unsure'].includes(x.verdict)?x.verdict:'unsure', note:x.note||'', kind:x.kind, label:x.label, evidence:x.evidence}); n++; } });
+    n += mergeInsights(cur.factchecks, [...(m.insights||[]), ...(m.factchecks||[])], at);
     if (n) { persist(); render(); buzz(); }
   }
 

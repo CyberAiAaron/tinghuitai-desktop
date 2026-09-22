@@ -335,6 +335,8 @@ dialog h2{margin:0 0 12px;font-size:16px}
 .card.pending{opacity:.6;background-image:linear-gradient(90deg,transparent 0,rgba(0,0,0,.05) 50%,transparent 100%);background-size:200% 100%;animation:fixwait 1.2s linear infinite}
 @keyframes fixwait{from{background-position:200% 0}to{background-position:-200% 0}}
 .card .v.memo{white-space:pre-wrap;color:var(--text)}
+.card.ck .v.src{color:var(--muted);font-size:12px;margin-top:3px}.card.ck .thread{min-height:0}.ck-older{margin:4px 0 8px}.ck-older>summary{font-size:12px;color:var(--muted);cursor:pointer;padding:6px 0}
+.my-todos{flex:0 0 auto;padding:6px 16px 8px;border-bottom:1px solid var(--line);font-size:13px;line-height:1.5}.my-todos[hidden]{display:none}.my-todos-label{font-size:12px;color:var(--muted);padding:3px 0}.my-todos-label .count{margin-left:4px}.my-todo{padding:3px 0 3px 10px;border-left:3px solid var(--todo);margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}.my-todos-older>summary{font-size:12px;color:var(--muted);cursor:pointer;padding:4px 0}
 .card.stale::after{content:'原文已改，待重算';display:block;margin-top:4px;font:11px var(--mono);color:var(--muted)}
 .card.recomputed::after{content:'原文订正后已重算';display:block;margin-top:4px;font:11px var(--mono);color:var(--muted)}
 html[lang='en'] .card.stale::after{content:'Transcript edited · recomputing'}
@@ -446,11 +448,12 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     <section class="pane" id="p-hl" data-p="hl">
       <h2><i></i><span data-i18n="h_hl">要点</span></h2>
       <div id="hl-pinned" hidden></div>
+      <div id="my-todos" class="my-todos" hidden></div>
       <div class="scroll list" id="hl"><div class="empty">约 25 秒分析一次。冲突用红条；待办在右上角单独查看。</div></div>
     </section>
     <section class="pane" id="p-ck" data-p="ck">
-      <h2><i></i><span data-i18n="h_ck">看法</span><span class="right" data-i18n="unverified">对照项目状态 · 点一下反馈</span></h2>
-      <div class="scroll list" id="ck"><div class="empty">对照你的项目状态给看法：纠错、联想、补充、核对，每条附一句转写原话；依据不够的不显示。</div></div>
+      <h2><i></i><span data-i18n="h_ck">看法</span><span class="right" data-i18n="unverified">来自你的项目记忆</span></h2>
+      <div class="scroll list" id="ck"><div class="empty">讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。</div></div>
     </section>
   </main>
 
