@@ -392,12 +392,13 @@ test('页面契约：「建议怎么做」「可能讲错的」「合适的部�
   // 右栏 洞察与行动 = 洞察（风险提示 → 偏离/背景 → 一句话思考）→ 行动（待办表 → 一句话对话框）。议题细节不再平铺，待办不再压在议题下面。
   const seg = js.slice(js.indexOf("$('#bf-sum').innerHTML="), js.indexOf("$('#bf-rev').innerHTML="));
   assert.ok(seg.length > 200, '没找到 #bf-sum 的拼装段落');
-  const left = ["t('quick')", "bf-detail", "t('detail')", 'bf-brain'].map(k => seg.indexOf(k));
+  const left = ["t('keyc')", "t('topics')", "bf-detail", "t('detail')", 'bf-brain'].map(k => seg.indexOf(k));
   assert.ok(left.every(i => i >= 0), '左栏这四块都要在 #bf-sum 里渲染：' + JSON.stringify(left));
   for (let i = 1; i < left.length; i++) assert.ok(left[i] > left[i - 1], '左栏第 ' + i + ' 块的顺序不对');
   for (const gone of ['bf-cards', 'bf-say', 'bf-think', 'bf-risks']) assert.ok(!seg.includes(gone), gone + ' 不该还在智能总结栏里');
   const rseg = js.slice(js.indexOf("$('#bf-rev').innerHTML="), js.indexOf("querySelectorAll('[data-say]')"));
   const order = ["t('ins')", 'bf-risks', 'bf-rev-items', 'bf-think', "t('acts')", 'bf-cards', 'bf-say'].map(k => rseg.indexOf(k));
+  assert.ok(js.includes('b.insights'), '洞察要读 brief.insights 并编号渲染');
   assert.ok(order.every(i => i >= 0), '右栏这七块都要在 #bf-rev 里渲染：' + JSON.stringify(order));
   for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], '右栏第 ' + i + ' 块的顺序不对');
   assert.ok(html.includes('洞察与行动') && !html.includes('点评与指导'), '右栏标题应是「洞察与行动」');

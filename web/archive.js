@@ -92,7 +92,7 @@ function render(s){
 const COLORS=['#202124','#c8102e','#1f5fbf','#1e7e34','#b26a00','#6a3fb5','#00838f','#8d6e63'];
 const mmss=sec=>{sec=Math.max(0,Math.round(sec||0));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0');};
 // 界面文案：[中文, English]。这一屏原来全是中文，界面切到 en 时只有一半跟着换。
-const L={sum:['智能总结','Summary'],rev:['洞察与行动','Insights & actions'],ins:['洞察','Insights'],acts:['行动','Actions'],addTodo:['加为待办','Add to-do'],revItems:['这场没有需要你注意的偏离或冲突。','No deviations or conflicts to flag.'],
+const L={sum:['智能总结','Summary'],rev:['洞察与行动','Insights & actions'],ins:['洞察','Insights'],acts:['行动','Actions'],addTodo:['加为待办','Add to-do'],more:['展开依据','Show reasoning'],revItems:['这场没有需要你注意的偏离或冲突。','No deviations or conflicts to flag.'],
   topics:['议题','Topics'],keyc:['核心结论','Key conclusions'],todos:['待办','Action items'],
   quick:['一屏速览','At a glance'],concl:['结论：','Conclusion: '],noKeyc:['这场没有形成核心结论。','No key conclusions.'],
   colWhat:['事项','Item'],colWho:['负责人','Owner'],colDue:['期限','Due'],sugg:['建议','suggested'],
@@ -170,12 +170,12 @@ function renderBrief(s){
       +'</div>';};
   $('#bf-sum').innerHTML=
     (b.meta&&b.meta.scope?'<p class="bf-scope">'+nm(b.meta.scope,map)+'</p>':'')
-    +'<section class="fs"><h3 class="fs-h"><span class="fs-n">1</span>'+esc(t('quick'))+'</h3>'
-      +(ov.conclusions.length?ov.conclusions.slice(0,3).map(c=>'<div class="bf-key"><b>'+nm(c,map)+'</b></div>').join(''):'<p class="bf-note">'+esc(t('noKeyc'))+'</p>')
-      +'<ul class="bf-topics">'+ov.topics.map((x,i)=>'<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><span>'+nm(x.title,map)+'</span><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>').join('')+'</ul><div class="bf-bar">'+bar+'</div></section>'
-    +'<details class="fs bf-detail"'+(viewFull?' open':'')+'><summary class="fs-h">'+esc(t('detail'))+' <span class="bf-sug">'+(b.topics||[]).length+'</span></summary>'+(b.topics||[]).map(card).join('')+'</details>'
-    // REQ-009 + 09-22：待办是这一节的表，内容由 paintActions() 填（读 /meeting-actions）；表下面是一句话改待办的对话框。
-    +'<section class="fs" id="bf-brain"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(T('项目状态更新','Project state updates'))+' <span class="bf-sug" id="bf-upd-n"></span></h3><div id="bf-updates"></div></section>';
+    +'<section class="fs"><h3 class="fs-h"><span class="fs-n">1</span>'+esc(t('keyc'))+'</h3>'
+      +(ov.conclusions.length?ov.conclusions.slice(0,3).map(c=>'<div class="bf-key"><b>'+nm(c,map)+'</b></div>').join(''):'<p class="bf-note">'+esc(t('noKeyc'))+'</p>')+'</section>'
+    +'<section class="fs"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(t('topics'))+'</h3>'
+      +'<ul class="bf-topics bf-topics-c">'+ov.topics.map((x,i)=>{const c=(b.topics||[])[i]||{};return '<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><div><b>'+nm(x.title,map)+'</b>'+(c.conclusion?'<div class="bf-topic-c">'+nm(c.conclusion,map)+'</div>':'')+'</div><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>';}).join('')+'</ul><div class="bf-bar">'+bar+'</div>'
+      +'<details class="bf-detail"'+(viewFull?' open':'')+'><summary class="fs-h">'+esc(t('detail'))+' <span class="bf-sug">'+(b.topics||[]).length+'</span></summary>'+(b.topics||[]).map(card).join('')+'</details></section>'
+    +'<section class="fs" id="bf-brain"><h3 class="fs-h"><span class="fs-n">3</span>'+esc(T('项目状态更新','Project state updates'))+' <span class="bf-sug" id="bf-upd-n"></span></h3><div id="bf-updates"></div></section>';
   const view=$('#bf-view');view.textContent=viewFull?t('showBrief'):t('showFull');view.onclick=()=>{setViewFull(!viewFull);render(record);};
   $('#bf-sum').querySelectorAll('[data-dec]').forEach(el=>el.onclick=()=>{decEditing.add(el.dataset.dec);render(record);});
   $('#bf-sum').querySelectorAll('[data-dec-set]').forEach(el=>el.onclick=()=>{const [n,v]=el.dataset.decSet.split('|');saveDecision(Number(n),v);});
@@ -185,11 +185,17 @@ function renderBrief(s){
   // Aaron 09-24：洞察 + 行动并排在智能总结旁，取代「点评与指导」。洞察 = 冲突 / 偏离 / 一句话立场 / 补充背景，每条最多一个动作；行动 = 待办表 + 一句话改待办。
   const r=b.review||{};
   const dev=(r.alignment||[]).filter(a=>a.status&&a.status!=='推进');
-  const revItems=dev.map(a=>'<div class="bf-ins"><div><span class="bf-tag '+(a.status==='偏离'?'bad':'')+'">'+esc(a.status)+'</span><b>'+esc(a.goal)+'</b><div>'+nm(a.note,map)+'</div></div><button type="button" class="bf-t" data-say="'+esc('加一条：'+a.goal+'——'+(a.note||''))+'">'+esc(t('addTodo'))+'</button></div>')
-    .concat((r.facts||[]).map(f=>'<div class="bf-ins"><div>'+nm(f.text,map)+(f.source?'<div class="bf-src">'+esc(f.source)+'</div>':'')+'</div></div>'));
+  const ins=(b.insights||[]).filter(x=>x&&x.question);
+  const insItems=ins.length?ins.map((x,i)=>'<div class="bf-ins"><span class="td-n">'+(x.n||i+1)+'</span><div><b>'+nm(x.question,map)+'</b><div>'+nm(x.answer||'',map)+'</div>'
+      +(x.detail?'<details class="bf-more"><summary>'+esc(t('more'))+'</summary><div class="bf-quote">'+mdLite(x.detail)+'</div></details>':'')+'</div>'
+      +(x.action&&x.action.text?'<button type="button" class="bf-t" data-say="'+esc('加一条：'+x.action.text+(x.action.owner?'，派给 '+x.action.owner:''))+'">'+esc(x.action.label||t('addTodo'))+'</button>':'')+'</div>')
+    // 没有 insights 的老场次：退回偏离 + 背景，也编号
+    :dev.map((a,i)=>'<div class="bf-ins"><span class="td-n">'+(i+1)+'</span><div><span class="bf-tag '+(a.status==='偏离'?'bad':'')+'">'+esc(a.status)+'</span><b>'+esc(a.goal)+'</b><div>'+nm(a.note,map)+'</div></div><button type="button" class="bf-t" data-say="'+esc('加一条：'+a.goal+'——'+(a.note||''))+'">'+esc(t('addTodo'))+'</button></div>')
+      .concat((r.facts||[]).map((f,i)=>'<div class="bf-ins"><span class="td-n">'+(dev.length+i+1)+'</span><div>'+nm(f.text,map)+(f.source?'<div class="bf-src">'+esc(f.source)+'</div>':'')+'</div></div>'));
+  const revItems=insItems;
   $('#bf-rev').innerHTML=
     '<section class="fs" id="bf-ins"><h3 class="fs-h">'+esc(t('ins'))+'</h3>'
-      +(b.review?'':'<p class="bf-note">'+(b.reviewWarning?esc(t('revFail'))+esc(b.reviewWarning):esc(t('revNone')))+'</p>')
+      +(b.review||ins.length?'':'<p class="bf-note">'+(b.reviewWarning?esc(t('revFail'))+esc(b.reviewWarning):esc(t('revNone')))+'</p>')
       +'<div id="bf-risks"></div><div id="bf-rev-items">'+(revItems.join('')||(b.review?'<p class="bf-note">'+esc(t('revItems'))+'</p>':''))+'</div><div id="bf-think"></div></section>'
     +'<section class="fs" id="bf-todo"><h3 class="fs-h">'+esc(t('acts'))+' <span class="bf-sug" id="bf-todo-n"></span></h3><div id="bf-cards"></div><div id="bf-say"></div></section>';
   $('#bf-rev').querySelectorAll('[data-say]').forEach(el=>el.onclick=()=>{sayDraft=el.dataset.say;saySend(el.dataset.say);});
