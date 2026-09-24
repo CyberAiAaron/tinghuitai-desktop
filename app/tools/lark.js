@@ -153,4 +153,4 @@ reg.register({
 // 洞察卡动作（app/insight-actions.js，批 3）直接调的三个只读 / 写类底层函数：找人、文档链接回读、建任务。
 // 命令行都在 ./lark-cli 里拼，这里只是工具层对外的口；写类（建任务）由调用方先过 send-gate 的确认与幂等。
 const _cli = require('./lark-cli');
-module.exports = { resolveIds, docInspect: _cli.docInspect, taskCreate: _cli.taskCreate, messageSend: _cli.messageSend, docCreate: _cli.docCreate, docAppend: _cli.docAppend, larkAvailable };
+module.exports = { resolveIds, docInspect: _cli.docInspect, taskCreate: _cli.taskCreate, messageSend: _cli.messageSend, docCreate: _cli.docCreate, docAppend: _cli.docAppend, docValidateAppend: _cli.docValidateAppend, larkAvailable };

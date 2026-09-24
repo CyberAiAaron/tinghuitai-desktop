@@ -150,4 +150,18 @@ async function docAppend({ token, content }, opts = {}) {
   return { ok: true, revision: doc.revision_id == null ? '' : String(doc.revision_id) };
 }
 
-module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, cardSend, selfOpenId, docCreate, docAppend, clip, norm };
+// 主题文档写回：先让 docs parser 校验 XML，再追加。同一条的幂等由调用方 send-gate 包住整个函数，
+// 因此已有收据时 parse 和 update 都不会重复调用。
+async function docValidateAppend({ token, content }, opts = {}) {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9]{10,64}$/.test(t)) return { ok: false, error: '文档 token 不像样' };
+  const c = String(content || '').trim();
+  if (!c) return { ok: false, error: '要追加的内容是空的' };
+  const parsed = await runCli(['docs', '+script', '--command', 'parse', '--content', c, '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!parsed.ok) return { ok: false, error: parsed.error, uncertain: false };
+  const assessment = parsed.json && parsed.json.data && parsed.json.data.assessment;
+  if (!assessment || assessment.status !== 'passed') return { ok: false, error: 'XML 校验未通过', uncertain: false };
+  return docAppend({ token: t, content: c }, opts);
+}
+
+module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, cardSend, selfOpenId, docCreate, docAppend, docValidateAppend, clip, norm };

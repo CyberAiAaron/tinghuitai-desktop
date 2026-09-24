@@ -245,11 +245,13 @@ body.v2-full #legacy>[hidden]{display:none}
 .v2 .edited{font:10px var(--mono,monospace);color:var(--muted,#76767c);margin-left:4px;vertical-align:1px}
 .v2-hint{font:12px var(--mono,monospace);color:var(--muted,#76767c);text-align:right;margin-top:-10px}
 .v2-msg{font-size:12.5px;color:var(--muted,#76767c);margin:4px 0 0}
+#topic-doc{margin:0 0 14px}#topic-doc .td-meta b,#topic-doc .td-meta span{display:inline}#topic-doc .td-meta{font-size:12px;opacity:.7;margin:4px 0 8px}#topic-doc .td-h{font-weight:600;margin:8px 0 4px}#topic-doc .td-item{display:block;padding:3px 0}#topic-doc .td-add{color:#1a7f37}#topic-doc .td-ev{font-size:11px;opacity:.5}#topic-doc .td-bar{margin-top:10px;display:flex;gap:10px;align-items:center}#topic-doc .td-msg{font-size:12px}
 </style></head><body>
 <div class="top"><a class="btn sm" id="back" href="index.html">← Meeting LiveMate</a><h1 id="title">正在读取会议…</h1><span class="chip" id="src-chip" hidden></span><button class="btn sm" id="download" hidden>下载 / 分享</button><button class="btn sm" id="v2-more" aria-label="更多" title="更多">⋯</button><div id="v2-menu" class="v2-menu" hidden></div><button class="btn sm" id="closewin" hidden>关闭窗口</button></div>
 <div class="wrap">
 <div class="meta" id="meta"></div>
 <div class="meta" id="post-stats" hidden></div>
+<section class="pane" id="topic-doc" hidden></section>
 <main id="v2" class="v2" hidden></main>
 <div id="legacy">
 <div id="ask-box" class="bf-ask" hidden></div>
@@ -262,4 +264,4 @@ body.v2-full #legacy>[hidden]{display:none}
 <details class="pane bf-tr" id="tr-box"><summary><h2>逐字稿 <span class="count" id="c-tr"></span></h2></summary><div class="scroll tr" id="transcript"></div></details>
 </div>
 </div>
-<script src="archive.js?v=22"></script><script src="archive-v2.js?v=1"></script><script src="page-comments.js?v=2"></script></body></html>
+<script src="archive.js?v=22"></script><script src="archive-v2.js?v=1"></script><script src="page-comments.js?v=2"></script><script src="topic-doc-panel.js?v=1"></script></body></html>
