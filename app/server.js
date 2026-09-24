@@ -694,6 +694,7 @@ class Session {
         const raw = await askModel(this.env, thinkPass.systemPrompt(enUI), thinkPass.userPrompt({ packText: pack.text, existingClaims: existing, recent, enUI }), thinkPass.MAX_OUTPUT_TOKENS, 'think', trace);
         if (!raw) { log('think 没回应 ' + this.id); continue; }
         if (this.finalized) return;
+        if ((this.editEpoch || 0) !== epochAtStart) { log('think 结果作废：期间改过逐字稿 ' + this.id); return; }   // Codex 复审：改过逐字稿的旧结果不上屏
         const at = Math.round((Date.now() - this.startTs) / 1000);
         const items = thinkPass.normalize(thinkPass.parse(raw), existing).map(x => ({ ...x, at, id: 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1), sourceRefs: [] }));
         if (items.length) { this.factchecks.push(...items); this.broadcast({ type: 'feedback', highlights: [], todos: [], factchecks: items }); added += items.length; }
