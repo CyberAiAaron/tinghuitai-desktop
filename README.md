@@ -6,6 +6,13 @@
 - **让 AI 替你安装：**把 [AI-SETUP.md](AI-SETUP.md) 连同整个项目文件夹交给能操作电脑的 AI。
 - **已经装好：**双击 `启动.command`。
 
+## 试用版（最快，免填转写 Key）
+
+1. 下载 [Tinghuitai.dmg](https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/Tinghuitai.dmg)，双击打开。
+2. 把「听会台」拖进「应用程序」，再从应用程序里双击打开。
+3. 第一次 macOS 会拦一下：打开「系统设置 → 隐私与安全性」，在最下面点「仍要打开」。
+4. 转写已经配好，直接开会；会后纪要要在设置页填一个大模型 Key（或用本机的 Codex / Claude Code）。
+
 ## 最短安装路径
 
 下载最新 ZIP → 解压 → 双击 **修复并打开.command** → 选择转写方式 → **保存并进入**。安装与更新使用同一入口，保留已有会议和设置。详见 [开始用](开始用.md)。
