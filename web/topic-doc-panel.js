@@ -42,7 +42,7 @@
   async function load(){
     try{const {status,j}=await api('topic-diff?id='+encodeURIComponent(mid));
       if(j.ok&&j.diff)return renderDiff(j.diff);
-      if(status===404){show('<p class="td-empty">还没有这场会的主题差异。</p><button type="button" class="btn sm" id="td-gen">生成差异预览</button>');box.querySelector('#td-gen').onclick=compute;}
+      if(status===404||(j.ok&&!j.diff)){show('<p class="td-empty">还没有这场会的主题差异。</p><button type="button" class="btn sm" id="td-gen">生成差异预览</button>');box.querySelector('#td-gen').onclick=compute;}
     }catch(e){}
   }
   load();

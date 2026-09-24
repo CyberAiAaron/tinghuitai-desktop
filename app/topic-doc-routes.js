@@ -22,7 +22,11 @@ function mount(router, service) {
   });
   router.get('/asr-relay/topic-diff', async (req, res) => {
     try { return reply(res, 200, { ok: true, diff: service.read(req.query && req.query.id) }); }
-    catch (error) { return reply(res, Number(error.code) || 500, { ok: false, error: error.message }); }
+    catch (error) {
+      // 还没生成过差异是常态（没配主题文档的新装用户每次都是），回 200 + diff:null，别在控制台留 404。
+      if (Number(error.code) === 404) return reply(res, 200, { ok: true, diff: null });
+      return reply(res, Number(error.code) || 500, { ok: false, error: error.message });
+    }
   });
   router.post('/asr-relay/topic-diff/apply', async (req, res) => {
     try {
