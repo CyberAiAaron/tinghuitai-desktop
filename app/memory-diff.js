@@ -17,7 +17,7 @@ const LEVELS = ['mentioned', 'discussed', 'proposed', 'agreed', 'decided'];
 const TYPE_LABEL = { new_fact: '新事实', changed_fact: '口径变化', decision: '决定', superseded_decision: '推翻旧决定', owner_change: '负责人变化', milestone_change: '节点变化', new_action: '新动作', resolved_question: '未定项已定', new_open_question: '新未定项', assumption: '假设', risk: '风险', blocker: '阻塞' };
 const LEVEL_LABEL = { mentioned: '提到', discussed: '讨论过', proposed: '有人提议', agreed: '会上同意', decided: '会上拍板' };
 const MAX_ITEMS = 8;
-const STATE_CAP = 22000;
+const STATE_CAP = 60000;   // Codex 一审：状态文件 3.7 万字，不能静默截半；超过就记日志
 const CARDS_CAP = 6000;
 const MAX_OUTPUT_TOKENS = 2500;
 
@@ -84,8 +84,9 @@ function normalize(items, sectionList, rejected = new Set()) {
     const type = TYPES.includes(it.type) ? it.type : 'new_fact';
     const level = LEVELS.includes(it.level) ? it.level : 'discussed';
     let section = clean(it.section, 120);
-    if (!secs.includes(section)) { const hit = secs.find(s => section && s.includes(section.replace(/^##\s*/, '').split(/[.。 ]/)[0])); section = hit || secs.find(s => /8b/.test(s)) || secs[secs.length - 1]; }
-    const row = { type, level, section, field: clean(it.field, 80) || TYPE_LABEL[type], before: clean(it.before, 300) || '（无）', after, evidence: clean(it.evidence, 200), confidence: ['high', 'medium', 'low'].includes(it.confidence) ? it.confidence : 'medium' };
+    let sectionGuessed = false;
+    if (!secs.includes(section)) { const hit = secs.find(s => section && s.includes(section.replace(/^##\s*/, '').split(/[.。 ]/)[0])); section = hit || secs.find(s => /8b/.test(s)) || secs[secs.length - 1]; sectionGuessed = true; }
+    const row = { type, level, section, sectionGuessed, field: clean(it.field, 80) || TYPE_LABEL[type], before: clean(it.before, 300) || '（无）', after, evidence: clean(it.evidence, 200), confidence: ['high', 'medium', 'low'].includes(it.confidence) ? it.confidence : 'medium' };
     const fp = fingerprint(row);
     if (seen.has(fp) || rejected.has(fp)) continue;
     seen.add(fp);
@@ -133,7 +134,7 @@ function mirrorPaths(projectionDir, sid) {
 function mirror(projectionDir, doc, log = () => {}) {
   if (!projectionDir) return;
   const p = mirrorPaths(projectionDir, doc.id);
-  const done = doc.items.length && doc.items.every(it => it.decision);
+  const done = doc.items.every(it => it.decision);   // 空差异也算处理完，直接进 applied
   try {
     writeAtomic(done ? p.applied : p.pending, renderMd(doc));
     if (done) { try { fs.unlinkSync(p.pending); } catch (e) {} }
@@ -145,6 +146,7 @@ async function run({ dataDir, session, ask, stateFile, projectionDir, log = () =
   const sid = String(session.id || ''); if (!sid) return { ok: false, error: 'no id' };
   let stateText = ''; try { stateText = fs.readFileSync(stateFile, 'utf8'); } catch (e) { return { ok: false, error: '读不到项目状态文件 ' + stateFile }; }
   const secs = sections(stateText);
+  if (stateText.length > STATE_CAP) log(`memory-diff: 状态文件 ${stateText.length} 字超过 ${STATE_CAP}，尾部未参与对照`);
   const cards = cardsFromDb(dataDir, sid, log);
   const ct = cardsText(cards), cd = condensedText(session);
   if (!ct && !cd) { log('memory-diff: 这场没有卡也没有收敛结果，跳过 ' + sid); return { ok: true, skipped: true, count: 0 }; }
@@ -170,9 +172,9 @@ function read(dataDir, sid) { return readJSON(fileOf(dataDir, String(sid))); }
 function applyToState(stateFile, item, text, meeting) {
   const src = fs.readFileSync(stateFile, 'utf8');
   const lines = src.split('\n');
-  let start = lines.findIndex(l => l.trim() === item.section);
-  if (start < 0) start = lines.findIndex(l => /^## 8b/.test(l));
-  if (start < 0) throw new Error('状态文件里找不到节 ' + item.section);
+  // Codex 一审：写回时节必须精确存在，找不到就拒绝，不再兜底改写到别的节
+  const start = lines.findIndex(l => l.trim() === item.section);
+  if (start < 0) throw new Error('状态文件里找不到节 ' + item.section + '，没有写回');
   let end = lines.length;
   for (let k = start + 1; k < lines.length; k++) if (/^## /.test(lines[k])) { end = k; break; }
   // 节尾的空行留在新行后面
@@ -186,7 +188,9 @@ function applyToState(stateFile, item, text, meeting) {
 }
 
 // 一条决定：accept / edit / reject；all=true 时对所有未决条目做 accept
-function decide({ dataDir, sid, uid, action, text = '', all = false, projectionDir, log = () => {} }) {
+function decide({ dataDir, sid, uid, action, text = '', all = false, confirmed = false, projectionDir, log = () => {} }) {
+  // Codex 一审：确认不只在路由层查，写回函数自己也要拿到 confirmed === true
+  if (confirmed !== true) { const e = Error('没有界面确认，不写回'); e.code = 400; throw e; }
   const doc = read(dataDir, sid); if (!doc) { const e = Error('这场会还没有差异数据'); e.code = 404; throw e; }
   if (!['accept', 'edit', 'reject'].includes(action)) throw new Error('动作不对');
   const targets = all ? doc.items.filter(it => !it.decision) : doc.items.filter(it => it.uid === uid);
@@ -199,10 +203,10 @@ function decide({ dataDir, sid, uid, action, text = '', all = false, projectionD
     if (action === 'edit' && t.length < 4) throw new Error('改后的内容太短');
     if (action === 'reject') {
       const rf = path.join(dirOf(dataDir), 'rejected.json'); const rej = readJSON(rf, {}); rej[it.fp] = { at: new Date().toISOString(), sid, after: it.after }; writeAtomic(rf, JSON.stringify(rej, null, 1));
-      it.decision = { action, at: Date.now() };
+      it.decision = { action, at: Date.now(), confirmed: true };
     } else {
       const line = applyToState(doc.stateFile, it, t, meeting);
-      it.decision = { action, text: t, at: Date.now(), line };
+      it.decision = { action, text: t, at: Date.now(), line, confirmed: true };
       written.push(line);
     }
   }

@@ -2312,7 +2312,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (!all && !/^u-[0-9a-f]{12}$/.test(uid)) return reply(400, { ok:false, error:'条目编号不对' });
     if (j.confirmed !== true) return reply(400, { ok:false, error:'请在界面上确认（服务端没收到确认）' });
     try {
-      const out = await withMeetingLock(sid, async () => memoryDiff.decide({ dataDir: DATA, sid, uid, action: String(j.do || ''), text: j.text, all, projectionDir: MEMORY_PROJECTION_DIR, log }));
+      const out = await withMeetingLock(sid, async () => memoryDiff.decide({ dataDir: DATA, sid, uid, action: String(j.do || ''), text: j.text, all, confirmed: j.confirmed === true, projectionDir: MEMORY_PROJECTION_DIR, log }));
       log('memory-update ' + sid + ' ' + (all ? 'all' : uid) + ' ' + j.do);
       return reply(200, { ok:true, doc: out.doc, written: out.written, summary: memoryDiff.summary(out.doc) });
     } catch (e) { return reply(e.code === 404 ? 404 : 400, { ok:false, error: e.message }); }
