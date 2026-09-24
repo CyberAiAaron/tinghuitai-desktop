@@ -119,9 +119,14 @@ const DEC=[['已一致','Agreed','ok'],['待讨论','Open',''],['有分歧','Dis
 const decLabel=v=>{const d=DEC.find(x=>x[0]===v)||DEC[1];return uiLang==='en'?d[1]:d[0];};
 const decClass=v=>{const d=DEC.find(x=>x[0]===v)||DEC[1];return d[2];};
 const decOf=(b,card)=>{const v=(b.decisions||{})[String(card.n)]||card.decision;return DEC.some(x=>x[0]===v)?v:'待讨论';};
-// 速览 / 完整只有这一个开关，状态记在本机。隐私窗口里 localStorage 会抛，抛了就当默认速览。
-let viewFull=false;try{viewFull=localStorage.getItem('tht-archive-view')==='full';}catch{}
-const setViewFull=v=>{viewFull=v;try{localStorage.setItem('tht-archive-view',v?'full':'brief');}catch{}};
+// 一句话：取第一句，超 40 字截断。表格每格只放这一句，全文在 title 里。
+function oneLine(x){const s=String(x==null?'':x).replace(/\s+/g,' ').trim();const m=/^(.+?[。；;！!？?])/.exec(s);const f=m?m[1].replace(/[。；;]$/,''):s;return f.length>40?f.slice(0,39)+'…':f;}
+// 议题表的五列：议题 / 结论 / 状态 / 未对齐 / 下一步。数据全部来自已有的 brief（overview.topics + topics + overview.todos），不新增模型调用。
+function topicRows(b){
+  const ov=(b&&b.overview)||{},heads=ov.topics||[],cards=(b&&b.topics)||[],todos=ov.todos||b&&b.todos||[];
+  return heads.map((h,i)=>{const c=cards.find(x=>x&&x.n===h.n)||cards[i]||{},td=todos.filter(t=>t&&(t.topic===h.n));
+    return {n:h.n,title:h.title||'',conclusion:c.conclusion&&c.conclusion!=='未形成结论'?c.conclusion:'',status:decOf(b,{n:h.n,decision:c.decision}),
+      open:(c.open||[]).filter(Boolean).join('；'),next:td.map(t=>t.what+(t.owner?'（'+t.owner+'）':'')).join('；')};}).filter(r=>r.title);}
 let segText=new Map();
 const decEditing=new Set();
 // 名字只存一处：names 映射。以前这里还从「需要你定一下」的答案里二次推导，
@@ -157,33 +162,22 @@ function renderBrief(s){
   const map=spkMap(s), ov=b.overview, dur=Math.max(b.duration||0,...ov.topics.map(x=>x.to||0),1);
   let bar='',pos=0;ov.topics.forEach((x,i)=>{const f=Math.max(pos,x.from||0),to=Math.max(f,x.to||0);if(f>pos)bar+='<i class="gap" style="width:'+((f-pos)/dur*100)+'%"></i>';bar+='<i data-sec="'+f+'" title="'+esc(x.title)+' '+mmss(f)+'–'+mmss(to)+'" style="width:'+((to-f)/dur*100)+'%;background:'+COLORS[i%COLORS.length]+'">'+x.n+'</i>';pos=to;});
   // 飞书纪要式（Aaron 09-22 定）：标题自动编号（1 速览 / 2 议题 / 3 待办，议题再编 2.1 2.2），结论加粗，待办是表。
-  // 一个议题一张卡片：速览只留结论和状态，完整才展开要点和原话。开关只有 #bf-view 那一个。
-  const quote=seg=>seg?(segText.get(String(seg))||''):'';
-  const card=(c,i)=>{const head=ov.topics[i]||{},v=decOf(b,c),editing=decEditing.has(String(c.n));
-    const badge=editing
-      ? '<span class="bf-dec-pick">'+DEC.map(d=>'<button type="button" class="bf-opt'+(d[0]===v?' on':'')+'" data-dec-set="'+c.n+'|'+d[0]+'">'+esc(uiLang==='en'?d[1]:d[0])+'</button>').join('')+'</span>'
-      : '<button type="button" class="bf-dec '+decClass(v)+'" data-dec="'+c.n+'" title="'+esc(t('decHint'))+'">'+esc(decLabel(v))+'</button>';
-    return '<div class="bf-card" data-topic="'+c.n+'"><h3><span class="fs-n sub">2.'+(i+1)+'</span><span class="bf-ttl">'+nm(head.title||'',map)+'</span>'+badge+(head.to?'<span class="bf-dur">'+mmss(head.from||0)+'–'+mmss(head.to)+'</span>':'')+'</h3>'
-      +'<div class="bf-key"><b>'+esc(t('concl'))+(c.conclusion?nm(c.conclusion,map):esc(t('noConc')))+'</b></div>'
-      +(viewFull?'<ul>'+(c.points||[]).map(x=>'<li>'+nm(x.text,map)+tbtn(x.at,x.seg)+(quote(x.seg)?'<div class="bf-quote">「'+nm(quote(x.seg),map)+'」</div>':'')+'</li>').join('')+'</ul>'
-        +(c.open&&c.open.length?'<div class="bf-open">'+esc(t('open'))+c.open.map(x=>nm(x,map)).join('；')+'</div>':''):'')
-      +'</div>';};
+  // 议题表（Aaron 09-24 13:58 批「议题改表」、14:05「不要详细议题」）：一行一个议题，五列一句话，不再有展开卡片。
+  const badge=(n,v)=>decEditing.has(String(n))
+      ? '<span class="bf-dec-pick">'+DEC.map(d=>'<button type="button" class="bf-opt'+(d[0]===v?' on':'')+'" data-dec-set="'+n+'|'+d[0]+'">'+esc(uiLang==='en'?d[1]:d[0])+'</button>').join('')+'</span>'
+      : '<button type="button" class="bf-dec '+decClass(v)+'" data-dec="'+n+'" title="'+esc(t('decHint'))+'">'+esc(decLabel(v))+'</button>';
+  const cell=x=>x?'<span title="'+esc(nmTxt(x,map))+'">'+nm(oneLine(x),map)+'</span>':'<span class="bf-sug">—</span>';
+  const rows=topicRows(b);
   $('#bf-sum').innerHTML=
     (b.meta&&b.meta.scope?'<p class="bf-scope">'+nm(b.meta.scope,map)+'</p>':'')
     +'<section class="fs"><h3 class="fs-h"><span class="fs-n">1</span>'+esc(t('keyc'))+'</h3>'
       +(ov.conclusions.length?ov.conclusions.slice(0,3).map(c=>'<div class="bf-key"><b>'+nm(c,map)+'</b></div>').join(''):'<p class="bf-note">'+esc(t('noKeyc'))+'</p>')+'</section>'
-    +'<section class="fs"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(t('topics'))+'</h3>'
-      +'<div class="td-wrap"><table class="bf-table bf-tt"><thead><tr><th>#</th><th>'+esc(T('议题','Topic'))+'</th><th>'+esc(T('结论','Conclusion'))+'</th><th>'+esc(T('状态','Status'))+'</th><th>'+esc(T('未对齐','Open'))+'</th><th>'+esc(T('下一步','Next'))+'</th></tr></thead><tbody>'
-      +ov.topics.map((x,i)=>{const c=(b.topics||[])[i]||{},td=(b.todos||[]).filter(t=>t.topic===x.n||t.topic===i+1);
-        return '<tr><td class="td-n"><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span></td><td><b>'+nm(x.title,map)+'</b><div class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</div></td>'
-          +'<td>'+(c.conclusion?nm(c.conclusion,map):'<span class="bf-sug">'+esc(t('noConc'))+'</span>')+'</td>'
-          +'<td><span class="bf-tag '+(c.decision==='已一致'?'ok':c.decision==='有分歧'?'bad':'')+'">'+esc(c.decision||'—')+'</span></td>'
-          +'<td>'+((c.open||[]).length?(c.open||[]).map(o=>nm(o,map)).join('<br>'):'<span class="bf-sug">—</span>')+'</td>'
-          +'<td>'+(td.length?td.map(t=>nm(t.what,map)+(t.owner?' <span class="bf-sug">· '+esc(t.owner)+'</span>':'')).join('<br>'):'<span class="bf-sug">—</span>')+'</td></tr>';}).join('')
-      +'</tbody></table></div><div class="bf-bar">'+bar+'</div>'
-      +'<details class="bf-detail"'+(viewFull?' open':'')+'><summary class="fs-h">'+esc(t('detail'))+' <span class="bf-sug">'+(b.topics||[]).length+'</span></summary>'+(b.topics||[]).map(card).join('')+'</details></section>'
+    +(rows.length?'<section class="fs"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(t('topics'))+'</h3>'
+      +'<div class="td-wrap"><table class="bf-table bf-tt"><thead><tr><th>'+esc(T('议题','Topic'))+'</th><th>'+esc(T('结论','Conclusion'))+'</th><th>'+esc(T('状态','Status'))+'</th><th>'+esc(T('未对齐','Open'))+'</th><th>'+esc(T('下一步','Next'))+'</th></tr></thead><tbody>'
+      +rows.map((r,i)=>'<tr data-topic="'+r.n+'"><td><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+r.n+'</span> <b>'+cell(r.title)+'</b></td><td>'+cell(r.conclusion)+'</td><td>'+badge(r.n,r.status)+'</td><td>'+cell(r.open)+'</td><td>'+cell(r.next)+'</td></tr>').join('')
+      +'</tbody></table></div><div class="bf-bar">'+bar+'</div></section>':'')
     +'<section class="fs" id="bf-brain"><h3 class="fs-h"><span class="fs-n">3</span>'+esc(T('项目状态更新','Project state updates'))+' <span class="bf-sug" id="bf-upd-n"></span></h3><div id="bf-updates"></div></section>';
-  const view=$('#bf-view');view.textContent=viewFull?t('showBrief'):t('showFull');view.onclick=()=>{setViewFull(!viewFull);render(record);};
+  $('#bf-view').hidden=true; // 速览 / 完整开关跟着详细议题一起退场
   $('#bf-sum').querySelectorAll('[data-dec]').forEach(el=>el.onclick=()=>{decEditing.add(el.dataset.dec);render(record);});
   $('#bf-sum').querySelectorAll('[data-dec-set]').forEach(el=>el.onclick=()=>{const [n,v]=el.dataset.decSet.split('|');saveDecision(Number(n),v);});
   paintActions();
@@ -625,7 +619,7 @@ async function saveDecision(n,v){
   catch(e){
     if(before===undefined)delete record.brief.decisions[key];else record.brief.decisions[key]=before;
     render(record);
-    const head=document.querySelector('.bf-card[data-topic="'+n+'"] h3');
+    const head=document.querySelector('.bf-tt tr[data-topic="'+n+'"] td:nth-child(3)');
     if(head){const note=document.createElement('span');note.className='bf-tag bad';note.textContent=t('noSave');head.appendChild(note);}
   }
 }

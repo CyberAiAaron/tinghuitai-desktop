@@ -111,17 +111,13 @@ test('会中议题摘要：合并进来的重述不单独占一行，起止按�
   assert.match(html,/transcriptEdits:cur\?\.transcriptEdits\|\|\[\],outline\}\)\)/);
 });
 
-test('速览 / 完整：只有一个切换入口，状态记在本机且读写都包了 try/catch',()=>{
-  assert.equal((archiveHtml.match(/id="bf-view"/g)||[]).length,1);
-  assert.equal((archiveJs.match(/setViewFull\(/g)||[]).length,1);        // 全页只有一处在切这个状态
-  assert.match(archiveJs,/try\{viewFull=localStorage\.getItem\('tht-archive-view'\)==='full';\}catch/);
-  assert.match(archiveJs,/try\{localStorage\.setItem\('tht-archive-view'[^}]*\}catch/);
-  assert.match(archiveJs,/viewFull\?'<ul>'/);                           // 速览不渲染要点
-  assert.doesNotMatch(archiveHtml,/<details[^>]*id="bf-(sum|topics)/);  // 没有第二套展开控件
+test('详细议题展开已下线：没有卡片、没有速览/完整开关（Aaron 09-24 14:05）',()=>{
+  assert.doesNotMatch(archiveJs,/bf-detail|setViewFull|viewFull\?'<ul>'/);
+  assert.doesNotMatch(archiveHtml,/<details[^>]*id="bf-(sum|topics)/);
 });
 
 test('页面契约：议题带状态徽标可点改，要点按段落 id 跳原句并高亮 2 秒',()=>{
-  assert.match(archiveJs,/data-dec="'\+c\.n/);
+  assert.match(archiveJs,/data-dec="'\+n\+/);
   assert.match(archiveJs,/data-dec-set/);
   assert.match(archiveJs,/function jumpTo\(sec,seg\)/);
   assert.match(archiveJs,/#transcript p\[data-seg\]/);
@@ -135,7 +131,6 @@ test('原话表在渲染总结之前就备好：直接以「完整」状态打�
   const paint=archiveJs.indexOf('renderBrief(s);');
   assert.ok(build>0&&paint>build,'segText 必须在 renderBrief 之前填好，否则首屏没有原话');
   assert.equal((archiveJs.match(/segText=new Map\(\)/g)||[]).length,2);   // 一处声明、一处每场重建
-  assert.match(archiveJs,/const quote=seg=>seg\?\(segText\.get/);
 });
 
 test('窄屏不横向滚动：认人区那几行原话允许收缩',()=>{

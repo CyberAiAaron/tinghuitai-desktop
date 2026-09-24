@@ -79,11 +79,13 @@
     return '<div class="v2-md" data-path="insights_md">'+mdHtml(md)+'</div>'
       +view.insights.map(function(i){return card(i,'insights.'+i.n);}).join('');
   }
+  const TT_CLS={'已一致':'ok','待讨论':'open','有分歧':'bad','搁置':'mute'};
   function minutesHtml(m){
     return '<section class="v2-min"><h2>会议纪要<span class="sp"></span><button type="button" class="btn sm" id="v2-copy">复制纪要</button><button type="button" class="btn sm" id="v2-share">发到群</button></h2>'
       +(m.topic?ed('minutes.topic','',m.topic,'p'):'')
       +(m.conclusions.length?'<h3>结论</h3><ol>'+m.conclusions.map((c,k)=>'<li data-path="summary.'+k+'">'+esc(c)+'</li>').join('')+'</ol>':'')
-      +(m.sections.length?'<h3>各议题</h3><ul>'+m.sections.map(s=>'<li><b>'+esc(s.title)+'</b>：'+esc(s.conclusion)+'</li>').join('')+'</ul>':'')
+      +((m.topicTable||[]).length?'<h3>议题</h3><div class="v2-tt-wrap"><table class="v2-tt"><thead><tr><th>议题</th><th>结论</th><th>状态</th><th>未对齐</th><th>下一步</th></tr></thead><tbody>'
+        +m.topicTable.map(r=>'<tr><td><b>'+esc(r.title)+'</b></td><td>'+(esc(r.conclusion)||'—')+'</td><td><span class="v2-st v2-st-'+TT_CLS[r.status]+'">'+esc(r.status)+'</span></td><td>'+(esc(r.open)||'—')+'</td><td>'+(esc(r.next)||'—')+'</td></tr>').join('')+'</tbody></table></div>':'')
       +(m.todos.length?'<h3>待办</h3><ul>'+m.todos.map(t=>'<li>'+esc(t.text)+(t.owner&&t.owner!=='未指定'?' <span class="who">— '+esc(t.owner)+'</span>':'')+'</li>').join('')+'</ul>':'')
       +(m.participants.length?'<h3>参会人</h3><p>'+esc(m.participants.join('、'))+'</p>':'')
       +'<p class="v2-msg" id="v2-min-msg" hidden></p></section>';
@@ -91,7 +93,7 @@
   function minutesMd(m){
     const L=['# '+title,'',m.topic||''];
     if(m.conclusions.length){L.push('','## 结论');m.conclusions.forEach((c,k)=>L.push((k+1)+'. '+c));}
-    if(m.sections.length){L.push('','## 各议题');m.sections.forEach(s=>L.push('- **'+s.title+'**：'+s.conclusion));}
+    if((m.topicTable||[]).length){const c=x=>String(x||'—').replace(/\|/g,'／');L.push('','## 议题','','| 议题 | 结论 | 状态 | 未对齐 | 下一步 |','|---|---|---|---|---|');m.topicTable.forEach(r=>L.push('| '+[r.title,r.conclusion,r.status,r.open,r.next].map(c).join(' | ')+' |'));}
     if(m.todos.length){L.push('','## 待办');m.todos.forEach(t=>L.push('- '+t.text+(t.owner&&t.owner!=='未指定'?'（'+t.owner+'）':'')));}
     if(m.participants.length)L.push('','参会人：'+m.participants.join('、'));
     return L.join('\n').trim()+'\n';

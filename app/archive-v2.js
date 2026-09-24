@@ -59,6 +59,22 @@ function parseSummary(md) {
   return { topic, sections };
 }
 
+// 议题表（Aaron 09-24 13:58 批「议题改表」，14:05「不要详细议题」）：议题 / 结论 / 状态 / 未对齐 / 下一步，每格一句话。
+// 数据全部复用 brief：overview.topics（标题）+ topics（结论、decision、open）+ overview.todos（按 topic 归属的下一步）+ decisions（人手改过的状态）。不新增模型调用。
+const TOPIC_STATUS = ['已一致', '待讨论', '有分歧', '搁置'];
+const cellLine = v => { const s = oneLine(v); const m = /^(.+?[。；;！!？?])/.exec(s); return clip(m ? m[1].replace(/[。；;]$/, '') : s, 40); };
+function topicTable(b) {
+  const ov = (b && b.overview) || {}, cards = (b && b.topics) || [], todos = ov.todos || [], dec = (b && b.decisions) || {};
+  return (ov.topics || []).map((h, i) => {
+    const c = cards.find(x => x && x.n === h.n) || cards[i] || {};
+    const st = dec[String(h.n)] || c.decision;
+    const concl = c.conclusion && c.conclusion !== '未形成结论' ? c.conclusion : '';
+    return { n: h.n, title: clip(h.title, 24), conclusion: cellLine(concl), status: TOPIC_STATUS.includes(st) ? st : '待讨论',
+      open: cellLine((c.open || []).filter(Boolean)[0] || ''),
+      next: cellLine(todos.filter(t => t && t.topic === h.n).map(t => oneLine(t.what) + (oneLine(t.owner) ? '（' + oneLine(t.owner) + '）' : ''))[0] || '') };
+  }).filter(r => r.title);
+}
+
 const isHardConflict = s => !/非硬冲突|不构成硬冲突|不是硬冲突/.test(String(s || ''));
 const isUnstable = i => i.unstable === true || (typeof i.stability === 'number' && i.stability < 0.5);
 
@@ -95,7 +111,7 @@ function buildView(r) {
   const att = ((r.calendar || {}).attendees || []).filter(a => a && a.name && !a.declined).map(a => a.name);
   const participants = att.length ? att : (Array.isArray(r.participants) ? r.participants.filter(Boolean) : []);
   const minConcl = (conclusions.length ? conclusions : ps.sections.map(s => s.conclusion).filter(Boolean)).slice(0, 5);
-  const minutes = { topic: ps.topic || oneLine(ib.purpose || ''), sections: ps.sections.filter(x => x.conclusion).slice(0, 8), conclusions: minConcl, todos: todos.slice(0, 8), participants };
+  const minutes = { topic: ps.topic || oneLine(ib.purpose || ''), sections: ps.sections.filter(x => x.conclusion).slice(0, 8), topicTable: topicTable(b), conclusions: minConcl, todos: todos.slice(0, 8), participants };
   return { changes, insightsMd, insights, next, minutes };
 }
 
@@ -163,4 +179,4 @@ async function editRoute(req, res, { authed, pipeline, dataDir, log = () => {} }
   } catch (e) { return reply(e.code === 404 ? 404 : 500, { ok: false, error: String(e.message || e).slice(0, 200) }); }
 }
 
-module.exports = { buildView, applyOverrides, parseSummary, decorate, editRoute, sentState, PATH_RE };
+module.exports = { buildView, topicTable, TOPIC_STATUS, applyOverrides, parseSummary, decorate, editRoute, sentState, PATH_RE };
