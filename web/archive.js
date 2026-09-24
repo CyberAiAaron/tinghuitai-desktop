@@ -173,7 +173,14 @@ function renderBrief(s){
     +'<section class="fs"><h3 class="fs-h"><span class="fs-n">1</span>'+esc(t('keyc'))+'</h3>'
       +(ov.conclusions.length?ov.conclusions.slice(0,3).map(c=>'<div class="bf-key"><b>'+nm(c,map)+'</b></div>').join(''):'<p class="bf-note">'+esc(t('noKeyc'))+'</p>')+'</section>'
     +'<section class="fs"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(t('topics'))+'</h3>'
-      +'<ul class="bf-topics bf-topics-c">'+ov.topics.map((x,i)=>{const c=(b.topics||[])[i]||{};return '<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><div><b>'+nm(x.title,map)+'</b>'+(c.conclusion?'<div class="bf-topic-c">'+nm(c.conclusion,map)+'</div>':'')+'</div><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>';}).join('')+'</ul><div class="bf-bar">'+bar+'</div>'
+      +'<div class="td-wrap"><table class="bf-table bf-tt"><thead><tr><th>#</th><th>'+esc(T('议题','Topic'))+'</th><th>'+esc(T('结论','Conclusion'))+'</th><th>'+esc(T('状态','Status'))+'</th><th>'+esc(T('未对齐','Open'))+'</th><th>'+esc(T('下一步','Next'))+'</th></tr></thead><tbody>'
+      +ov.topics.map((x,i)=>{const c=(b.topics||[])[i]||{},td=(b.todos||[]).filter(t=>t.topic===x.n||t.topic===i+1);
+        return '<tr><td class="td-n"><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span></td><td><b>'+nm(x.title,map)+'</b><div class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</div></td>'
+          +'<td>'+(c.conclusion?nm(c.conclusion,map):'<span class="bf-sug">'+esc(t('noConc'))+'</span>')+'</td>'
+          +'<td><span class="bf-tag '+(c.decision==='已一致'?'ok':c.decision==='有分歧'?'bad':'')+'">'+esc(c.decision||'—')+'</span></td>'
+          +'<td>'+((c.open||[]).length?(c.open||[]).map(o=>nm(o,map)).join('<br>'):'<span class="bf-sug">—</span>')+'</td>'
+          +'<td>'+(td.length?td.map(t=>nm(t.what,map)+(t.owner?' <span class="bf-sug">· '+esc(t.owner)+'</span>':'')).join('<br>'):'<span class="bf-sug">—</span>')+'</td></tr>';}).join('')
+      +'</tbody></table></div><div class="bf-bar">'+bar+'</div>'
       +'<details class="bf-detail"'+(viewFull?' open':'')+'><summary class="fs-h">'+esc(t('detail'))+' <span class="bf-sug">'+(b.topics||[]).length+'</span></summary>'+(b.topics||[]).map(card).join('')+'</details></section>'
     +'<section class="fs" id="bf-brain"><h3 class="fs-h"><span class="fs-n">3</span>'+esc(T('项目状态更新','Project state updates'))+' <span class="bf-sug" id="bf-upd-n"></span></h3><div id="bf-updates"></div></section>';
   const view=$('#bf-view');view.textContent=viewFull?t('showBrief'):t('showFull');view.onclick=()=>{setViewFull(!viewFull);render(record);};
