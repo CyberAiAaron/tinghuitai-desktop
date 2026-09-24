@@ -1257,7 +1257,11 @@ function afterArchive(sid){
       .catch(e=>{log('补齐会议记忆失败 '+sid+' '+e.message);scheduleAttentionCheck();});
   }catch(e){log('补齐会议记忆没起来 '+sid+' '+e.message);}},2000).unref?.();
   // REQ-009：会后处理台的待办卡、草稿、预研究，归档跑完就在后台备好，不等他点开页面。
-  setTimeout(()=>{try{ensureActionsFor(sid);}catch(e){log('会后处理台没起来 '+sid+' '+e.message);}},5000).unref?.();
+  // 09-25 实测：5 秒时整理结果（brief）常常还没出，原来查一次就放弃，不点开页面就永远没有待办。改成每 15 秒再查，最多 30 分钟。
+  const actionsStart=Date.now();
+  const tryActions=()=>{let ok=false;try{ok=ensureActionsFor(sid)!=='wait';}catch(e){log('会后处理台没起来 '+sid+' '+e.message);return;}
+    if(!ok&&Date.now()-actionsStart<Number(process.env.THT_ACTIONS_WAIT_MS||1800000))setTimeout(tryActions,Number(process.env.THT_ACTIONS_POLL_MS||15000)).unref?.();};
+  setTimeout(tryActions,5000).unref?.();
   dmPushWhenReady(sid);
 }
 // 会后私聊推送（app/dm-push.js）：等会后整理（brief）出来再发，每 30 秒看一次，最多等 45 分钟。收据在 dm-push 里，重跑不重发。
@@ -1288,7 +1292,7 @@ function actionsOpts(sid){
 // brief 还没出来就先不跑：没有待办也没有建议，生成的是一份空卡片列表，反倒要他再点一次。
 function ensureActionsFor(sid){
   const opts=actionsOpts(sid);
-  if(!opts.enhanced||!((opts.enhanced.brief||{}).overview))return false;
+  if(!opts.enhanced||!((opts.enhanced.brief||{}).overview))return 'wait';
   return require('./actions').ensureBackground(opts);
 }
 // P-11：抽卡失败过的会，后台自己补跑，不用他去点。
