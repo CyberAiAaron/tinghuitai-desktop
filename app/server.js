@@ -279,6 +279,7 @@ class Session {
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
     try { this.audioFd = fs.openSync(this.audioPath, 'a'); } catch (e) { this.audioFd = null;this.audioSaveError='Mac 录音文件无法创建，请保留并导出浏览器录音备份。'; log('audio open fail ' + e.message); }
     this.lastTriageIndex = 0; this.charsSinceTriage = 0; this.triaging = false; this.llmTimeoutStreak = 0; this.llmSkip = 0; this.finalized = false; this.graceTimer = null;
+    this.cardClockStart = Date.now();   // 开场热身起点（live-insight.inWarmup）：头 5 分钟不出卡
     this.lastCardAt = 0;   // 上一张真实洞察卡出现的时间（Aaron 2026-09-24：出卡后 5 分钟冷却）。NONE 不算出卡，不写这个字段。
     this.cardTimes = [];   // 最近出卡时间戳（毫秒），配合 liveInsight.overBurstCap 卡「任意滚动 10 分钟不超过 2 张」（Codex 审计 2026-09-24）
     this.dedupSeen = new Map();   // final 幂等去重：key(见 isDuplicateFinal) -> 首次出现时间，8s 内重复的 final 只广播/入库一次（2026-09-04 0800 信 补2）
@@ -861,6 +862,7 @@ class Session {
     if (this.finalized || ((!gate && this.charsSinceTriage < 60) || this.transcript.length <= this.lastTriageIndex) || !this.transcript.length) return;
     // 冷却（Aaron 2026-09-24：出卡后 5 分钟内不再触发下一次分诊调用）：不推进 lastTriageIndex / charsSinceTriage，
     // 冷却期间的转写增量原样攒着，冷却期满第一次调用的 windowRows 自动把这段时间整段带上，不丢。
+    if (process.env.LIVE_CARD_WARMUP !== 'off' && liveInsight.inWarmup(this.cardClockStart)) return;   // 开场 5 分钟不出卡，增量攒着
     if (liveInsight.inCooldown(this.lastCardAt)) return;
     if (liveInsight.overBurstCap(this.cardTimes, Date.now())) return;   // 滚动 10 分钟已出够 2 张，这轮先不触发
     await this.runTriageBody(gate);

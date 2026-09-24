@@ -8,6 +8,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 export PATH="/Users/aaron.wang/.local/bin:$PATH"
+export LIVE_CARD_WARMUP=off   # 老测试一开会就要分诊；热身本身由 tests/live-warmup.test.js 单测
 OUT="${THT_TEST_OUT:-.tmp/test.out}"; mkdir -p "$(dirname "$OUT")"
 MODE="changed"; MSG=""; FILES=()
 case "${1:-}" in

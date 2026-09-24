@@ -20,6 +20,9 @@ function similar(a, b) { if (similar6(a, b)) return true; const x = norm(a), y =
 // 调用方（server.js runTriage）负责：冷却期间直接 return，不推进 lastTriageIndex，增量自然攒到下一次 windowRows 里一次性读入。
 const CARD_COOLDOWN_MS = 5 * 60 * 1000;
 function inCooldown(lastCardAt, now = Date.now()) { return !!lastCardAt && (now - lastCardAt) < CARD_COOLDOWN_MS; }
+// 开场热身（2026-09-25，回放门槛：第一张卡不受冷却时 25 分钟的会能出 6 张 = 2.3 张/10min，超过 1–2 的目标）：
+// 开会头 5 分钟不出卡，第一张也等满一个冷却期。头几分钟多是寒暄和铺垫，攒着一起喂给第一轮。
+function inWarmup(startedAt, now = Date.now()) { return !!startedAt && (now - startedAt) < CARD_COOLDOWN_MS; }
 
 // 滚动窗口 burst 上限（Codex 审计 2026-09-24：生产默认口径重放实测滚动 10 分钟峰值到 5 张，单靠「上一张卡后冷 5 分钟」防不住
 // 密集触发——门卫连续命中、sweep 补漏轮跟门卫轮前后脚都可能各出一张，5 分钟冷却只挡得住「同一张卡的下一轮」，挡不住「这 10 分钟已经出过几张」。
@@ -152,6 +155,6 @@ function normalize(parsed, { existing = [], enUI = false } = {}) {
   return out;
 }
 
-module.exports = { WINDOW_SEC, MAX_OUTPUT_TOKENS, MD_MAX, FIRST_MAX, TEXT_MAX, JUNK, RECAP, ASSIGN_RE, CARD_COOLDOWN_MS,
+module.exports = { inWarmup, WINDOW_SEC, MAX_OUTPUT_TOKENS, MD_MAX, FIRST_MAX, TEXT_MAX, JUNK, RECAP, ASSIGN_RE, CARD_COOLDOWN_MS,
   CARD_BURST_LIMIT, CARD_BURST_WINDOW_MS,
   systemPrompt, userPrompt, windowRows, parse, normalize, actionFrom, plainFirst, inCooldown, overBurstCap };
