@@ -107,6 +107,25 @@ async function messageSend({ openId, markdown }, opts = {}) {
   return { ok: true, messageId: String(d.message_id || (d.message && d.message.message_id) || '') };
 }
 
+// 私聊发一张交互卡片（会后自动推送给本人用，2026-09-25）。card = 卡片 JSON 对象；idem = 飞书侧幂等键（≤50 字）。
+async function cardSend({ openId, card, idem = '' }, opts = {}) {
+  if (!/^ou_[A-Za-z0-9]{1,64}$/.test(String(openId || ''))) return { ok: false, error: '收件人 open_id 不像样' };
+  if (!card || typeof card !== 'object') return { ok: false, error: '卡片是空的' };
+  const args = ['im', '+messages-send', '--user-id', openId, '--msg-type', 'interactive', '--content', JSON.stringify(card), '--as', 'user', '--format', 'json'];
+  if (idem) args.push('--idempotency-key', clip(String(idem), 50));
+  const r = await runCli(args, { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const d = (r.json && r.json.data) || {};
+  return { ok: true, messageId: String(d.message_id || (d.message && d.message.message_id) || '') };
+}
+
+// 现在 lark-cli 登录的是谁（open_id）。拿不到回 ''。
+async function selfOpenId(opts = {}) {
+  const r = await runCli(['contact', '+get-user', '--as', 'user', '--format', 'json'], { timeout: 25000, ...opts });
+  const u = r.ok && r.json && r.json.data && r.json.data.user;
+  return (u && u.open_id) ? String(u.open_id) : '';
+}
+
 // 新建一份 XML 文档（本人身份，天然 owner）。返回 {ok,token,url}。
 async function docCreate({ title, content }, opts = {}) {
   const t = clip(String(title || '').trim(), 120);
@@ -131,4 +150,4 @@ async function docAppend({ token, content }, opts = {}) {
   return { ok: true, revision: doc.revision_id == null ? '' : String(doc.revision_id) };
 }
 
-module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, docCreate, docAppend, clip, norm };
+module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, cardSend, selfOpenId, docCreate, docAppend, clip, norm };

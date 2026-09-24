@@ -1254,6 +1254,16 @@ function afterArchive(sid){
   }catch(e){log('补齐会议记忆没起来 '+sid+' '+e.message);}},2000).unref?.();
   // REQ-009：会后处理台的待办卡、草稿、预研究，归档跑完就在后台备好，不等他点开页面。
   setTimeout(()=>{try{ensureActionsFor(sid);}catch(e){log('会后处理台没起来 '+sid+' '+e.message);}},5000).unref?.();
+  dmPushWhenReady(sid);
+}
+// 会后私聊推送（app/dm-push.js）：等会后整理（brief）出来再发，每 30 秒看一次，最多等 45 分钟。收据在 dm-push 里，重跑不重发。
+const dmPush=require('./dm-push');
+function dmPushWhenReady(sid,tries=0){
+  let st='none';try{st=meetingPipeline.briefState(sid).state;}catch(e){}
+  if(st==='done'){const r=meetingPipeline.result(sid)||{};const t=readTitles()[String(sid)]||{};
+    dmPush.push({sessionId:sid,title:t.topicTitle||r.topicTitle||r.title||'',result:r,env:loadEnv(),dataDir:DATA,pageBase:'http://127.0.0.1:'+PORT,lark:require('./tools/lark-cli'),log}).catch(()=>{});return;}
+  if(st==='failed'||tries>=90)return;
+  setTimeout(()=>dmPushWhenReady(sid,tries+1),30000).unref?.();
 }
 // 会后处理台：这一场的参会人（对上的那场日历 + 已记下的参会人）和生成参数在这里拼一次，
 // 后台自动跑和页面来问走同一条路，免得两处各拼一份、结果还不一样。
