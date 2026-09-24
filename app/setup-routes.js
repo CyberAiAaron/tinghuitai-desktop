@@ -53,7 +53,7 @@ module.exports=async function(req,res,u,{isLocal,localReason,settings,active,tes
   const r=await require('./cli-llm').probe(kind,settings.dataDir);
   if(r.ok){c.LLM_PROVIDER=kind;settings.save(c);}
   const msg=r.ok?({codex:'Codex 已就绪，用的是你 ChatGPT 账号的额度，不用另外付钱。',claude:'Claude Code 已就绪，用的是你的 Claude 订阅，不用另外付钱。'})[kind]
-    :(r.reason==='not_installed'?'没在这台电脑上找到它。':'找到了程序，但它还没登录（或这次没跑通）。请先打开它登录一次，再回来点这里。');
+    :(r.reason==='not_installed'?'没在这台电脑上找到它。':({codex:'找到了 Codex，但还没登录。打开「终端」，输入 codex 回车，按提示用 ChatGPT 账号登录，再回来点这里。',claude:'找到了 Claude Code，但还没登录。打开「终端」，输入 claude 回车，按提示登录 Claude 账号，再回来点这里。'})[kind]);
   return json(r.ok?200:200,{ok:!!r.ok,message:msg,reason:r.reason||''});
  }
  if(req.method!=='POST'||req.headers['content-type']!=='application/json'||req.headers['x-tht-token']!==c.RELAY_TOKEN)return json(403,{error:'请从本机设置页面操作'});
