@@ -12,18 +12,30 @@ const root = path.join(__dirname, '..');
 const L = require(path.join(root, 'app/live-insight.js'));
 const server = fs.readFileSync(path.join(root, 'app/server.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
+const replay = fs.readFileSync(path.join(root, 'scripts/replay-insight.js'), 'utf8');
 
-test('① 提示词：门槛、不算的、每次最多 1 条、四种 do、sweep 只补漏；英文版同样', () => {
+test('① 提示词：自由 markdown、没有模板、NONE、≤120 字、@人名 约定、sweep 只补漏；英文版同样', () => {
   const zh = L.systemPrompt({ enUI: false });
-  for (const s of ['改变 Aaron 下一句该说什么', '每次最多 1 条', '复述别人刚说的话', '要点总结', '进展汇报', '无法核实', 'insight ≤40 字', 'why ≤60 字', 'label ≤8 字', '"do":"ask|todo|note|handoff"', '没有明确动作就不给 action', 'log']) assert.ok(zh.includes(s), 'zh 缺：' + s);
+  for (const s of ['自由 markdown', '没有模板', '不要「洞察 / 原因 / 行动」这种表头', '≤120 字', '`@人名：` 开头的一行', 'NONE', '不要 JSON']) assert.ok(zh.includes(s), 'zh 缺：' + s);
+  assert.ok(!/"do"|ask\|todo\|note\|handoff|insight ≤40 字/.test(zh), '旧的 JSON schema 不该再出现');
   assert.ok(!zh.includes('补漏'), '非 sweep 轮没有补漏那句');
   assert.ok(L.systemPrompt({ enUI: false, sweep: true }).includes('定时补漏'));
   const en = L.systemPrompt({ enUI: true });
-  for (const s of ['At most 1 insight per call', 'restating what was just said', 'ask|todo|note|handoff', 'insight ≤40 chars']) assert.ok(en.includes(s), 'en 缺：' + s);
-  const u = L.userPrompt({ packText: '【项目状态】X', brief: '参会：Hannah', existing: ['A 已出过'], log: ['日志 1'], recent: '[10s]S1:你好', gateBlock: '\n\n【门卫标记】\n- decision：x', enUI: false });
-  assert.ok(u.indexOf('【项目状态】X') < u.indexOf('【本场背景') && u.indexOf('【已出过的洞察') < u.indexOf('【门卫标记】') && u.indexOf('【门卫标记】') < u.indexOf('【最新转写'), '顺序：资料 → 背景 → 已出过 → 门卫标记 → 转写');
-  assert.ok(u.includes('- A 已出过') && u.includes('- 日志 1') && u.includes('[10s]S1:你好'));
-  assert.ok(L.userPrompt({ recent: 'x' }).includes('（还没有）'), '没出过洞察时写「还没有」');
+  for (const s of ['free Markdown', 'no template', 'output exactly: NONE', '`@<name>:`']) assert.ok(en.includes(s), 'en 缺：' + s);
+  const u = L.userPrompt({ packText: '【项目状态】X', brief: '参会：Hannah', existing: ['A 已说过'], recent: '[10s]S1:你好', gateBlock: '\n\n【门卫标记】\n- decision：x', enUI: false });
+  assert.ok(u.indexOf('【项目状态】X') < u.indexOf('【本场背景') && u.indexOf('【已经说过的') < u.indexOf('【门卫标记】') && u.indexOf('【门卫标记】') < u.indexOf('【最新转写'), '顺序：资料 → 背景 → 已说过 → 门卫标记 → 转写');
+  assert.ok(u.includes('- A 已说过') && u.includes('[10s]S1:你好'));
+  assert.ok(L.userPrompt({ recent: 'x' }).includes('（还没有）'), '还没说过时写「还没有」');
+});
+
+test('回放报告：按 10 分钟统计节奏、正文字符分布、@人名行动数，并原样输出 10 张代表卡', () => {
+  assert.match(replay, /Math\.floor\(\(Number\(at\) \|\| 0\) \/ 600\)/, '10 分钟桶');
+  assert.match(replay, /charStats:\s*\{ min:.*median:.*p90:.*max:/s, '字符分布');
+  assert.match(replay, /withAssignee:/, '@人名行动数');
+  assert.match(replay, /representative\(state\.factchecks, 10\)/, '固定抽 10 张代表卡');
+  assert.match(replay, /'## 10 张代表卡片原文'/);
+  assert.match(replay, /x\.md/, '报告保留卡片完整 markdown');
+  assert.doesNotMatch(replay, /rawInsight: parsed && parsed\.insight/, '不再依赖旧 JSON insight 字段');
 });
 
 test('② windowRows：增量 ∪ 最近 60 秒 ∪ 命中 ±2，升序去重不越界', () => {
@@ -36,41 +48,79 @@ test('② windowRows：增量 ∪ 最近 60 秒 ∪ 命中 ±2，升序去重不
   assert.deepEqual(L.windowRows([{ text: 'a' }, { text: 'b' }], { endIndex: 2, lastTriageIndex: 2 }), [0, 1], '没有 at 的行按都在窗口内');
 });
 
-test('③ parse：新结构 / 代码围栏 / 旧结构兼容 / 坏 JSON', () => {
-  const j = L.parse('```json\n{"insight":{"insight":"A","why":"B","kind":"冲突"},"log":["x","",null]}\n```');
-  assert.deepEqual(j, { insight: { insight: 'A', why: 'B', kind: '冲突' }, log: ['x'] });
-  assert.deepEqual(L.parse('{"insight":null,"log":[]}'), { insight: null, log: [] });
-  const legacy = L.parse('{"highlights":[{"text":"要点 1"}],"todos":[],"insights":[]}');
-  assert.deepEqual(legacy, { insight: null, log: ['要点 1'] }, '旧 fake 模型的 highlights 当日志');
-  const legacy2 = L.parse('{"insights":[{"claim":"会上说 X；决策板记 Y","why":"省翻决策板","type":"conflict"}]}');
-  assert.equal(legacy2.insight.insight, '会上说 X；决策板记 Y'); assert.equal(legacy2.insight.kind, 'conflict');
-  assert.equal(L.parse('not json'), null); assert.equal(L.parse(''), null);
-  assert.deepEqual(L.parse('前面有话 {"insight":null,"log":["a"]} 后面有话'), { insight: null, log: ['a'] }, '抢救大括号内的 JSON');
+test('③ parse：整段 markdown 原样回；代码围栏 / NONE / 旧 JSON 兼容；空输入 null', () => {
+  assert.deepEqual(L.parse('回滚链路没人认领。\n\n@Abel Mei：周五前给方案'), { md: '回滚链路没人认领。\n\n@Abel Mei：周五前给方案' });
+  assert.deepEqual(L.parse('```markdown\n**结论**在这\n```'), { md: '**结论**在这' }, '去代码围栏');
+  assert.deepEqual(L.parse('NONE'), { md: '' }); assert.deepEqual(L.parse('none.'), { md: '' });
+  assert.equal(L.parse(''), null); assert.equal(L.parse(null), null);
+  assert.deepEqual(L.parse('{"insight":{"insight":"会上说 X，决策板记 Y","why":"省翻决策板"},"log":[]}'), { md: '会上说 X，决策板记 Y\n\n省翻决策板' }, '旧 JSON 抽正文当 markdown');
+  assert.deepEqual(L.parse('{"insight":null}'), { md: '' });
 });
 
-test('④ normalize：好卡通过、字段截断、动作校验；复述 / 无法核实 / 重复丢；日志去重封顶', () => {
-  const ok = L.normalize({ insight: { insight: '会上说屏幕比例照 Mac，决策板 D2 记的是阔屏直板', why: '这会推翻 09-23 决策板 D2 的倾向，他现在该拦一句', kind: '冲突', action: { label: '问一句', do: 'ask', text: '我们是要改 D2 的阔屏直板倾向吗？' } }, log: ['ROI 图片识别失败后要有回滚', 'ROI 图片识别失败后要回滚', '第三条日志内容'] }, { existing: [], logExisting: [] });
-  assert.ok(ok.insight); assert.equal(ok.insight.type, 'conflict', '冲突类标 conflict（推送白名单只认它）'); assert.equal(ok.insight.label, '冲突');
-  assert.equal(ok.insight.claim, '会上说屏幕比例照 Mac，决策板 D2 记的是阔屏直板'); assert.equal(ok.insight.kind, 'insight'); assert.equal(ok.insight.live, 2);
-  assert.deepEqual(ok.insight.action, { do: 'ask', label: '问一句', text: '我们是要改 D2 的阔屏直板倾向吗？', args: {} });
-  assert.deepEqual(ok.log, ['ROI 图片识别失败后要有回滚', '第三条日志内容'], '日志：近似的合并，最多 2 条');
-  // 截断：insight 40、why 60、label 8
-  const long = L.normalize({ insight: { insight: '一'.repeat(50), why: '二'.repeat(70), kind: '一个很长的标签超过六字', action: { label: '这个按钮的名字太长了吧', do: 'todo', text: '三'.repeat(200) } }, log: [] }, {});
-  assert.equal([...long.insight.claim].length, 40); assert.equal([...long.insight.why].length, 60); assert.equal([...long.insight.label].length, 6); assert.equal([...long.insight.action.label].length, 8); assert.equal([...long.insight.action.text].length, 160);
-  // 动作：do 不在四种里 → 没有动作；缺 label → 默认 label；缺 text → 没有动作
-  assert.deepEqual(L.normalize({ insight: { insight: '这是一条足够长的洞察句子', why: 'w', kind: 'k', action: { label: 'x', do: 'open_source', text: 't' } } }, {}).insight.action, { do: 'none', args: {} });
-  assert.equal(L.normalize({ insight: { insight: '这是一条足够长的洞察句子', why: 'w', kind: 'k', action: { do: 'todo', text: 'Cary 周五前给回滚方案' } } }, {}).insight.action.label, '加待办');
-  assert.equal(L.normalize({ insight: { insight: '这是一条足够长的洞察句子', why: 'w', kind: 'k', action: { do: 'todo', text: 'Cary 周五前给回滚方案' } } }, { enUI: true }).insight.action.label, 'To-do');
-  assert.deepEqual(L.normalize({ insight: { insight: '这是一条足够长的洞察句子', why: 'w', kind: 'k', action: { do: 'ask', text: '' } } }, {}).insight.action, { do: 'none', args: {} });
+test('④ normalize：markdown 原样当正文、claim 取第一行、@人名 出动作；复述 / 无法核实 / 太短 / 重复丢；超长截断', () => {
+  const md = '屏幕比例照 Mac 会和决策板 D2 的阔屏直板打架。\n\n@Abel Mei：今天把 D2 的倾向确认掉';
+  const ok = L.normalize({ md }, { existing: [] });
+  assert.equal(ok.insight.md, md, '整段 markdown 就是卡片正文');
+  assert.equal(ok.insight.claim, '屏幕比例照 Mac 会和决策板 D2 的阔屏直板打架。', 'claim = 第一行纯文本');
+  assert.equal(ok.insight.type, 'conflict', '正文里有「打架」→ conflict（推送白名单只认它）');
+  assert.equal(ok.insight.kind, 'insight'); assert.equal(ok.insight.live, 2);
+  assert.deepEqual(ok.insight.action, { do: 'handoff', who: 'Abel Mei', label: '交给人', text: '交给 Abel Mei：今天把 D2 的倾向确认掉', args: { person: 'Abel Mei' } });
+  assert.deepEqual(ok.log, [], '要点日志这一栏没有了');
+  // markdown 标记不影响第一行取值 / 指派行识别
+  const b = L.normalize({ md: '## 先看这一条\n- **@Hannah Yin：** 把高通路标的日期定下来' }, {});
+  assert.equal(b.insight.claim, '先看这一条');
+  assert.equal(b.insight.action.who, 'Hannah Yin');
+  // 没有 @ 行 → 没有动作
+  assert.deepEqual(L.normalize({ md: '这一条只是判断，没有要谁做什么' }, {}).insight.action, { do: 'none', args: {} });
+  // 超长截断到 MD_MAX
+  const long = L.normalize({ md: '一'.repeat(600) }, {});
+  assert.equal([...long.insight.md].length, L.MD_MAX + 1, '截到 MD_MAX 再加一个省略号');
   // 反例
-  assert.equal(L.normalize({ insight: { insight: 'Hannah 提到高通路标下月更新', why: 'w', kind: '要点' } }, {}).insight, null, '「XX 提到」是复述不是洞察');
-  assert.equal(L.normalize({ insight: { insight: '大家讨论了摄像头触发方式', why: 'w', kind: '要点' } }, {}).insight, null, '「讨论了」是复述');
-  assert.equal(L.normalize({ insight: { insight: '这个数字无法核实需要会后确认一下', why: 'w', kind: '存疑' } }, {}).insight, null, '无法核实不出');
-  assert.equal(L.normalize({ insight: { insight: '太短', why: 'w', kind: 'k' } }, {}).insight, null, '<6 字不出');
-  assert.equal(L.normalize({ insight: { insight: '会上说屏幕比例照 Mac，决策板 D2 记的是阔屏直板', why: 'w', kind: '冲突' } }, { existing: ['会上说屏幕比例照 Mac；决策板 D2 记的是阔屏直板'] }).insight, null, '同一件事换标点不再出');
-  assert.equal(L.normalize({ insight: { insight: '会上说屏幕比例照 Mac 做', why: 'w', kind: '冲突' } }, { existing: ['会上说屏幕比例照 Mac 做，决策板 D2 记的是阔屏直板'] }).insight, null, '被已出过的那条包含也算同一件事');
-  assert.deepEqual(L.normalize({ insight: null, log: ['已有的一条', '新的一条'] }, { logExisting: ['已有的一条'] }).log, ['新的一条']);
+  assert.equal(L.normalize({ md: '' }, {}).insight, null);
+  assert.equal(L.normalize({ md: 'Hannah 提到高通路标下月更新' }, {}).insight, null, '「XX 提到」是复述不是想法');
+  assert.equal(L.normalize({ md: '大家讨论了摄像头触发方式' }, {}).insight, null, '「讨论了」是复述');
+  assert.equal(L.normalize({ md: '这个数字无法核实需要会后确认一下' }, {}).insight, null, '无法核实不出');
+  assert.equal(L.normalize({ md: '太短' }, {}).insight, null, '<6 字不出');
+  assert.equal(L.normalize({ md: '屏幕比例照 Mac 会和决策板 D2 的阔屏直板打架。' }, { existing: ['屏幕比例照 Mac；会和决策板 D2 的阔屏直板打架'] }).insight, null, '同一件事换标点不再出');
   assert.deepEqual(L.normalize(null, {}), { insight: null, log: [] });
+});
+
+test('冷却：出卡后 5 分钟内不再触发，NONE 不启动，冷却期满恢复（Aaron 2026-09-24）', () => {
+  assert.equal(L.CARD_COOLDOWN_MS, 5 * 60 * 1000);
+  assert.equal(L.inCooldown(0), false, '还没出过卡（lastCardAt=0）→ 第一张卡立即出，不冷却');
+  assert.equal(L.inCooldown(undefined), false);
+  const now = 1_700_000_000_000;
+  assert.equal(L.inCooldown(now - 1000, now), true, '1 秒前刚出过卡 → 冷却中');
+  assert.equal(L.inCooldown(now - 4 * 60 * 1000, now), true, '4 分钟 → 仍在冷却');
+  assert.equal(L.inCooldown(now - 5 * 60 * 1000 + 1, now), true, '差 1ms 未满 5 分钟 → 仍冷却');
+  assert.equal(L.inCooldown(now - 5 * 60 * 1000, now), false, '整 5 分钟 → 冷却期满，恢复触发');
+  assert.equal(L.inCooldown(now - 10 * 60 * 1000, now), false, '早就过了 5 分钟 → 不冷却');
+});
+
+test('burst 上限：滚动 10 分钟已出 2 张就拦下一张，跟 5 分钟冷却各管各的（Codex 审计 2026-09-24：生产默认口径重放峰值到 5 张/10min）', () => {
+  assert.equal(L.CARD_BURST_LIMIT, 2);
+  assert.equal(L.CARD_BURST_WINDOW_MS, 10 * 60 * 1000);
+  const now = 1_700_000_000_000;
+  assert.equal(L.overBurstCap([], now), false, '还没出过卡不拦');
+  assert.equal(L.overBurstCap([now - 9 * 60 * 1000], now), false, '窗口内只有 1 张，还没到上限');
+  assert.equal(L.overBurstCap([now - 9 * 60 * 1000, now - 1 * 60 * 1000], now), true, '窗口内已有 2 张，第 3 张被拦');
+  assert.equal(L.overBurstCap([now - 11 * 60 * 1000, now - 9 * 60 * 1000], now), false, '11 分钟前那张已滚出窗口，只算窗口内 1 张');
+  assert.equal(L.overBurstCap([now - 10 * 60 * 1000, now - 1000], now), false, '差 1ms 满 10 分钟的那张已滚出窗口边界');
+});
+
+test('⑤b server.js 接线：冷却检查在推进游标之前 return，增量不丢；只有真出卡（r.insight 非空）才启动冷却，NONE 不启动', () => {
+  const runTriageSrc = server.slice(server.indexOf('async runTriage(opts)'), server.indexOf('async runTriageBody(gate)'));
+  assert.match(runTriageSrc, /if \(liveInsight\.inCooldown\(this\.lastCardAt\)\) return;/, 'runTriage 里冷却直接 return，不调用 runTriageBody');
+  // 冷却检查必须在「推进 lastTriageIndex / charsSinceTriage」之前 —— runTriage 本身不推进游标（只有 runTriageBody 推进），
+  // 所以冷却期间反复调用 runTriage 都不会动 lastTriageIndex，下一次窗口会把这段时间的转写整段带上（windowRows 的增量 ∪ 见②）。
+  assert.doesNotMatch(runTriageSrc, /this\.lastTriageIndex\s*=/, 'runTriage 本身不推进游标，冷却期的增量原样保留给下一次');
+  assert.match(server, /if \(r\.insight\) \{ this\.lastCardAt = Date\.now\(\); this\.cardTimes\.push\(this\.lastCardAt\);/, '只有真出卡（insight 非空）才记录出卡时间/入 burst 窗口，启动冷却');
+  assert.match(server, /this\.cardTimes\.push\(this\.lastCardAt\);[^\n]*\/\/[^\n]*NONE/, '注释里说明 NONE 不启动冷却（旁证：normalize 对 NONE 返回 insight:null，见③④）');
+  // this.lastCardAt / this.cardTimes 初始化（第一张卡不受冷却和 burst 限制）
+  assert.match(server, /this\.lastCardAt = 0;/);
+  assert.match(server, /this\.cardTimes = \[\];/);
+  // burst 上限也在冷却检查同一处查，跟 5 分钟冷却各管各的（Codex 审计 2026-09-24）
+  assert.match(runTriageSrc, /if \(liveInsight\.overBurstCap\(this\.cardTimes, Date\.now\(\)\)\) return;/, 'runTriage 里 burst 上限直接 return');
 });
 
 test('⑤ server.js 接线：窗口 / 提示词 / 常量 / todos 不自动抽 / 日志 log:true / 门卫轮仍走 gateWindow', () => {

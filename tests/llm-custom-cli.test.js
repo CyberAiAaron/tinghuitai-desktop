@@ -103,7 +103,7 @@ test('第三家命令行的两种接法：prompt 走参数、正文藏在 JSON �
     assert.equal(r.provider, '走参数的那家');
     assert.equal(r.degraded, false);
     const args = fs.readFileSync(path.join(cli.seen, 'args-0.txt'), 'utf8');
-    assert.match(args, /--text=你是助手/, 'system 没拼进 prompt');
+    assert.match(args, /--text=.*你是助手/s, 'system 没拼进 prompt');   // 09-24 起 system 最前面还有 THINK.md（app/think.js）
     assert.match(args, /这是本场材料/);
     assert.equal(fs.readFileSync(path.join(cli.seen, 'in-0.txt'), 'utf8'), '', 'stdin:none 时不该再从 stdin 递一遍');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }

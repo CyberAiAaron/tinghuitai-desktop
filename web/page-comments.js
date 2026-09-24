@@ -7,7 +7,7 @@
   if(!mid)return;
   const tok=()=>{let s={};try{s=JSON.parse(localStorage.getItem('tht-settings')||'{}');}catch{}return encodeURIComponent(s.relayToken||(window.THT_BOOT&&window.THT_BOOT.relayToken)||'');};
   // 能评论的块：卡片 / 条目 / 待办行 / 关键点 / 项目状态更新卡 / 逐字稿一句 / 标题
-  const BLOCKS='.bf-card,.bf-item,tr.bf-act,.bf-key,#bf-updates .upd,#transcript p,h2,h3';
+  const BLOCKS='.v2-row,.v2-md,.v2-card,.v2-ins,.v2-next,.v2-min li,.v2-min p,.bf-card,.bf-item,tr.bf-act,.bf-key,#bf-updates .upd,#transcript p,h2,h3';   // v2-* 是会后页 v2 的块（0.6.20）
   const LABEL={received:'已收到',working:'Claude 处理中',done:'已完成',failed:'没做成'};
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let comments=[],labels=LABEL;

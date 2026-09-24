@@ -133,6 +133,8 @@ const ADAPTERS = {
 // thinking：claude 命令行的思考预算（0 = 关，批 5 会中分诊用；接口那条路忽略它）。
 async function ask(env, { kind = 'post', system = '', user = '', maxTokens, dataDir, log = () => {}, fetchImpl,
   noFallback = false, skip = 0, timeoutMs = 0, temperature, json = false, thinking, tools } = {}) {   // tools === false：命令行一个工具都不给（只有 claude 命令行认；接口那条路本来就没工具）
+  // THINK.md 先过（app/think.js）：所有 kind 都拼，且只拼一次（Python 那条路已经拼过就原样走）。
+  system = require('./think').prefix(system, dataDir);
   const all = chainOf(env);
   if (!all.length) return { text: null, errorCode: 'no_provider', degraded: false, truncated: false, truncatedChars: 0, attempts: [] };
   const skipped = noFallback ? 0 : Math.max(0, Number(skip) || 0);

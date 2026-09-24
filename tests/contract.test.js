@@ -38,7 +38,7 @@ function clientPaths(){
   const base=(work.match(/const base\s*=\s*'([^']+)'/)||[])[1]||'';
   for (const m of work.matchAll(/api\('(\/[^']*)'/g)) add(base+m[1]);
   add(base);
-  for (const f of ['web/archive.js','web/memory.html'])
+  for (const f of ['web/archive.js','web/archive-v2.js','web/memory.html'])
     for (const m of read(f).matchAll(/fetch\('(\/asr-relay\/[^'?]+)/g)) add(m[1]);
   return [...out];
 }
@@ -169,9 +169,15 @@ test('TRIAGE carries the three insight types, the F2 rules and the §5.2 schema,
       assert.ok(text.includes(s), name+' 缺：'+s);
     assert.ok(!text.includes('至今未落地'), name+' 不许断言「至今未落地」');
   }
-  // 09-24 起服务端会中分诊不再用这段 TRIAGE（它只剩浏览器离线那条路），改用 app/live-insight.js：唯一一种卡，每次最多 1 条
+  // 09-24 第二轮（Aaron「no template, just first principles」）：会中不再给 JSON schema，模型自由写 markdown；
+  // 怎么想在 app/THINK.md，唯一保留的约定是 `@人名：` 那行。
   const live=read('app/live-insight.js');
-  for (const s of ['每次最多 1 条','复述别人刚说的话','要点总结','进展汇报','"do":"ask|todo|note|handoff"','insight ≤40 字','why ≤60 字','label ≤8 字','没有明确动作就不给 action']) assert.ok(live.includes(s),'live-insight.js 提示词缺：'+s);
+  for (const s of ['自由 markdown','没有模板','不要「洞察 / 原因 / 行动」这种表头','≤120 字','`@人名：` 开头的一行','NONE','不要 JSON']) assert.ok(live.includes(s),'live-insight.js 提示词缺：'+s);
+  assert.ok(!live.includes('"do":"ask|todo|note|handoff"'),'JSON schema 已经去掉');
+  const think=read('app/THINK.md');
+  for (const s of ['第一性原理','站在巨人的肩膀上','自由写']) assert.ok(think.includes(s),'THINK.md 缺：'+s);
+  assert.match(read('app/llm.js'), /require\('\.\/think'\)\.prefix\(system, dataDir\)/, 'ask() 前置 THINK.md');
+  assert.match(read('app/meeting-pipeline.py'), /system = think_prefix\(system\)/, '会后管线也前置 THINK.md');
   assert.match(server, /liveInsight\.systemPrompt\(/, 'server.js 分诊要用 live-insight 的提示词');
   assert.doesNotMatch(server, /【洞察门槛】/, '旧的【洞察门槛】不该再进会中分诊');
 });

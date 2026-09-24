@@ -279,6 +279,8 @@ class Session {
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
     try { this.audioFd = fs.openSync(this.audioPath, 'a'); } catch (e) { this.audioFd = null;this.audioSaveError='Mac 录音文件无法创建，请保留并导出浏览器录音备份。'; log('audio open fail ' + e.message); }
     this.lastTriageIndex = 0; this.charsSinceTriage = 0; this.triaging = false; this.llmTimeoutStreak = 0; this.llmSkip = 0; this.finalized = false; this.graceTimer = null;
+    this.lastCardAt = 0;   // 上一张真实洞察卡出现的时间（Aaron 2026-09-24：出卡后 5 分钟冷却）。NONE 不算出卡，不写这个字段。
+    this.cardTimes = [];   // 最近出卡时间戳（毫秒），配合 liveInsight.overBurstCap 卡「任意滚动 10 分钟不超过 2 张」（Codex 审计 2026-09-24）
     this.dedupSeen = new Map();   // final 幂等去重：key(见 isDuplicateFinal) -> 首次出现时间，8s 内重复的 final 只广播/入库一次（2026-09-04 0800 信 补2）
     this.spkMarks = [];   // 线上会说话人标记（页面 spk 帧：who=me|them），随 transcript 落场次；0800 信 task2，等页面上线
     this.triagePrompt = readTriagePrompt(); this.viewFeedback = [];
@@ -857,6 +859,10 @@ class Session {
     const gate = !!(opts && opts.gate);
     if (this.triaging) { if (gate && this.jev) this.jev.deferWhileBusy(); return; }
     if (this.finalized || ((!gate && this.charsSinceTriage < 60) || this.transcript.length <= this.lastTriageIndex) || !this.transcript.length) return;
+    // 冷却（Aaron 2026-09-24：出卡后 5 分钟内不再触发下一次分诊调用）：不推进 lastTriageIndex / charsSinceTriage，
+    // 冷却期间的转写增量原样攒着，冷却期满第一次调用的 windowRows 自动把这段时间整段带上，不丢。
+    if (liveInsight.inCooldown(this.lastCardAt)) return;
+    if (liveInsight.overBurstCap(this.cardTimes, Date.now())) return;   // 滚动 10 分钟已出够 2 张，这轮先不触发
     await this.runTriageBody(gate);
     if (this.jev && this.jev.takeDeferred() && !this.finalized) this.jev.requestTrigger();
   }
@@ -910,6 +916,7 @@ class Session {
         // 服务端发号 + 来源段；去重在 live-insight.normalize（与已出过的洞察 / 要点日志比相似度）
         const stamp = a => { for (const x of a) { if (!x) continue; x.id = 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1); x.sourceRefs = segIds.map(id => ({ segId: id })); } return a; };
         const r = liveInsight.normalize(j, { existing, logExisting, enUI });
+        if (r.insight) { this.lastCardAt = Date.now(); this.cardTimes.push(this.lastCardAt); if (this.cardTimes.length > 20) this.cardTimes = this.cardTimes.slice(-20); }   // 真出卡才启动冷却/记入 burst 窗口；NONE（r.insight 为 null）不启动
         // 存储字段名不改：洞察进 factchecks（回看 / 归档 / 统计全兼容），要点日志进 highlights（log:true，会中折叠不占屏）；待办只经洞察的 action.do=todo 由本人点出来，不再自动抽
         const fb = { type: 'feedback', highlights: stamp(r.log.map(text => ({ text, log: true }))), todos: [], factchecks: stamp(r.insight ? [r.insight] : []) };
         this.highlights.push(...fb.highlights); this.factchecks.push(...fb.factchecks); this.broadcast(fb);
@@ -1187,7 +1194,7 @@ async function proxyHub(req, res, u, upstream) {
 
 function serveStatic(req, res, p) {
   let rel;try{rel=decodeURIComponent(p.replace(/^\/tinghuitai\/?/, '')).split('?')[0]||'index.html';}catch{res.writeHead(400);return res.end('invalid path');}
-  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','page-comments.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json','workspace-nav.js','activity.html','activity.js','activity.css','assistant-widget.js','assistant-widget.css']);
+  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','page-comments.js','archive-v2.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json','workspace-nav.js','activity.html','activity.js','activity.css','assistant-widget.js','assistant-widget.css']);
   if(!allowed.has(rel)){res.writeHead(404);return res.end('not found');}
   const full = path.join(STATIC_DIR, rel);
   if (!full.startsWith(STATIC_DIR + path.sep) && full !== STATIC_DIR) { res.writeHead(403); return res.end('forbidden'); }
@@ -1380,6 +1387,7 @@ const shareBundles=require('./share-bundles')({settings});
 const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
 const pageComments=require('./page-comments').create({dataDir:DATA,log});   // 回看页到处评论 → 写信唤醒本机 Claude（Aaron 2026-09-24）
 const personHandoff=require('./person-handoff');   // 「交给某人」：飞书任务 + 私聊 + 行动清单文档 @他（Aaron 2026-09-24）
+const archiveV2=require('./archive-v2');   // 会后页 v2：服务端挑四块 + ⌘E override（Aaron 2026-09-24）
 // 卡片对话框（第③批）：每条消息起一次本机 claude -p。开着的场次改内存对象，结束的场次改 pending 文件。
 const cardThread=require('./card-thread').create({dataDir:DATA,log,getLive:id=>{const s=SESSIONS.get(id);return s&&!s.finalized?s:null;},
   readFile:id=>{const f=pendingFileFor(id);return f?journal.read(f):null;},writeFile:(id,obj)=>{const f=pendingFileFor(id);if(f)journal.write(f,obj);},
@@ -1517,6 +1525,7 @@ async function handleRequest(req, res) {
   }
   if(p.endsWith('/page-comments')||p.endsWith('/page-comment')){if(await pageComments(req,res,u,authed))return;}
   if(p.endsWith('/person-handoff'))return personHandoff.route(req,res,{authed,dataDir:DATA,log,port:PORT});
+  if(p.endsWith('/archive-edit'))return archiveV2.editRoute(req,res,{authed,pipeline:meetingPipeline,dataDir:DATA,log});   // 会后页 v2 ⌘E 改字（写 enhanced.overrides）
   if(p.startsWith('/sharing/slack') || p.startsWith('/asr-relay/sharing/slack')){if(await slackShareRoute(req,res,u,authed))return;}
   if(await workspaceRoute(req,res,u))return;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),localReason:()=>localReqReason(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>askModel(loadEnv(),'Reply exactly OK','OK',8,'live'),tokenOk:t=>tokenOk(loadEnv(),t)}))return;
@@ -1554,7 +1563,7 @@ async function handleRequest(req, res) {
     await workHub.route(req,res,u,authed); return;
   }
 
-  if(req.method==='GET'&&p.endsWith('/meeting-result')){if(!authed){res.writeHead(401);return res.end('unauthorized');}const rid=u.searchParams.get('id');let result=meetingPipeline.result(rid);if(!result){const pend=buildExportState().sessions.find(s=>String(s.id)===String(rid));if(pend)result={...pend,source:pend.source||'',archiveNote:'尚未经过会后整理，显示原始记录'};}if(result){const t=readTitles()[String(rid)]||{};if(!result.topicTitle&&t.topicTitle)result.topicTitle=t.topicTitle;if(!result.participants)result.participants=t.participants||[];}res.writeHead(result?200:404,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(result||{}));}
+  if(req.method==='GET'&&p.endsWith('/meeting-result')){if(!authed){res.writeHead(401);return res.end('unauthorized');}const rid=u.searchParams.get('id');let result=archiveV2.decorate(meetingPipeline.result(rid),{dataDir:DATA});if(!result){const pend=buildExportState().sessions.find(s=>String(s.id)===String(rid));if(pend)result={...pend,source:pend.source||'',archiveNote:'尚未经过会后整理，显示原始记录'};}if(result){const t=readTitles()[String(rid)]||{};if(!result.topicTitle&&t.topicTitle)result.topicTitle=t.topicTitle;if(!result.participants)result.participants=t.participants||[];}res.writeHead(result?200:404,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify(result||{}));}
   // 更新日志：先读本机的，读不到再去公开仓库拿
   if(req.method==='GET'&&p.endsWith('/changelog')){if(!authed){res.writeHead(401);return res.end('unauthorized');}
     const local=path.join(__dirname,'..','CHANGELOG.json');

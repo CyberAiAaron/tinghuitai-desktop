@@ -162,6 +162,28 @@
   // 看法卡（0.6.14 减法版）：只有 claim + 一行灰字 source · why + 对话框占位；不带标签、不带有用/没用/采纳。最新 8 条平铺，更早的折进「更早 N 条」。
   const VIEW_SHOW = 8;
   // 主动智能批 2：三类 type 徽标（对不上 / 空转 / 递答案）+ 一个按钮占位（批 3 接 POST /insight-action 才启用；answer 没有按钮）。
+  // 最小 markdown 渲染（会中卡正文 + 会后「军师怎么看」都用它）：标题 / 无序列表 / 粗体 / 行内码 / 链接。
+  // 先 esc 再套标签——模型写的正文是不可信输入，HTML 一律转义。
+  function mdInline(s){ return esc(String(s==null?'':s))
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s"']+)\)/g,(m,t,u)=>'<a href="'+u+'" target="_blank" rel="noopener">'+t+'</a>'); }
+  function mdHtml(src){
+    const lines=String(src==null?'':src).replace(/\r/g,'').split('\n');
+    let out='',list=false;
+    const closeList=()=>{ if(list){ out+='</ul>'; list=false; } };
+    for(const raw of lines){
+      const l=raw.trim();
+      if(!l){ closeList(); continue; }
+      const h=/^(#{1,6})\s+(.*)$/.exec(l);
+      if(h){ closeList(); out+='<div class="md-h"><b>'+mdInline(h[2])+'</b></div>'; continue; }
+      const li=/^[-*+]\s+(.*)$/.exec(l);
+      if(li){ if(!list){ out+='<ul class="md-ul">'; list=true; } out+='<li>'+mdInline(li[1])+'</li>'; continue; }
+      closeList(); out+='<p class="md-p">'+mdInline(l)+'</p>';
+    }
+    closeList();
+    return out;
+  }
   // 沿用 .card.ck .kind 的徽标样式，不开新窗口。旧场次没有 type 的按 answer 显示。
   // 0.6.18 思考档（app/think-pass.js）多了 goal / best / doubt / remind 四类，与旧三类同一套徽标。
   function insightType(x){ return ['conflict','recheck','answer','goal','best','doubt','remind'].includes(x&&x.type)?x.type:'answer'; }
@@ -180,7 +202,9 @@
     if(a.do==='handoff') return `<button class="btn sm live-act" type="button" data-do="handoff" disabled title="${en?'Hand off from the review page after the meeting':'会后在回看页交给某人'}">${label}</button><span class="v src">${esc(a.text)}</span>`;
     return `<button class="btn sm live-act" type="button" data-do="${esc(a.do)}" title="${esc(a.text)}">${label}</button>`;
   }
-  function liveCard(x, fresh){ const t=x.type==='conflict'?'conflict':'live'; return `<div class="card ck live kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?esc(hms(x.at).slice(0,5)):''}</span><div><div class="ins-main"><b>${esc(tt(x.claim))}</b>${x.label?` <span class="kind">${esc(tt(x.label))}</span>`:''}</div>${(x.why||x.note)?`<div class="v src">${esc(tt(x.why||x.note))}</div>`:''}${liveActionHtml(x)}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  // 0.6.19（Aaron 2026-09-24「no template」）：正文 = 模型自由写的 markdown（x.md），按 markdown 渲染；
+  // 老卡没有 md，退回 claim + why 两行，渲染路径一样。
+  function liveCard(x, fresh){ const t=x.type==='conflict'?'conflict':'live'; const body=x.md?mdHtml(tt(x.md)):(`<div class="ins-main"><b>${esc(tt(x.claim))}</b>${x.label?` <span class="kind">${esc(tt(x.label))}</span>`:''}</div>${(x.why||x.note)?`<div class="v src">${esc(tt(x.why||x.note))}</div>`:''}`); return `<div class="card ck live kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?esc(hms(x.at).slice(0,5)):''}</span><div><div class="ins-md">${body}</div>${liveActionHtml(x)}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
   // 要点日志：分诊的 log 行（highlights 里 log:true）和旧要点都折在看法栏底部，不占屏
   function hlLogHtml(hl){ const rows=(hl||[]).filter(x=>x&&x.text&&!x.stale).sort((a,b)=>(a.at||0)-(b.at||0)); if(!rows.length) return ''; const en=ui==='en'; return `<details class="hl-log"><summary>${en?'Log ':'要点日志 '}<span class="count">${rows.length}</span></summary>${rows.slice(-40).map(x=>`<div class="hl-log-row">${x.at?`<span class="tm">${esc(hms(x.at).slice(0,5))}</span>`:''}${esc(tt(x.text))}</div>`).join('')}</details>`; }
   function viewCard(x, fresh){ if(isLiveCard(x)) return liveCard(x, fresh); const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k"></span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.at?`<span class="tm">${hms(x.at).slice(0,5)}</span>`:''}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
