@@ -49,16 +49,25 @@
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s"']+)\)/g,function(m,x,u){return '<a href="'+u+'" target="_blank" rel="noopener">'+x+'</a>';}); }
   function mdHtml(src){
     const lines=String(src==null?'':src).replace(/\r/g,'').split('\n');
-    let out='',list=false;
-    const closeList=function(){ if(list){ out+='</ul>'; list=false; } };
+    let out='',list=null,first=true;
+    const closeList=function(){ if(list){ out+=(list==='ol'?'</ol>':'</ul>'); list=null; } };
     for(const raw of lines){
       const l=raw.trim();
       if(!l){ closeList(); continue; }
+      if(/^(-{3,}|\*{3,})$/.test(l)){ closeList(); out+='<hr class="md-hr">'; continue; }
       const h=/^(#{1,6})\s+(.*)$/.exec(l);
-      if(h){ closeList(); out+='<h3 class="md-h">'+mdInline(h[2])+'</h3>'; continue; }
+      if(h){ closeList(); out+='<h3 class="md-h'+(h[1].length<=2?' md-h2':'')+'">'+mdInline(h[2])+'</h3>'; first=false; continue; }
+      const q=/^>\s?(.*)$/.exec(l);
+      if(q){ closeList(); out+='<blockquote class="md-q">'+mdInline(q[1])+'</blockquote>'; continue; }
+      const ol=/^(\d+)[.)]\s+(.*)$/.exec(l);
+      if(ol){ if(list!=='ol'){ closeList(); out+='<ol class="md-ol">'; list='ol'; } out+='<li>'+mdInline(ol[2])+'</li>'; continue; }
       const li=/^[-*+]\s+(.*)$/.exec(l);
-      if(li){ if(!list){ out+='<ul class="md-ul">'; list=true; } out+='<li>'+mdInline(li[1])+'</li>'; continue; }
-      closeList(); out+='<p class="md-p">'+mdInline(l)+'</p>';
+      if(li){ if(list!=='ul'){ closeList(); out+='<ul class="md-ul">'; list='ul'; } out+='<li>'+mdInline(li[1])+'</li>'; continue; }
+      closeList();
+      const at=/^@[^：:]{1,20}[：:]/.test(l);
+      const lead=first&&/^\*\*/.test(l);
+      out+='<p class="md-p'+(at?' md-at':'')+(lead?' md-lead':'')+'">'+mdInline(l)+'</p>';
+      first=false;
     }
     closeList();
     return out;
