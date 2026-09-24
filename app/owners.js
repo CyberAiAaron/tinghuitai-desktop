@@ -6,8 +6,12 @@ const AARON_OPEN_ID = 'ou_00c28e8ed0b15769a9a5f5e4ea36f7e8';
 let cache = null;
 function table() {
   if (cache) return cache;
-  try { cache = JSON.parse(fs.readFileSync(path.join(__dirname, 'owners.json'), 'utf8')); }
-  catch (e) { cache = { 默认: 'Aaron Wang' }; }
+  // 个人版放数据目录（含同事名字，不随包公开）；包里那份只是空默认
+  const mine = process.env.THT_OWNERS_FILE || (process.env.THT_DATA_DIR ? path.join(process.env.THT_DATA_DIR, 'owners.json') : '');
+  for (const f of [mine, path.join(__dirname, 'owners.json')].filter(Boolean)) {
+    try { cache = JSON.parse(fs.readFileSync(f, 'utf8')); break; } catch (e) {}
+  }
+  if (!cache) cache = { 默认: '' };
   return cache;
 }
 // 顺序即优先级：一段文字同时提到 Pin 和 UI 时算硬件（硬件问题通常卡在前面）。

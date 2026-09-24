@@ -1,17 +1,1 @@
-{
-  "硬件架构": {
-    "doc": "UifYd8eGCoxyyuxEIZjlzBHNgae",
-    "owner": "Abel Mei",
-    "keywords": ["摄像头", "Pin", "sensor", "ISP", "功耗", "像素", "ID"]
-  },
-  "高通路标": {
-    "doc": null,
-    "owner": "Hannah Yin",
-    "keywords": ["高通", "SM7750", "路标"]
-  },
-  "软件": {
-    "doc": null,
-    "owner": "Luna Min",
-    "keywords": ["OS", "app", "交互", "UI", "AIOS"]
-  }
-}
+{}

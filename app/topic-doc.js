@@ -6,7 +6,14 @@ const path = require('path');
 const llm = require('./llm');
 const defaultSendGate = require('./send-gate');
 const defaultLark = require('./tools/lark');
-const defaultTopics = require('./topics.json');
+// 主题 → 飞书文档与负责人：个人版放 <THT_DATA_DIR>/topics.json（含文档 token 与同事名字，不随包公开），包里是空表
+function loadTopics() {
+  const mine = process.env.THT_DATA_DIR ? path.join(process.env.THT_DATA_DIR, 'topics.json') : '';
+  for (const f of [mine, path.join(__dirname, 'topics.json')].filter(Boolean)) {
+    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {}
+  }
+  return {};
+}
 
 const topicDocRoutes = require('./topic-doc-routes');
 const SECTIONS = ['未决问题', '讨论中', '最新进展', '下一步最重要的事'];
@@ -153,7 +160,7 @@ function itemXml(item, record) {
 
 function create(options = {}) {
   const dataDir = options.dataDir || process.env.THT_DATA_DIR || process.cwd();
-  const topics = options.topics || defaultTopics;
+  const topics = options.topics || loadTopics();
   const log = typeof options.log === 'function' ? options.log : () => {};
   const ask = options.ask || (request => llm.ask(options.env || process.env, request));
   const lark = options.lark || defaultLark;

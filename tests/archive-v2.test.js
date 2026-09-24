@@ -50,7 +50,8 @@ test('首屏三块：改变 ≤3 行且每行 ≤40 字带类型标签；洞察 
 });
 
 test('默认负责人映射：硬件 → Abel Mei，高通路标 → Hannah Yin，软件 → Luna Min，判不出 → Aaron Wang；真源是 owners.json', () => {
-  const tbl = JSON.parse(fs.readFileSync(path.join(root, 'app/owners.json'), 'utf8'));
+  const tbl = JSON.parse(fs.readFileSync(process.env.THT_OWNERS_FILE, 'utf8'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'app/owners.json'), 'utf8')), { 默认: '' });   // 包里那份不带同事名字
   assert.deepEqual(tbl, { 硬件: 'Abel Mei', 高通路标: 'Hannah Yin', 软件: 'Luna Min', 默认: 'Aaron Wang' });
   assert.deepEqual(owners.classify('Pin 摄像头 sensor 功耗'), { topic: '硬件', owner: 'Abel Mei' });
   assert.deepEqual(owners.classify('高通 SM7750 路标'), { topic: '高通路标', owner: 'Hannah Yin' });
