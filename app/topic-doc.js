@@ -169,6 +169,13 @@ function create(options = {}) {
     if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(meetingId)) throw bad('会议编号不对');
     const topic = classify(enhanced);
     if (!topic) return null;
+    // 调用方没给正文就自己读飞书那份当基线；读不到就不生成，免得拿空基线写出重复内容
+    const docToken = topics[topic] && topics[topic].doc;
+    if (!String(docMarkdown || '').trim() && docToken) {
+      const fetched = typeof lark.docFetchMarkdown === 'function' ? await lark.docFetchMarkdown(docToken, larkOptions) : { ok: false, error: '缺读文档能力' };
+      if (!fetched || !fetched.ok) throw bad('读不到主题文档正文：' + String(fetched && fetched.error || ''), 502);
+      docMarkdown = fetched.markdown;
+    }
     const prompts = promptFor(enhanced, docMarkdown, topic);
     const response = await ask({ kind: 'post', json: true, tools: false, dataDir, log, ...prompts });
     if (!response || !response.text) throw bad('主题差异生成失败：' + String(response && response.errorCode || '模型无响应'), 502);
@@ -194,6 +201,8 @@ function create(options = {}) {
   }
 
   async function apply(meetingId, ids, body = {}) {
+    // 确认门在服务层也守一道：任何调用路径不带 confirmed:true 都不写飞书
+    if (!body || body.confirmed !== true) throw bad('写回飞书需要你在界面上点确认', 403);
     if (!Array.isArray(ids) || !ids.length) throw bad('没有选择要写入的条目');
     const record = read(meetingId);
     const config = topics[record.topic];

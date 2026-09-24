@@ -150,6 +150,16 @@ async function docAppend({ token, content }, opts = {}) {
   return { ok: true, revision: doc.revision_id == null ? '' : String(doc.revision_id) };
 }
 
+// 读飞书文档正文（markdown），主题差异拿它当基线（09-25 审核：原来基线是空的，会写出重复内容）。只读。
+async function docFetchMarkdown(token, opts = {}) {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9]{10,64}$/.test(t)) return { ok: false, error: '文档 token 不像样' };
+  const r = await runCli(['docs', '+fetch', '--doc', t, '--doc-format', 'markdown', '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error };
+  const doc = ((r.json && r.json.data) || {}).document || {};
+  return { ok: true, markdown: String(doc.content || '') };
+}
+
 // 主题文档写回：先让 docs parser 校验 XML，再追加。同一条的幂等由调用方 send-gate 包住整个函数，
 // 因此已有收据时 parse 和 update 都不会重复调用。
 async function docValidateAppend({ token, content }, opts = {}) {
@@ -164,4 +174,4 @@ async function docValidateAppend({ token, content }, opts = {}) {
   return docAppend({ token: t, content: c }, opts);
 }
 
-module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, cardSend, selfOpenId, docCreate, docAppend, docValidateAppend, clip, norm };
+module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, cardSend, selfOpenId, docCreate, docAppend, docValidateAppend, docFetchMarkdown, clip, norm };
