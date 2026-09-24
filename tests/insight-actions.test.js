@@ -9,7 +9,7 @@ const freePort = () => new Promise(r => { const s = net.createServer(); s.listen
 const IA = require(path.join(root, 'app/insight-actions.js'));
 const TOKEN = 'k'.repeat(40);
 // 命题文档 token 是个人配置（<数据目录>/docs.json），测试写一份假的
-const DOC_TOKENS = {"board": "A2hQdjgAUoIV1vxecJzlFw57gId", "prd": "COqzdiAr6oGyX3xZb6alPLxQghg", "arch": "UifYd8eGCoxyyuxEIZjlzBHNgae", "ur": "Rxi9djN7vo9FrwxWXhhlYsmQgAR", "intel": "SRLMdavSXoUyEnxhZyllQe9qgEh"};
+const DOC_TOKENS = {"board": "FakeDocA2hQ000000000000000000", "prd": "FakeDocCOqz000000000000000000", "arch": "FakeDocUifY000000000000000000", "ur": "FakeDocRxi9000000000000000000", "intel": "FakeDocSRLM000000000000000000"};
 const writeDocs = d => fs.writeFileSync(path.join(d, 'docs.json'), JSON.stringify(DOC_TOKENS));
 { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-data-')); writeDocs(d); process.env.THT_DATA_DIR = d; }
 
@@ -20,7 +20,7 @@ function fixtures() {
   fs.writeFileSync(path.join(dir, '决策板D1-D8_2026-09-10.md'), board('2026-09-10', '5.0%'));
   fs.writeFileSync(path.join(dir, '决策板D1-D8_2026-09-17.md'), board('2026-09-17', '6.3%'));
   fs.writeFileSync(path.join(dir, '产品需求总纲_2026-09-17.md'), '# 设计原则\n\n## 场景判据：两个筛子（顺序不能反）[定｜08-24]\n\n① 描述成本高不高 → ② 手机自己能不能干。\n\n顺序不能反，先问描述成本。\n\n# 硬件需求\n\n## 整机\n\n| 项 | 值 |\n|---|---|\n| 屏幕 | 5.5 寸 |\n| 首发价 | USD 500 |\n');
-  const kbMap = { branches: [{ items: [{ title: '② 技术架构 v0.2', url: 'https://example.test/docx/UifYd8eGCoxyyuxEIZjlzBHNgae', id: 'd:UifYd8eGCoxyyuxEIZjlzBHNgae' }, { title: 'CDCP 汇报框架', url: 'https://example.test/docx/FRAMEWORKtoken0000000', id: 'd:FRAMEWORKtoken0000000' }] }] };
+  const kbMap = { branches: [{ items: [{ title: '② 技术架构 v0.2', url: 'https://example.test/docx/FakeDocUifY000000000000000000', id: 'd:FakeDocUifY000000000000000000' }, { title: 'CDCP 汇报框架', url: 'https://example.test/docx/FRAMEWORKtoken0000000', id: 'd:FRAMEWORKtoken0000000' }] }] };
   return { dir, kbMap };
 }
 const inspectOk = async token => ({ ok: true, url: 'https://example.test/docx/' + token, title: '文档 ' + token.slice(0, 4) });
@@ -32,7 +32,7 @@ test('resolveSource：决策板 D3 → 最新一份的 D3 行、正确值取 cla
   assert.equal(r.found, true); assert.equal(r.kind, 'board'); assert.equal(r.date, '2026-09-17', '取文件名日期最新的那份，不是 09-10');
   assert.ok(r.quote.startsWith('D3 新品类定义｜流失率按 6.3% 算') && r.quote.length <= 200, r.quote);
   assert.equal(r.value, '6.3%'); assert.equal(r.label, '决策板 D3');
-  assert.deepEqual(r.doc, { title: '文档 A2hQ', url: 'https://example.test/docx/A2hQdjgAUoIV1vxecJzlFw57gId', token: 'A2hQdjgAUoIV1vxecJzlFw57gId' });
+  assert.deepEqual(r.doc, { title: '文档 Fake', url: 'https://example.test/docx/FakeDocA2hQ000000000000000000', token: 'FakeDocA2hQ000000000000000000' });
   // refs 没写 D 编号、source 只写「决策板」也能靠 needle 落到含那个数的段
   const r2 = await IA.resolveSource('决策板', [], { dir, claim: '会上说 09-12 没调价；决策板记的是 暂停调价', inspect: inspectOk });
   assert.equal(r2.found, true); assert.ok(r2.quote.includes('暂停调价'), r2.quote);
@@ -45,7 +45,7 @@ test('resolveSource：总纲小节按标题 / 编号定位，摘含正确值的�
   const { dir } = fixtures();
   const r = await IA.resolveSource('产品需求总纲 §两个筛子', [], { dir, claim: '会上说筛子顺序可以反；总纲记的是 顺序不能反', evidence: '顺序可以反', inspect: inspectOk });
   assert.equal(r.found, true); assert.equal(r.kind, 'prd'); assert.ok(r.label.includes('两个筛子')); assert.ok(r.quote.includes('顺序不能反'), r.quote); assert.equal(r.value, '顺序不能反');
-  assert.equal(r.doc.token, 'COqzdiAr6oGyX3xZb6alPLxQghg');
+  assert.equal(r.doc.token, 'FakeDocCOqz000000000000000000');
   const r2 = await IA.resolveSource('总纲 整机', [], { dir, claim: '会上说首发价 USD 600', evidence: '首发价 600 美元', inspect: inspectOk });
   assert.equal(r2.found, true); assert.ok(r2.quote.includes('USD 500'), r2.quote); assert.ok(['5.5寸', 'USD', '500'].some(v => r2.value.includes(v)), '原文里有、会上没说的那个数：' + r2.value);
   const r3 = await IA.resolveSource('产品需求总纲 §不存在的章', [], { dir, claim: '会上说 X', inspect: inspectOk });
@@ -56,7 +56,7 @@ test('resolveSource：《会名》日期 → memory.db 承诺 / 决定卡 → �
   const mem = require(path.join(root, 'app/memory.js'));
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-mem-'));
   const db = mem.open(dataDir); if (!db) { t.skip('这台 node 没有 sqlite'); return; }
-  mem.putCard(db, { kind: 'promise', text: 'BOM 那个表回头发给 Cary', owner: 'Aaron', meeting_id: 'm-0912', meeting_title: '硬件例会', recorded_at: '2026-09-12T10:00:00Z' });
+  mem.putCard(db, { kind: 'promise', text: 'BOM 那个表回头发给 Cary', owner: '本人', meeting_id: 'm-0912', meeting_title: '硬件例会', recorded_at: '2026-09-12T10:00:00Z' });
   mem.putCard(db, { kind: 'promise', text: '屏幕短名单下周给', owner: 'Shawn', meeting_id: 'm-0915', meeting_title: '硬件例会', recorded_at: '2026-09-15T10:00:00Z' });
   const r = await IA.resolveSource('《硬件例会》2026-09-12', [], { dir: '', db, claim: '这件事 09-12《硬件例会》已承诺过，记录里没看到落地', evidence: 'BOM 表我回头发' , inspect: inspectOk });
   assert.equal(r.found, true); assert.equal(r.kind, 'meeting'); assert.equal(r.quote, 'BOM 那个表回头发给 Cary'); assert.equal(r.date, '2026-09-12');
@@ -71,7 +71,7 @@ test('resolveSource：其它文档名走 kb-map.json 查 token；lark-cli 回不
   const { dir, kbMap } = fixtures();
   const r = await IA.resolveSource('技术架构 v0.2', [], { dir: path.join(dir, 'nope'), kbMap, claim: 'x', inspect: inspectOk });
   assert.equal(r.found, false, '本机没有导出、摘不到原文 → 不编原文'); assert.equal(r.message, '资料里没有这个数');
-  assert.equal(r.doc.url, 'https://example.test/docx/UifYd8eGCoxyyuxEIZjlzBHNgae', '链接还是附上');
+  assert.equal(r.doc.url, 'https://example.test/docx/FakeDocUifY000000000000000000', '链接还是附上');
   const r2 = await IA.resolveSource('CDCP 汇报框架', [], { dir, kbMap, claim: 'x', inspect: inspectFail });
   assert.deepEqual(r2.doc, { title: 'CDCP 汇报框架', url: '', token: 'FRAMEWORKtoken0000000', linkError: 'lark-cli 没跑起来' }, '回读失败 → 不附链接、不拿 kb-map 里存的旧链接顶（Codex 1edd4fc4）');
   const r3 = await IA.resolveSource('某个谁也没听过的文档', [], { dir, kbMap, claim: 'x', inspect: inspectOk });
@@ -85,7 +85,7 @@ test('openSource：写回 correction / quote / doc，找到才出冲突条；找
   const { dir } = fixtures();
   const card = { id: 'c1', type: 'conflict', claim: '会上说流失率 4.1%；决策板 D3 记的是 6.3%', evidence: '流失率是 4.1%', source: '决策板 D3', refs: ['D3'] };
   const r = await IA.openSource({ card, env: { DECISION_BOARD_DIR: dir }, inspect: inspectOk });
-  assert.equal(r.patch.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.ok(r.patch.quote.includes('6.3%')); assert.equal(r.patch.doc.url, 'https://example.test/docx/A2hQdjgAUoIV1vxecJzlFw57gId');
+  assert.equal(r.patch.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.ok(r.patch.quote.includes('6.3%')); assert.equal(r.patch.doc.url, 'https://example.test/docx/FakeDocA2hQ000000000000000000');
   assert.equal(r.highlight, '⚠️ 冲突：会上 流失率是 4.1%，记录 6.3%（决策板 D3 2026-09-17）');
   assert.equal(r.sourceHit, true, '出处命中 → sourceHit true');
   // 兜底 A（Aaron 2026-09-22 拍板）：查不到出处 → 不报死错、不写卡，回 offer 让人决定
@@ -125,7 +125,7 @@ test('setDate：owner 解析到 → 派给他；解析不到 → 建给本人并
   const mem = require(path.join(root, 'app/memory.js'));
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-set-'));
   const db = mem.open(dataDir);
-  if (db) mem.putCard(db, { id: 'p-bom', kind: 'promise', text: 'BOM 那个表回头发给 Cary', owner: 'Aaron', meeting_id: 'm-0912', meeting_title: '硬件例会', recorded_at: '2026-09-12T10:00:00Z' });
+  if (db) mem.putCard(db, { id: 'p-bom', kind: 'promise', text: 'BOM 那个表回头发给 Cary', owner: '本人', meeting_id: 'm-0912', meeting_title: '硬件例会', recorded_at: '2026-09-12T10:00:00Z' });
   const card = { id: 'r1', type: 'recheck', claim: '这件事 09-12《硬件例会》已承诺过（BOM 表发给 Cary），记录里没看到落地', evidence: 'BOM 表我回头发', source: '硬件例会 2026-09-12', action: { do: 'set_date', args: {} } };
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }), plus7 = new Date(new Date(today + 'T00:00:00Z').getTime() + 7 * 86400e3).toISOString().slice(0, 10);
   let calls = [];
@@ -169,7 +169,7 @@ test('setDate：没传 owner 时默认承诺卡里的承诺人（Codex 8b2bdefd 
   assert.ok(!calls.some(x => x[0] === 'contact' && x[1] === '+search-user'), '没有承诺人不去搜人');
   // 按钮参数优先于承诺卡
   calls = [];
-  r = await IA.setDate({ card, args: { owner: 'Aaron' }, session: { id: 's1' }, db, execImpl: fakeExec(calls) });
+  r = await IA.setDate({ card, args: { owner: '本人' }, session: { id: 's1' }, db, execImpl: fakeExec(calls) });
   assert.equal(r.patch.task.ownerFrom, 'args'); assert.equal(calls.find(x => x[1] === '+create')[calls.find(x => x[1] === '+create').indexOf('--assignee') + 1], 'ou_self');
 });
 
@@ -276,7 +276,7 @@ test('POST /insight-action：鉴权、类型匹配、open_source 写回 + 冲突
     // 真做
     r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'open_source', confirmed: true });
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done');
-    assert.equal(r.j.card.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.ok(r.j.card.quote.includes('6.3%')); assert.equal(r.j.card.doc.url, 'https://example.test/docx/A2hQdjgAUoIV1vxecJzlFw57gId');
+    assert.equal(r.j.card.correction, '记录：6.3%（决策板 D3，2026-09-17）'); assert.ok(r.j.card.quote.includes('6.3%')); assert.equal(r.j.card.doc.url, 'https://example.test/docx/FakeDocA2hQ000000000000000000');
     assert.equal(cli.calls().filter(x => x.startsWith('drive +inspect')).length, 1, '链接由 lark-cli 回读一次');
     const h = await (await fetch(S.base + '/health?token=' + TOKEN)).json(); assert.deepEqual(h.sourceHit, { hit: 1, miss: 0 }, '兜底 B：出处命中记到 /health');
     await pause(150);

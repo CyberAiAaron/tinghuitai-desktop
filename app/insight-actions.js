@@ -267,7 +267,7 @@ function matchPromise(db, card) {
   for (const row of rows) { const q = ops.terms(row.topic + ' ' + row.text); if (!q.length) continue; let hit = 0; for (const w of q) if (hay.includes(w)) hit++; const score = hit >= 2 && hit / q.length >= 0.3 ? hit / q.length : 0; if (score > bestScore) { best = row; bestScore = score; } }
   return best;
 }
-const isSelf = o => !o || o === '本人' || /^aaron(\s*wang)?$/i.test(o);
+const isSelf = o => !o || /^(本人|我|我自己|自己|me|myself)$/i.test(String(o).trim());
 
 // set_date：建飞书任务 + 承诺卡写 due / 状态。args {owner, due, title}
 // 负责人默认顺序：按钮参数 owner → 模型给的 action.args.owner/who → 同一件事的承诺卡 owner → 本人。回退本人时卡片 task.ownerFrom 说明为什么。

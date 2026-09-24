@@ -53,7 +53,7 @@ test('同一个人 3 件事 → 一条任务 + 一条私聊 + 文档一行；正
   assert.equal(lines[2], '2. 把 Pin 的功耗曲线给到 ID（截止 2026-09-26）');
   assert.match(lines[3], /^3\. 约歌尔看结构手板（截止 \d{4}-\d{2}-\d{2}）$/);
   assert.equal(lines[4], '任务：https://example.test/task/g-1');
-  assert.equal(lines[5], '— Aaron 的 Claude 代发');
+  assert.equal(lines[5], '— 由听会台代发');
   assert.equal(lines.length, 6, '正文就这 6 行');
   clean(md, '私聊');
   const xml = arg(calls[4], '--content');
@@ -74,7 +74,7 @@ test('旧的单条请求体仍收：当 items 长度 1，正文「后的 1 件�
   assert.equal(arg(calls[1], '--summary'), '请拍板：手板像素定 12MP 还是 72 万');
   assert.match(arg(calls[1], '--due'), /^\d{4}-\d{2}-\d{2}/, '截止必带（默认 +3 天）');
   const md = arg(calls[2], '--markdown');
-  assert.match(md, /^硬件周会（2026-09-24）后的 1 件事：\n1\. 请拍板：手板像素定 12MP 还是 72 万（截止 \d{4}-\d{2}-\d{2}）\n任务：https:\/\/example\.test\/task\/g-1\n— Aaron 的 Claude 代发$/);
+  assert.match(md, /^硬件周会（2026-09-24）后的 1 件事：\n1\. 请拍板：手板像素定 12MP 还是 72 万（截止 \d{4}-\d{2}-\d{2}）\n任务：https:\/\/example\.test\/task\/g-1\n— 由听会台代发$/);
   clean(md, '私聊'); clean(arg(calls[1], '--description'), '任务描述');
   assert.ok(PH.sentState(dir, 'm-1', 'u-abc123abc123'));
   fs.rmSync(dir, { recursive: true, force: true });
@@ -97,7 +97,7 @@ test('重复点不重发：同一批再 POST 一条命令不跑；已发的条�
   assert.deepEqual(c3.map(a => a[0] + ' ' + a[1]), ['contact +search-user', 'task +create', 'im +messages-send', 'docs +update']);
   assert.equal(arg(c3[1], '--summary'), '补一份 BOM 成本表');
   const md = arg(c3[2], '--markdown');
-  assert.equal(md, '硬件周会（2026-09-24）补 1 件：\n1. 补一份 BOM 成本表（截止 2026-10-01）\n任务：https://example.test/task/g-1\n— Aaron 的 Claude 代发');
+  assert.equal(md, '硬件周会（2026-09-24）补 1 件：\n1. 补一份 BOM 成本表（截止 2026-10-01）\n任务：https://example.test/task/g-1\n— 由听会台代发');
   assert.doesNotMatch(md, /12MP|功耗|歌尔/, '旧的不重发');
   assert.ok(PH.sentState(dir, 'm-1', 'v2-ins-9'));
   const c4 = [];

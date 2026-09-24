@@ -14,7 +14,7 @@ const lark = require('./tools/lark');
 const sendGate = require('./send-gate');
 
 const DOC_TITLE = '听会台行动清单';
-const SIGN = '— Aaron 的 Claude 代发';
+const SIGN = '— 由听会台代发';
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
 const oneLine = v => String(v || '').replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
