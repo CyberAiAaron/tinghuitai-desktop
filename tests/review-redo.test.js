@@ -220,7 +220,7 @@ test('页面契约：旧三栏 / 过一遍 / 纪要 / 日历条都不在了；�
   const noComment = s => s.replace(/^[ \t]*\/\/.*$/gm, '');
   for (const gone of ['id="rv"', 'id="review-go"', 'id="highlights"', 'id="todos"', 'id="factchecks"', 'cal-chip']) assert.ok(!html.includes(gone), 'archive.html 里不该再有 ' + gone);
   for (const gone of ['renderCondenseBar', 'mountReviewButton', 'startReview(', 'mountNote(', 'mountCalendarChip', 'showRaw']) assert.ok(!noComment(js).includes(gone), 'archive.js 里不该再有 ' + gone);
-  for (const need of ['id="bf-say"', 'id="bf-cards"', 'class="fs-n"', 'fs-n sub', 'td-table', "t('concl')", 'UNNAMED']) assert.ok(js.includes(need), 'archive.js 要有 ' + need);
+  for (const need of ['id="bf-say"', 'id="bf-cards"', 'class="fs-n"', 'td-table', 'bf-tt', 'UNNAMED']) assert.ok(js.includes(need), 'archive.js 要有 ' + need);
   assert.ok(!/['"]S['"]\s*\+/.test(noComment(js)), 'archive.js 不许再拼「S」+ 编号当说话人名字');
   assert.ok(js.includes('未认人') && js.includes('Unnamed'), '「未认人」要有中英文');
   assert.ok(/AbortController/.test(js) && /sayCancel/.test(js), '一句话改待办要能取消（取消 = 撤回这次请求）');

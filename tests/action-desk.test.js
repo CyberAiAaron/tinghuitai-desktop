@@ -392,8 +392,8 @@ test('页面契约：「建议怎么做」「可能讲错的」「合适的部�
   // 右栏 洞察与行动 = 洞察（风险提示 → 偏离/背景 → 一句话思考）→ 行动（待办表 → 一句话对话框）。议题细节不再平铺，待办不再压在议题下面。
   const seg = js.slice(js.indexOf("$('#bf-sum').innerHTML="), js.indexOf("$('#bf-rev').innerHTML="));
   assert.ok(seg.length > 200, '没找到 #bf-sum 的拼装段落');
-  const left = ["t('keyc')", "t('topics')", "bf-detail", "t('detail')", 'bf-brain'].map(k => seg.indexOf(k));
-  assert.ok(left.every(i => i >= 0), '左栏这四块都要在 #bf-sum 里渲染：' + JSON.stringify(left));
+  const left = ["t('keyc')", "t('topics')", 'bf-tt', 'bf-brain'].map(k => seg.indexOf(k));
+  assert.ok(left.every(i => i >= 0), '左栏这几块都要在 #bf-sum 里渲染：' + JSON.stringify(left));
   for (let i = 1; i < left.length; i++) assert.ok(left[i] > left[i - 1], '左栏第 ' + i + ' 块的顺序不对');
   for (const gone of ['bf-cards', 'bf-say', 'bf-think', 'bf-risks']) assert.ok(!seg.includes(gone), gone + ' 不该还在智能总结栏里');
   const rseg = js.slice(js.indexOf("$('#bf-rev').innerHTML="), js.indexOf("querySelectorAll('[data-say]')"));
