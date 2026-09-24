@@ -179,4 +179,6 @@ test('旧序号收据：收件人对得上才算已发，对不上不挂到别�
   const mk = (md) => V2.decorate({ id: 'm-l', brief: { insights_md: md } }, { dataDir: dir }).view.insights[0];
   assert.equal(mk('@Luna Min：画流程图').sent, null, '第 1 条换成 Luna 了，不能显示已发给 Abel');
   assert.ok(mk('@Abel Mei：算像素').sent, '第 1 条还是 Abel，旧收据照认，防止重发');
+  fs.writeFileSync(path.join(d, k + '.json'), JSON.stringify({ status: 'sent', at: 1 }));
+  assert.equal(mk('@Abel Mei：算像素').sent, null, '旧收据没有收件人，不认');
 });

@@ -136,7 +136,7 @@ function decorate(result, { dataDir } = {}) {
   // sourceId 按「负责人|动作」取哈希，洞察重跑换了顺序也对得上。0.6.18 前的收据按序号记（legacyId），
   // 只在收件人和这张卡负责人一致时才认，免得把别人的已发挂到这张卡上，也免得真发过的卡被当成没发再发一次
   const own = (x) => { const s = sentState(dataDir, mid, x.sourceId); if (s) return s;
-    const l = x.legacyId && sentState(dataDir, mid, x.legacyId); return l && (!l.person || l.person === x.owner) ? l : null; };
+    const l = x.legacyId && sentState(dataDir, mid, x.legacyId); return l && l.person && l.person === x.owner ? l : null; };
   for (const i of view.insights) i.sent = own(i);
   if (view.next) view.next.sent = own(view.next);
   return { ...result, view };

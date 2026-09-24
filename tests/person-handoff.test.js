@@ -187,3 +187,13 @@ test('补发时「不确定」的失败项没带 retryConfirmed 就不重做，�
   }
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('route：非 POST 一律 405，未鉴权 401，缺 confirmed 被拒', async () => {
+  const PH = require('../app/person-handoff');
+  const mk = (method) => { const r = require('stream').Readable.from([Buffer.from('{}')]); r.method = method; return r; };
+  const res = () => { const o = { code: 0, body: '' }; o.writeHead = (c) => { o.code = c; }; o.end = (b) => { o.body = String(b || ''); }; return o; };
+  for (const m of ['GET', 'PUT', 'DELETE', 'PATCH']) { const o = res(); await PH.route(mk(m), o, { authed: true, dataDir: require('os').tmpdir() }); assert.equal(o.code, 405, m); }
+  const u = res(); await PH.route(mk('POST'), u, { authed: false }); assert.equal(u.code, 401);
+  const c = res(); await PH.route(mk('POST'), c, { authed: true, dataDir: require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'ph-')), execImpl: () => { throw new Error('不该执行'); } });
+  assert.ok(c.code >= 400 && c.code < 500, '缺 confirmed/字段 → 4xx，未执行外发：' + c.code);
+});
