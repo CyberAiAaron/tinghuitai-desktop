@@ -682,6 +682,7 @@ class Session {
   runThink(opts) { const run = () => this.runThinkNow(opts); this.thinkChain = (this.thinkChain || Promise.resolve()).then(run, run); return this.thinkChain; }
   async runThinkNow({ full = false } = {}) {
     if (this.finalized || this.thinking || !this.transcript.length) return;
+    if (!full && process.env.LIVE_CARD_WARMUP !== 'off' && liveInsight.inWarmup(this.cardClockStart)) return;   // 思考档同样守开场 5 分钟热身（09-25 试用实测第 61 秒就出卡）
     if (!full && (this.charsSinceThink < thinkPass.THINK_MIN_CHARS || this.transcript.length <= this.lastThinkIndex)) return;
     this.thinking = true; const t0 = Date.now(); const epochAtStart = this.editEpoch || 0; const charsAtStart = this.charsSinceThink;
     try {
