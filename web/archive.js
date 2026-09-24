@@ -175,7 +175,8 @@ function renderBrief(s){
       +'<ul class="bf-topics">'+ov.topics.map((x,i)=>'<li><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+x.n+'</span><span>'+nm(x.title,map)+'</span><span class="bf-dur">'+mmss(x.from)+'–'+mmss(x.to)+'</span></li>').join('')+'</ul><div class="bf-bar">'+bar+'</div></section>'
     +'<section class="fs"><h3 class="fs-h"><span class="fs-n">2</span>'+esc(t('topics'))+'</h3>'+(b.topics||[]).map(card).join('')+'</section>'
     // REQ-009 + 09-22：待办是这一节的表，内容由 paintActions() 填（读 /meeting-actions）；表下面是一句话改待办的对话框。
-    +'<section class="fs" id="bf-todo"><h3 class="fs-h"><span class="fs-n">3</span>'+esc(t('todos'))+' <span class="bf-sug" id="bf-todo-n"></span></h3><div id="bf-cards"></div><div id="bf-say"></div><div id="bf-think"></div><div id="bf-risks"></div></section>';
+    +'<section class="fs" id="bf-todo"><h3 class="fs-h"><span class="fs-n">3</span>'+esc(t('todos'))+' <span class="bf-sug" id="bf-todo-n"></span></h3><div id="bf-cards"></div><div id="bf-say"></div><div id="bf-think"></div><div id="bf-risks"></div></section>'
+    +'<section class="fs" id="bf-brain"><h3 class="fs-h"><span class="fs-n">4</span>'+esc(T('项目状态更新','Project state updates'))+' <span class="bf-sug" id="bf-upd-n"></span></h3><div id="bf-updates"></div></section>';
   const view=$('#bf-view');view.textContent=viewFull?t('showBrief'):t('showFull');view.onclick=()=>{setViewFull(!viewFull);render(record);};
   $('#bf-sum').querySelectorAll('[data-dec]').forEach(el=>el.onclick=()=>{decEditing.add(el.dataset.dec);render(record);});
   $('#bf-sum').querySelectorAll('[data-dec-set]').forEach(el=>el.onclick=()=>{const [n,v]=el.dataset.decSet.split('|');saveDecision(Number(n),v);});
@@ -463,6 +464,72 @@ function whenText(s){
     return (a.getMonth()+1)+'/'+a.getDate()+' '+p(a.getHours())+':'+p(a.getMinutes())+'–'+p(b.getHours())+':'+p(b.getMinutes());
   }catch(e){return String(s.start||'');}
 }
+// ===== 项目状态更新（Project Brain，2026-09-24）=====
+// 会后模型把这场会和 .memory/project-state.md 对照，列出「改变了我们对项目哪些认知」；每条只在这里点一次：
+// 接受 / 改一下 → 写回 project-state.md 对应节（带来源）；不要 → 记住，下次同义不再提。模型自己永远写不到状态文件。
+let updDoc=null,updStatus='',updBusy=false,updEdit=new Map(),updNote='';
+const UPD_TYPE={new_fact:'新事实',changed_fact:'口径变化',decision:'决定',superseded_decision:'推翻旧决定',owner_change:'负责人变化',milestone_change:'节点变化',new_action:'新动作',resolved_question:'未定项已定',new_open_question:'新未定项',assumption:'假设',risk:'风险',blocker:'阻塞'};
+const UPD_LEVEL={mentioned:'提到',discussed:'讨论过',proposed:'有人提议',agreed:'会上同意',decided:'会上拍板'};
+async function loadUpdates(run){
+  if(source!=='mac')return;
+  updBusy=!!run;paintUpdates();
+  try{
+    const r=await fetch('/asr-relay/memory-updates?id='+encodeURIComponent(id)+(run?'&run=1':'')+'&token='+actTok(),{cache:'no-store',signal:AbortSignal.timeout(run?180000:15000)});
+    const j=await r.json();
+    if(!j.ok){updStatus='error';updNote=j.error||'';}
+    else{updStatus=j.status;updDoc=j.doc;updNote='';}
+  }catch(e){updStatus='error';updNote=e.message||String(e);}
+  updBusy=false;paintUpdates();
+}
+async function decideUpdate(uid,action,all){
+  const it=all?null:(updDoc.items||[]).find(x=>x.uid===uid);
+  const text=action==='edit'?(updEdit.get(uid)||'').trim():'';
+  if(action==='edit'&&text.length<4){updNote=T('改后的内容太短','Edited text too short');paintUpdates();return;}
+  if(all&&!confirm(T('把所有待确认条目写进项目状态？','Accept all pending updates into project state?')))return;
+  updBusy=true;paintUpdates();
+  try{
+    const r=await fetch('/asr-relay/memory-update?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id,uid:uid||'',do:action,text,all:!!all,confirmed:true}),signal:AbortSignal.timeout(20000)});
+    const j=await r.json();
+    if(!j.ok){updNote=j.error||'';}else{updDoc=j.doc;updNote='';updEdit.delete(uid);}
+  }catch(e){updNote=e.message||String(e);}
+  updBusy=false;paintUpdates();
+}
+function paintUpdates(){
+  const box=document.getElementById('bf-updates'),cnt=document.getElementById('bf-upd-n');if(!box)return;
+  const items=(updDoc&&updDoc.items)||[],pend=items.filter(x=>!x.decision);
+  if(cnt)cnt.textContent=updDoc?(pend.length?pend.length+' '+T('条待确认','pending'):T('已全部处理','all done')):'';
+  let h='';
+  if(updBusy)h+='<p class="bf-note">'+T('正在对照项目状态…（最长 3 分钟）','Comparing with project state… (up to 3 min)')+'</p>';
+  if(updNote)h+='<p class="bf-note bad">'+esc(updNote)+'</p>';
+  if(!updDoc){
+    h+='<p class="bf-note">'+(updStatus==='error'?T('读不到差异数据。','Could not load.'):T('这场会还没和项目状态对照过。','Not compared with project state yet.'))+'</p>';
+    if(!updBusy)h+='<button type="button" class="bf-btn" data-upd-run="1">'+T('现在对照','Compare now')+'</button>';
+    box.innerHTML=h;wireUpdates(box);return;
+  }
+  h+='<p class="bf-note">'+T('模型只列「这场会改变了我们对项目哪些认知」；你点「接受」才写进 project-state.md，写回的行带来源。','Only items that change what we know. Nothing is written until you accept; each accepted line carries its source.')+'</p>';
+  if(!items.length)h+='<p class="bf-note">'+T('这场会没有改变项目状态的内容。','This meeting changed nothing in project state.')+'</p>';
+  h+=items.map(it=>{
+    const d=it.decision,lv=UPD_LEVEL[it.level]||it.level,ty=UPD_TYPE[it.type]||it.type;
+    const head='<div class="upd-h"><span class="td-tag">'+esc(ty)+'</span> <b>'+esc(it.field)+'</b> <span class="bf-sug">'+esc(lv)+' · '+esc(it.confidence)+' · '+esc(it.section.replace(/^##\s*/,''))+'</span></div>';
+    const body='<div class="upd-b"><div><span class="bf-sug">'+T('原','Before')+'</span> '+esc(it.before)+'</div><div><span class="bf-sug">'+T('改为','After')+'</span> '+esc(d&&d.action==='edit'?d.text:it.after)+'</div>'+(it.evidence?'<div class="bf-sug">'+T('会上原话','Said')+'：'+esc(it.evidence)+'</div>':'')+'</div>';
+    let act;
+    if(d)act='<div class="upd-a bf-sug">'+(d.action==='reject'?T('已拒绝','Rejected'):d.action==='edit'?T('已按改后写入','Written (edited)'):T('已写入项目状态','Written'))+'</div>';
+    else act='<div class="upd-a"><textarea class="upd-in" data-upd-in="'+esc(it.uid)+'" rows="2" placeholder="'+esc(T('要改就在这里改，再点「改一下」','Edit here, then click Edit'))+'">'+esc(updEdit.get(it.uid)||'')+'</textarea>'
+      +'<button type="button" class="bf-btn" data-upd="'+esc(it.uid)+'" data-act="accept"'+(updBusy?' disabled':'')+'>'+T('接受','Accept')+'</button> '
+      +'<button type="button" class="bf-btn" data-upd="'+esc(it.uid)+'" data-act="edit"'+(updBusy?' disabled':'')+'>'+T('改一下','Edit')+'</button> '
+      +'<button type="button" class="bf-btn ghost" data-upd="'+esc(it.uid)+'" data-act="reject"'+(updBusy?' disabled':'')+'>'+T('不要','Reject')+'</button></div>';
+    return '<div class="upd'+(d?' done':'')+'">'+head+body+act+'</div>';
+  }).join('');
+  h+='<div class="upd-foot">'+(pend.length>1?'<button type="button" class="bf-btn" data-upd-all="1"'+(updBusy?' disabled':'')+'>'+T('全部接受','Accept all')+'</button> ':'')
+    +'<button type="button" class="bf-btn ghost" data-upd-run="1"'+(updBusy?' disabled':'')+'>'+T('重新对照','Compare again')+'</button></div>';
+  box.innerHTML=h;wireUpdates(box);
+}
+function wireUpdates(box){
+  box.querySelectorAll('[data-upd-in]').forEach(el=>el.addEventListener('input',()=>updEdit.set(el.getAttribute('data-upd-in'),el.value)));
+  box.querySelectorAll('[data-upd]').forEach(b=>b.addEventListener('click',()=>decideUpdate(b.getAttribute('data-upd'),b.getAttribute('data-act'),false)));
+  const all=box.querySelector('[data-upd-all]');if(all)all.addEventListener('click',()=>decideUpdate('','accept',true));
+  const run=box.querySelector('[data-upd-run]');if(run)run.addEventListener('click',()=>loadUpdates(true));
+}
 function wireActions(box){
   box.querySelectorAll('[data-undo]').forEach(el=>el.querySelector('button').onclick=()=>actDo(el.dataset.undo,'restore'));
   box.querySelectorAll('tr[data-card]').forEach(row=>{
@@ -622,7 +689,7 @@ function jumpFromHash(){const m=/(?:^|[#&])t=(\d+(?:\.\d+)?)/.exec(location.hash
 window.addEventListener('hashchange',jumpFromHash);
 (async()=>{
   if(!id){$('#title').textContent='缺少会议编号';return;}
-  try{const s=await fromMac();source='mac';await probeAudio();render(s);loadSpeakers();loadActions();loadFocus();jumpFromHash();}
+  try{const s=await fromMac();source='mac';await probeAudio();render(s);loadSpeakers();loadActions();loadFocus();loadUpdates();jumpFromHash();}
   catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);jumpFromHash();}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
 })();
 

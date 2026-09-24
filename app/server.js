@@ -139,7 +139,8 @@ function viewNorm(s) { return String(s || '').replace(/[\s“”"'‘’「」�
 function viewGrounded(f, hay) { const ev = viewNorm(f && f.evidence); if (ev.length < 6 || !hay) return false; if (hay.includes(ev.slice(0, 10)) || hay.includes(ev.slice(0, 8))) return true; for (let i = 5; i + 10 <= ev.length; i += 5) if (hay.includes(ev.slice(i, i + 10))) return true; return false; }
 // 洞察（0.6.14）的服务端门槛在 app/insight-filter.js：claim ≤30 字、source 必须命中本场背景 / 名单 / 日期 / 决策编号 / 时间戳、why 必须说清省了哪一步。
 const { normalizeInsight } = require('./insight-filter');
-const thinkPass = require('./think-pass');   // 思考档（0.6.18）：强模型定时想目的 / 争点 / 最佳方案，推到看法栏
+const thinkPass = require('./think-pass');
+const memoryDiff = require('./memory-diff');   // Project Brain 差异（会后对照 project-state.md，Aaron 确认后写回）   // 思考档（0.6.18）：强模型定时想目的 / 争点 / 最佳方案，推到看法栏
 const feedbackWeight = require('./feedback-weight');   // 批 4（F5）：反馈按 type 计数，useless 多的那一类少给
 const sessionStats = require('./session-stats');       // 批 4（F5）：每场结束的四个数（Jev / Sonnet 调用、洞察、采纳），从 usage.jsonl 与场次算
 function viewIsJunk(f) { if (!f || typeof f !== 'object') return true; if (!String(f.claim || '').trim()) return true; return VIEW_JUNK.test(String(f.note || '')) || VIEW_JUNK.test(String(f.claim || '')); }
@@ -1008,7 +1009,10 @@ class Session {
         const ops = require('./memory-ops');
         ops.ingest(DATA, sess, (sysP, userP) => askModel(loadEnv(), sysP, userP, 2000, 'post'), log)
           .then(r => { noteMemoryOutcome(this.id, r); return ops.project(DATA, path.join(MEMORY_PROJECTION_DIR, 'meeting-memory.md'), log); })
-          .catch(e => { log('memory ingest 失败 ' + e.message); scheduleAttentionCheck(); });
+          .catch(e => { log('memory ingest 失败 ' + e.message); scheduleAttentionCheck(); })
+          // Project Brain（2026-09-24）：卡进库之后，对照 project-state.md 出一份待确认差异；失败只记日志
+          .then(() => { if (String(loadEnv().MEMORY_DIFF || 'on') === 'off') return; return runMemoryDiff(sess); })
+          .catch(e => log('memory-diff 失败 ' + e.message));
       }, 3000);
       if (memTimer.unref) memTimer.unref();
       if(this.transcript.length){workHub.hub.ingestSession(sess);workHub.hub.save();}
@@ -1255,6 +1259,12 @@ function afterArchive(sid){
 // 会后处理台：这一场的参会人（对上的那场日历 + 已记下的参会人）和生成参数在这里拼一次，
 // 后台自动跑和页面来问走同一条路，免得两处各拼一份、结果还不一样。
 const ACTIONS_DIR=path.join(DATA,'state/meeting-pipeline');
+// Project Brain 差异：状态文件 = env.PROJECT_STATE_FILE，否则 .memory/project-state.md（与 context-pack 同一份）
+function projectStateFile(){const e=loadEnv();return e.PROJECT_STATE_FILE||path.join(MEMORY_PROJECTION_DIR,'project-state.md');}
+function runMemoryDiff(sess){
+  return memoryDiff.run({dataDir:DATA,session:sess,stateFile:projectStateFile(),projectionDir:MEMORY_PROJECTION_DIR,log,
+    ask:(sysP,userP,maxTokens)=>askModel(loadEnv(),sysP,userP,maxTokens,'post',{sessionId:String(sess.id||''),purpose:'memory-diff'})});
+}
 function actionsOpts(sid){
   const enhanced=meetingPipeline.result(sid);
   const file=pendingFileFor(sid),pend=file?journal.read(file):null;
@@ -2273,6 +2283,40 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
   // ===== 会后处理台（REQ-009）：待办卡 / 一句话思考 / 风险提示 =====
   // 三个口：读整份、对一张卡做一个动作、读今天的「最重要的三件事」。
   // 外发只有 do:'send' 这一条路——读和生成都不会碰 lark-cli。
+  // Project Brain（2026-09-24）：GET /memory-updates?id= 读这场的待确认差异（&run=1 现算一次，Aaron 在回看页点「重新对照」）；
+  // POST /memory-update {id, uid, do: accept|edit|reject, text, all} 记决定；accept / edit 才写 project-state.md，模型永远写不到它。
+  if (p.endsWith('/memory-updates') || p.endsWith('/memory-update')) {
+    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
+    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
+    const okId = v => /^[A-Za-z0-9_-]{1,80}$/.test(v);
+    if (p.endsWith('/memory-updates')) {
+      if (req.method !== 'GET') { res.writeHead(405); return res.end('method not allowed'); }
+      const sid = String(u.searchParams.get('id') || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
+      const want = u.searchParams.get('run') === '1';
+      let doc = memoryDiff.read(DATA, sid);
+      if (want || !doc) {
+        if (!want && doc === null && !u.searchParams.has('run')) return reply(200, { ok:true, status:'none', doc:null });
+        const file = pendingFileFor(sid); const sess = file ? journal.read(file) : null;
+        if (!sess) return reply(404, { ok:false, error:'找不到这场会的记录' });
+        if (!isLocalReq(req)) return reply(403, { ok:false, error:"只能在这台电脑上重算" });
+        try { const r = await withMeetingLock(sid, () => runMemoryDiff({ ...sess, id: sid })); doc = r.doc || memoryDiff.read(DATA, sid); }
+        catch (e) { return reply(500, { ok:false, error: String(e.message || e).slice(0, 200) }); }
+      }
+      return reply(200, { ok:true, status: doc ? 'done' : 'none', doc, ...(doc ? { summary: memoryDiff.summary(doc) } : {}) });
+    }
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method not allowed'); }
+    const parts = []; let size = 0; for await (const c of req) { size += c.length; if (size > 20000) return reply(413, { ok:false, error:'太长' }); parts.push(c); }
+    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
+    const sid = String(j.id || ''); if (!okId(sid)) return reply(400, { ok:false, error:'会议编号不对' });
+    const all = j.all === true; const uid = String(j.uid || '');
+    if (!all && !/^u-[0-9a-f]{12}$/.test(uid)) return reply(400, { ok:false, error:'条目编号不对' });
+    if (j.confirmed !== true) return reply(400, { ok:false, error:'请在界面上确认（服务端没收到确认）' });
+    try {
+      const out = await withMeetingLock(sid, async () => memoryDiff.decide({ dataDir: DATA, sid, uid, action: String(j.do || ''), text: j.text, all, projectionDir: MEMORY_PROJECTION_DIR, log }));
+      log('memory-update ' + sid + ' ' + (all ? 'all' : uid) + ' ' + j.do);
+      return reply(200, { ok:true, doc: out.doc, written: out.written, summary: memoryDiff.summary(out.doc) });
+    } catch (e) { return reply(e.code === 404 ? 404 : 400, { ok:false, error: e.message }); }
+  }
   if (p.endsWith('/meeting-actions') || p.endsWith('/meeting-action') || p.endsWith('/project-focus')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
