@@ -856,7 +856,7 @@ def make_insights_deep(session, brief, attendees=None, timeout=600, runs=2):
                                  'runs': 0, 'runErrors': errors,
                                  'search': {'queries': searched['queries'], 'urls': sorted(allowed_urls)[:25], 'audit': searched['audit']}},
                 'contextLoaded': False, 'warning': '深度洞察没跑出来（%s）' % why}
-    # 自由文本没有稳定的字段可机械对齐；选非空字符更多的一版，避免为了合并重新套回结构。
+    # 自由文本没有稳定的字段可机械对齐；选去空白后字符更少的一版（精简优先），不合并、不套回结构。
     chosen_run = min((k for k in results if results[k][0].strip()), key=lambda k: len(re.sub(r'\s+', '', results[k][0])), default=min(results))
     md, r0, _ = results[chosen_run]
     meta = {'model': str(r0.get('model') or ''), 'provider': str(r0.get('provider') or ''), 'tier': 'insight-deep',
