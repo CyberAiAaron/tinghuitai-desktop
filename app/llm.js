@@ -141,8 +141,15 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
   const chain = noFallback ? all.slice(0, 1) : all.slice(skipped), attempts = [];
   if (!chain.length) return { text: null, errorCode: 'chain_exhausted', degraded: false, truncated: false, truncatedChars: 0, attempts, skipped };
   for (const p of chain) {
-    const model = pickModel(p, kind);
-    const r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools });
+    let model = pickModel(p, kind);
+    let r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools });
+    // 思考档点名的强模型没额度 / 没权限（09-25 试用实测：Fable 额度用完，会中思考连败 7 次）→ 同一家退回慢思考档再试一次
+    const fallbackModel = p.models && (p.models.post || p.models.live);
+    if (!r.ok && (kind === 'think' || kind === 'insight-deep') && fallbackModel && model && model !== fallbackModel) {
+      log(p.label + ' 思考档 ' + model + ' 不可用（' + r.errorCode + '），改用 ' + fallbackModel);
+      model = fallbackModel;
+      r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools });
+    }
     // requestedModel = 配置里点名要的那个；model = 接口实际回的那个。两者会不一样
     // （09-22 实测：要 deepseek-chat，回 deepseek-flash），账本两个都记才查得清「那天跑的到底是谁」。
     if (r.ok) return { text: r.text, provider: p.label, usageProvider: p.usageProvider, model: r.model || model, requestedModel: model || '', usage: r.usage,
