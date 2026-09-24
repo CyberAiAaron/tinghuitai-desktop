@@ -703,7 +703,7 @@ class Session {
       if (added) this.checkpoint();
       log(`think${full ? '(full)' : ''} ${Date.now() - t0}ms v=${added} ${this.id}`);
     } catch (e) { log('think exc ' + e.message); }
-    this.thinking = false;
+    finally { this.thinking = false; }   // Codex 三审：作废 / 已结束的 return 路径也要放锁，否则这场后面思考档全停
   }
 
   async runDeepPass(recentText, segIds, epochAtStart) {
