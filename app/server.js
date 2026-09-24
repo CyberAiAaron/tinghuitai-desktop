@@ -2808,7 +2808,9 @@ if (MEMORY_PROJECTION_DIR && !process.env.THT_TEST) {
   refreshContext();
   setInterval(refreshContext, 30000).unref();
 }
-server.listen(PORT, '127.0.0.1', () => log(`asr-relay v2.3 listening on 127.0.0.1:${PORT}`));
+server.listen(PORT, '127.0.0.1', () => { log(`asr-relay v2.3 listening on 127.0.0.1:${PORT}`);
+  if (process.env.THT_LLM_AUTOPICK !== 'off') require('./llm-autopick').autopick({ settings, log }).catch(() => {});   // 开箱没配模型时自动选本机已登录的 Claude Code / Codex
+});
 
 // D1 + R7（2026-09-22）：这个定时器每 5 分钟把 pending 目录里近百份会议整读一遍，再整份重写 work-hub.json
 // （正本 + previous 两遍，12MB，全是同步 IO）。两种情况它纯属白跑还要卡住事件循环：

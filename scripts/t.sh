@@ -8,6 +8,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 export PATH="/Users/aaron.wang/.local/bin:$PATH"
+export THT_LLM_AUTOPICK=off   # 测试不许真去跑本机 claude / codex
 OUT="${THT_TEST_OUT:-.tmp/test.out}"; mkdir -p "$(dirname "$OUT")"
 MODE="changed"; MSG=""; FILES=()
 case "${1:-}" in
