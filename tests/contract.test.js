@@ -169,7 +169,9 @@ test('TRIAGE carries the three insight types, the F2 rules and the §5.2 schema,
       assert.ok(text.includes(s), name+' 缺：'+s);
     assert.ok(!text.includes('至今未落地'), name+' 不许断言「至今未落地」');
   }
-  // 服务端追加的【洞察门槛】也要点到 type / evidence / refs，否则模型只看它就把新字段省了
-  const gate=(server.match(/【洞察门槛】[^']*/)||[''])[0];
-  for (const s of ['type','conflict','recheck','answer','evidence','refs']) assert.ok(gate.includes(s),'server.js 洞察门槛缺：'+s);
+  // 09-24 起服务端会中分诊不再用这段 TRIAGE（它只剩浏览器离线那条路），改用 app/live-insight.js：唯一一种卡，每次最多 1 条
+  const live=read('app/live-insight.js');
+  for (const s of ['每次最多 1 条','复述别人刚说的话','要点总结','进展汇报','"do":"ask|todo|note|handoff"','insight ≤40 字','why ≤60 字','label ≤8 字','没有明确动作就不给 action']) assert.ok(live.includes(s),'live-insight.js 提示词缺：'+s);
+  assert.match(server, /liveInsight\.systemPrompt\(/, 'server.js 分诊要用 live-insight 的提示词');
+  assert.doesNotMatch(server, /【洞察门槛】/, '旧的【洞察门槛】不该再进会中分诊');
 });

@@ -68,9 +68,9 @@ test('洞察：evidence 对不上逐字稿编号的条目丢掉，剩下的重�
   const r2=py(`mp.ask_model=lambda *a,**k:{'text':${insRaw([insItem(1,{evidence:['s1']})])}}\nprint(json.dumps(mp.make_insights(json.loads(${JSON.stringify(JSON.stringify(seg))}),{'overview':{},'topics':[]})))`);
   assert.deepEqual(r2.insights[0].evidence,['s1']);});
 test('洞察：模型失败不炸 brief——insights 为空并记 insightsWarning，点评照常',()=>{
-  const b=py(`mp.make_brief=lambda s,**k:{'overview':{'topics':[],'conclusions':[],'todos':[]},'topics':[]}\nmp.make_review=lambda *a,**k:{'questions':[],'review':{'contextLoaded':True,'errors':[],'facts':[],'alignment':[],'advice':[],'checked':[],'owners':[]}}\ndef boom(*a,**k):raise mp.ModelError('三家都没回')\nmp.make_insights=boom\nprint(json.dumps(mp.build_brief({})))`);
+  const b=py(`mp.make_brief=lambda s,**k:{'overview':{'topics':[],'conclusions':[],'todos':[]},'topics':[]}\nmp.make_review=lambda *a,**k:{'questions':[],'review':{'contextLoaded':True,'errors':[],'facts':[],'alignment':[],'advice':[],'checked':[],'owners':[]}}\ndef boom(*a,**k):raise mp.ModelError('三家都没回')\nmp.make_insights_deep=boom\nprint(json.dumps(mp.build_brief({})))`);
   assert.deepEqual(b.insights,[]);assert.match(b.insightsWarning,/没回/);assert.ok(b.review);assert.equal(b.reviewWarning,undefined);
-  const ok=py(`mp.make_brief=lambda s,**k:{'overview':{'topics':[],'conclusions':[],'todos':[]},'topics':[]}\nmp.make_review=lambda *a,**k:{'questions':[],'review':{'owners':[]}}\nmp.make_insights=lambda *a,**k:{'insights':[{'n':1,'question':'q','answer':'a','evidence':['g1']}],'contextLoaded':True,'dropped':0}\nprint(json.dumps(mp.build_brief({})))`);
+  const ok=py(`mp.make_brief=lambda s,**k:{'overview':{'topics':[],'conclusions':[],'todos':[]},'topics':[]}\nmp.make_review=lambda *a,**k:{'questions':[],'review':{'owners':[]}}\nmp.make_insights_deep=lambda *a,**k:{'insights':[{'n':1,'question':'q','answer':'a','evidence':['g1']}],'contextLoaded':True,'dropped':0}\nprint(json.dumps(mp.build_brief({})))`);
   assert.equal(ok.insights.length,1);assert.equal(ok.insightsWarning,undefined);});
 test('洞察：context-pack 的 insights 用途只带 project-state 节选（§0–§2 + §8b/§8c），各节平分 3000 字',()=>{
   const proj=fs.mkdtempSync(path.join(os.tmpdir(),'tht-ins-proj-'));
@@ -81,3 +81,71 @@ test('洞察：context-pack 的 insights 用途只带 project-state 节选（§0
   for(const h of ['## 0a','## 3. 用研','## 9. 术语','head'])assert.doesNotMatch(pack.text,new RegExp(h));
   assert.ok((pack.text.match(/未/g)||[]).length>500,'§8b 该分到额度，不该被前面几节吃光');
   assert.match(fs.readFileSync(path.join(root,'app/meeting-pipeline.py'),'utf8'),/context=\{'purpose': 'insights'/);});
+
+// —— 洞察 · 深度档（Aaron 09-24「not real insight, just recall」：最强档 + 全量本机资料 + 跑两次取交集，失败退回浅档）——
+const deepItem=(i,q,extra={})=>({n:i,question:q,answer:'立场'+i,why:'依据〔g1〕',industry:[{claim:'行业做法'+i,source:'模型知识（未核实）'}],better:'',evidence:['g'+(i%3+1)],action:{label:'按钮',text:'待办'+i,owner:''},...extra});
+const deepRaw=(items,meta={},brief={})=>JSON.stringify(JSON.stringify({insights:items,insightsBrief:{purpose:'目的',assumptions:['假设1'],decisionsForAaron:['拍板1'],...brief},insightsMeta:{conflictsWithBoard:['D1 冲突'],industryQueries:['on-device OCR','Chansey 像素','Humane AI Pin 续航','26191 sensor','Nothing 定价','Shawn Liu 的方案','Liu 说的 always-on','NDP120 功耗'],...meta}}));
+test('深度档上下文包：项目状态全文、六本台账只取现行口径段并各截 4000、决策板与行业备份取最新一份、方法论全文',()=>{
+  const ctx=fs.mkdtempSync(path.join(os.tmpdir(),'tht-deep-ctx-'));const mem=path.join(ctx,'.memory');fs.mkdirSync(mem);fs.mkdirSync(path.join(ctx,'kb_backup'));
+  fs.writeFileSync(path.join(mem,'project-state.md'),'## 0. 定位\n'+'态'.repeat(500)+'\n## 9. 术语\n术语表');
+  for(const n of ['positioning','user_research','tech_hardware','market_milestones','people_org','assets_pipelines'])
+    fs.writeFileSync(path.join(mem,'ledger_'+n+'.md'),'---\nfront\n---\n# 主题 '+n+'\n## 来源级别\n级别说明\n## 1. 现行口径\n'+'口'.repeat(6000)+'\n## 2. 冲突与口径差\n'+'冲'.repeat(300));
+  fs.writeFileSync(path.join(mem,'reference_aaron_methodology.md'),'方法论正文');fs.writeFileSync(path.join(mem,'user_aaron_working_style.md'),'工作方式正文');
+  fs.writeFileSync(path.join(ctx,'kb_backup','决策板D1-D8_2026-09-22.md'),'旧板');fs.writeFileSync(path.join(ctx,'kb_backup','决策板D1-D8_2026-09-23.md'),'新板 D1 已拍');
+  fs.writeFileSync(path.join(ctx,'kb_backup','行业与竞品情报_2026-09-20.md'),'旧情报');fs.writeFileSync(path.join(ctx,'kb_backup','行业与竞品情报_2026-09-23.md'),'新情报 '+'业'.repeat(9000));
+  const pack=require('../app/context-pack').build({PROJECT_CONTEXT_DIR:ctx,MEMORY_PROJECTION_DIR:mem},{purpose:'insights-deep',dataDir:fs.mkdtempSync(path.join(os.tmpdir(),'tht-deep-data-'))});
+  assert.ok(pack.configured);
+  for(const h of ['【一、项目状态','【二、六本主题台账','【三、决策板','【四、会议负责人的方法论','【五、行业与竞品情报'])assert.match(pack.text,new RegExp(h));
+  assert.match(pack.text,/术语表/,'项目状态要全文');
+  assert.match(pack.text,/# 主题 positioning\n## 1\. 现行口径/);assert.doesNotMatch(pack.text,/级别说明|冲冲冲|front/,'台账只取现行口径段');
+  const led=pack.parts.filter(p=>p.key.startsWith('memory-files/ledgers/'));assert.equal(led.length,6);for(const p of led){assert.ok(p.chars<=4000,p.key+' 超了 '+p.chars);assert.ok(p.truncated);}
+  assert.match(pack.text,/新板 D1 已拍/);assert.doesNotMatch(pack.text,/旧板|旧情报/);
+  const ind=pack.parts.find(p=>p.key==='kb-latest/industry');assert.ok(ind.chars<=8000&&ind.truncated,'行业备份截到 8000');
+  assert.match(pack.text,/方法论正文/);assert.match(pack.text,/工作方式正文/);
+  assert.match(pack.note,/与决策板 Dx 冲突/);assert.match(pack.note,/模型知识（未核实）/);
+  // 现有 insights 浅档一个字都没动
+  const shallow=require('../app/context-pack').TABLE.insights;assert.equal(shallow.parts.length,1);assert.equal(shallow.parts[0].cap,3000);});
+test('深度档上下文包：没有决策板 / 行业备份时 note 说清，不编 D 号',()=>{
+  const ctx=fs.mkdtempSync(path.join(os.tmpdir(),'tht-deep-empty-'));const mem=path.join(ctx,'.memory');fs.mkdirSync(mem);fs.writeFileSync(path.join(mem,'project-state.md'),'## 0. 定位\n态');
+  const pack=require('../app/context-pack').build({PROJECT_CONTEXT_DIR:ctx,MEMORY_PROJECTION_DIR:mem},{purpose:'insights-deep',dataDir:fs.mkdtempSync(path.join(os.tmpdir(),'tht-deep-data2-'))});
+  assert.match(pack.note,/没读到决策板导出/);assert.match(pack.note,/没有行业备份/);assert.ok(pack.parts.some(p=>p.key==='kb-latest/decision-board-full'&&p.missing));});
+test('深度档：模型档 insight-deep 走思考档那个最强模型，没配退回慢思考档',()=>{
+  const llm=require('../app/llm');assert.equal(llm.pickModel({models:{post:'opus',think:'claude-fable-5-1'}},'insight-deep'),'claude-fable-5-1');
+  assert.equal(llm.pickModel({models:{post:'opus'}},'insight-deep'),'opus');assert.equal(llm.pickModel({models:{post:'opus','insight-deep':'x'}},'insight-deep'),'x');});
+test('深度档：同一输入跑两次并行，两次都出现的算稳定、其余标 unstable 放最后，一致率按多的那次算；kind / 用途 / 超时都对',()=>{
+  const run1=[deepItem(1,'OCR 差异化的前提是 Pin 自动拍还是手持拍'),deepItem(2,'横屏 ID 是否等于概念 A 已胜出'),deepItem(3,'Pin 摄像头要不要常开检测')];
+  const run2=[deepItem(1,'Pin 摄像头还要不要 always-on 常开检测',{industry:[{claim:'另一处行业依据',source:'行业与竞品情报_2026-09-23.md'}]}),deepItem(2,'OCR 差异化前提：Pin 自动拍还是手机手持拍'),deepItem(3,'识别失败后的回滚谁认领')];
+  const r=py(`import threading\ncalls=[]\nlock=threading.Lock()\ndef fake(system,user,**k):\n    with lock: calls.append((k.get('kind'),k.get('purpose'),k.get('timeout'),(k.get('context') or {}).get('purpose'),k.get('max_tokens')))\n    return {'text':${deepRaw(run1)} if k.get('purpose')=='insights-deep' else ${deepRaw(run2)},'context':{'chars':65000,'hash':'abc'},'model':'claude-fable-5-1','provider':'Claude'}\nmp.ask_model=fake\nres=mp.make_insights_deep(json.loads(${JSON.stringify(JSON.stringify(INS_SESSION))}),json.loads(${JSON.stringify(JSON.stringify(INS_BRIEF))}),['Shawn Liu'])\nprint(json.dumps({'calls':sorted(calls),'res':res}))`);
+  assert.deepEqual(r.calls,[['insight-deep','insights-deep',600,'insights-deep',8000],['insight-deep','insights-deep-r2',600,'insights-deep',8000]]);
+  const ins=r.res.insights;assert.equal(ins.length,4);assert.deepEqual(ins.map(x=>x.n),[1,2,3,4]);
+  assert.deepEqual(ins.map(x=>!!x.unstable),[false,false,true,true]);assert.equal(ins[0].question,'OCR 差异化的前提是 Pin 自动拍还是手持拍');assert.equal(ins[1].industry.length,2,'第二次的行业依据补进稳定条');
+  assert.ok(ins[0].stability>=0.5);assert.equal(ins[2].question,'横屏 ID 是否等于概念 A 已胜出');assert.equal(ins[3].question,'识别失败后的回滚谁认领');
+  assert.equal(r.res.insightsMeta.consistency,0.67);assert.equal(r.res.insightsMeta.runs,2);assert.equal(r.res.insightsMeta.model,'claude-fable-5-1');assert.equal(r.res.insightsMeta.contextChars,65000);assert.equal(r.res.contextLoaded,true);
+  assert.deepEqual(r.res.insightsBrief,{purpose:'目的',assumptions:['假设1'],decisionsForAaron:['拍板1']});assert.deepEqual(r.res.insightsMeta.conflictsWithBoard,['D1 冲突']);assert.equal(r.res.warning,'');
+  assert.deepEqual(Object.keys(ins[0]).sort(),['action','answer','better','evidence','industry','n','question','stability','why']);});
+test('深度档：industryQueries 黑名单——含 Chansey / 26191 / Nothing / 参会人名的词整条丢掉，只留技术名词，最多 5 条',()=>{
+  const r=py(`mp.ask_model=lambda system,user,**k:{'text':${deepRaw([deepItem(1,'q')])},'context':{'chars':1}}\nres=mp.make_insights_deep(json.loads(${JSON.stringify(JSON.stringify(INS_SESSION))}),json.loads(${JSON.stringify(JSON.stringify(INS_BRIEF))}),['Shawn Liu'])\nprint(json.dumps(res['insightsMeta']['industryQueries']))`);
+  assert.deepEqual(r,['on-device OCR','Humane AI Pin 续航','NDP120 功耗']);
+  const q=py(`print(json.dumps(mp._clean_industry_queries(['a','a','b','c','d','e','f','nothing phone','Moneta 代号'],set())))`);assert.deepEqual(q,['a','b','c','d','e']);});
+test('深度档：两次都超时 / 失败 → 退回浅档，insightsWarning 写原因，insightsMeta 标 shallow',()=>{
+  const r=py(`def fake(system,user,**k):\n    if k.get('kind')=='insight-deep': raise mp.ModelError('模型调用超时（600 秒）')\n    return {'text':${insRaw([insItem(1)])},'context':{'chars':2500}}\nmp.ask_model=fake\nres=mp.make_insights_deep(json.loads(${JSON.stringify(JSON.stringify(INS_SESSION))}),json.loads(${JSON.stringify(JSON.stringify(INS_BRIEF))}),['Shawn Liu'])\nb={'overview':{}}\nmp._apply_insights(b,res)\nprint(json.dumps({'res':res,'b':b}))`);
+  assert.equal(r.res.insights.length,1);assert.equal(r.res.insights[0].question,'问题1');assert.match(r.res.warning,/超时/);assert.match(r.res.warning,/浅档/);
+  assert.equal(r.res.insightsMeta.tier,'shallow');assert.match(r.res.insightsMeta.reason,/第 1 次.*第 2 次/);assert.equal(r.res.insightsBrief,null);
+  assert.equal(r.b.insights.length,1);assert.match(r.b.insightsWarning,/超时/);assert.equal(r.b.insightsBrief,null);});
+test('深度档：只有一次跑成功 → 全部标 unstable、一致率 null、warning 说明；evidence 对不上的照样丢',()=>{
+  const r=py(`n=[0]\ndef fake(system,user,**k):\n    if k.get('purpose')=='insights-deep-r2': raise mp.ModelError('模型调用超时（600 秒）')\n    return {'text':${deepRaw([deepItem(1,'q1'),deepItem(2,'q2',{evidence:['nope']})])},'context':{'chars':3}}\nmp.ask_model=fake\nres=mp.make_insights_deep(json.loads(${JSON.stringify(JSON.stringify(INS_SESSION))}),json.loads(${JSON.stringify(JSON.stringify(INS_BRIEF))}))\nprint(json.dumps(res))`);
+  assert.equal(r.insights.length,1);assert.equal(r.insights[0].unstable,true);assert.equal(r.insightsMeta.consistency,null);assert.equal(r.insightsMeta.runs,1);assert.equal(r.dropped,1);assert.match(r.warning,/只有一次/);});
+test('深度档：两条算不算同一件事——问法重叠 ≥0.5；或问法不同但引同一批片段（≥2 个编号、Jaccard ≥0.5）；单个编号相同不算',()=>{
+  const r=py(`print(json.dumps([mp._q_overlap('OCR 差异化的前提是 Pin 自动拍还是手持拍','OCR 差异化前提：Pin 自动拍还是手机手持拍'),mp._q_overlap('横屏 ID 是否等于概念 A 已胜出','识别失败后的回滚谁认领'),mp._q_overlap('',' x'),
+    mp._same_insight({'question':'带摄像头 Pin 的触发与功耗门槛是什么','evidence':['a','b','c','d']},{'question':'Pin 摄像头靠什么触发，4 小时电池撑得住吗','evidence':['a','b','c','e']}),
+    mp._same_insight({'question':'横屏 ID 是否等于概念 A 已胜出','evidence':['g3']},{'question':'识别失败后的回滚谁认领','evidence':['g3']}),
+    mp._same_insight({'question':'像素该按什么倒推','evidence':['a','b','c']},{'question':'要几 MP 怎么定','evidence':['x','y','z']})]))`);
+  assert.ok(r[0]>=0.5,'同义问法要对上 '+r[0]);assert.ok(r[1]<0.5,'不同问题不能对上 '+r[1]);assert.equal(r[2],0);
+  assert.ok(r[3]>=0.5,'片段重叠要对上 '+r[3]);assert.equal(r[4],0,'单个编号相同不算');assert.equal(r[5],0);});
+test('深度档：--only insights 默认走深度档、--shallow 走浅档；prompt 里写死 A→F 顺序和四条硬约束',()=>{
+  const src=fs.readFileSync(path.join(root,'app/meeting-pipeline.py'),'utf8');
+  assert.match(src,/fn=make_insights if shallow else make_insights_deep/);assert.match(src,/sys\.argv\[3\]=='--shallow'/);
+  const i=['A 这场会在做什么','B 核心功能与真正的关键假设','C 会上方案评估','D 行业最佳实践','E 更省 / 更好的路','F 建议 + 需要 Aaron 拍的决定'].map(h=>src.indexOf(h));
+  assert.ok(i.every(x=>x>0)&&i.every((x,k)=>k===0||x>i[k-1]),'A→F 顺序写死');
+  for(const h of ['与决策板 Dx 冲突','Aaron 口述 ＞ 他的文档 / 决策板 ＞ 会议','会上说过 ≠ 决定','模型知识（未核实）'])assert.ok(src.includes(h),'缺硬约束：'+h);
+  assert.match(src,/context=\{'purpose': 'insights-deep'/);assert.match(src,/_apply_insights\(brief, make_insights_deep/,'归档管线也走深度档');});

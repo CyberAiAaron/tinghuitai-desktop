@@ -105,7 +105,8 @@ function localReqReason(req) {
 }
 function loadEnv() { return settings.load(); }
 const jevGate = require('./jev-gate');   // 逐句门卫：命中才立刻分诊（主动智能 F1）
-const triageFast = require('./triage-fast');   // 批 5 提速：输出瘦身 / 已有条目摘要 / 门卫窗口 / 资料占位 / 兜底间隔
+const triageFast = require('./triage-fast');
+const liveInsight = require('./live-insight');   // 会中唯一一种卡：洞察 + 最多一个动作（Aaron 2026-09-24）   // 批 5 提速：输出瘦身 / 已有条目摘要 / 门卫窗口 / 资料占位 / 兜底间隔
 const pushWhitelist = require('./push-whitelist');   // 会中飞书提醒白名单（THT-R4）：点名本人 / 冲突类 / 本人带截止承诺才推，MEETING_PUSH 默认 off
 const JEV_TOTALS = { calls: 0, hits: 0, failures: 0 };   // 进程级累计，给 /health；每场自己的在 session.jev.stats
 const SOURCE_HIT = { hit: 0, miss: 0 };                 // 洞察卡动作执行时出处 / 承诺卡命中与否（F5 第五个数），进程级给 /health；每场的从卡片 sourceHit 算（app/session-stats.js）
@@ -223,7 +224,7 @@ const isTimeoutCode = code => /timeout|abort/i.test(String(code || ''));
 async function askModel(env, system, user, maxTokens, tier, trace) {
   // 不认品牌：按 settings 的降级链挨个试（app/llm.js）。换一家模型只改配置，不动这里。
   const r = await llm.ask(env, { kind: tier || 'post', system, user, maxTokens, dataDir: DATA, log, fetchImpl: fetch,
-    skip: (trace && trace.skip) || 0, timeoutMs: (trace && trace.timeoutMs) || 0, thinking: trace ? trace.thinking : undefined });
+    skip: (trace && trace.skip) || 0, timeoutMs: (trace && trace.timeoutMs) || 0, thinking: trace ? trace.thinking : undefined, tools: trace && trace.tools === false ? false : undefined });
   if (trace) { trace.errorCode = r.errorCode || ''; trace.timedOut = (r.attempts && r.attempts.length) ? isTimeoutCode(r.attempts[0].errorCode) : (!r.text && isTimeoutCode(r.errorCode)); if (trace.timedOut) LLM_HEALTH.timeouts++; }
   // 一把钥匙都没配不是「模型坏了」，是还没配：不计入故障计数，交给就绪条去说。
   if (r.errorCode !== 'no_provider') markLlm(!!r.text, r.errorCode || '');
@@ -865,63 +866,54 @@ class Session {
     try {
       const contextVersion=this.brief;const endIndex = this.transcript.length; const inputChars = this.charsSinceTriage;
       const epochAtStart = this.editEpoch || 0;
-      // 批 5：门卫命中触发的那一轮只带「命中句 ±5 句 + 没分诊过的增量」（app/triage-fast.js gateWindow）；定时轮沿用「上次游标 −3 起到末尾」。
+      // 会中唯一一种卡（app/live-insight.js，Aaron 2026-09-24）：每次调用最多 1 条洞察 + 0–2 行要点日志；复述不再是卡。
+      // 进模型的行 = 门卫命中句 ±5（app/triage-fast.js gateWindow）∪ 最近 60 秒 ∪ 没分诊过的增量。
       const gateOn = !!(this.jev && this.jev.enabled);
-      const rows = (gate && gateOn)
-        ? triageFast.gateWindow({ marks: this.jev.marks, lastTriageIndex: this.lastTriageIndex, endIndex }).map(i => this.transcript[i]).filter(Boolean)
-        : this.transcript.slice(Math.max(0,this.lastTriageIndex-3),endIndex);
+      const gateIdx = (gate && gateOn)
+        ? triageFast.gateWindow({ marks: this.jev.marks, lastTriageIndex: this.lastTriageIndex, endIndex })
+        : [];
+      const rowIdx = [...new Set([...gateIdx, ...liveInsight.windowRows(this.transcript, { endIndex, lastTriageIndex: this.lastTriageIndex })])].sort((a, b) => a - b);
+      const rows = rowIdx.map(i => this.transcript[i]).filter(Boolean);
       const segIds = rows.map(x=>x.id).filter(Boolean);
       segIdsForDeep = segIds; epochForDeep = epochAtStart;
       let recent = rows.filter(x=>!repeatedASR(x.text)&&!fillerASR(x.text)).map(x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`).join('\n');
       // R4：分诊输入封顶。一次超时会让下一轮把没分诊的全带上，越积越长、越长越超时。只留最新的约 8000 字（按行切，不切半句）。
       if (recent.length > TRIAGE_RECENT_CAP) { const full = recent.length, cut = recent.slice(-TRIAGE_RECENT_CAP), nl = cut.indexOf('\n'); recent = nl >= 0 ? cut.slice(nl + 1) : cut; log('triage 输入 ' + full + ' 字，截到最新 ' + recent.length + ' 字 ' + this.id); }
       recentForDeep = recent;                 // 之前漏了这一行，深推理档一直没跑过
-      // 批 5：已有条目只传 id + 前 20 字（给模型去重够了；原来整条回传，几千字进 prompt 又被原样回显撑爆 2000 输出上限）
-      const existed = triageFast.existedSummary(this);
-      // 语言锁三重（实测：只在开头插一句会被后面的中文 triage prompt + 中文转写盖过 → 前置 + 末尾强指令 + user 提醒）
       const enUI = this.uiLang === 'en';
-      const langHead = enUI
-        ? 'Write every text / claim / note field in ENGLISH, regardless of the language spoken. Prefix any conflict item text with "⚠️ Conflict: ".\n'
-        : '所有 text / claim / note 字段一律用中文输出。冲突项的 text 以「⚠️ 冲突：」开头。\n';
-      const langTail = enUI
-        ? '\n\n【输出语言 / OUTPUT LANGUAGE】Every text/claim/note value MUST be written in English, even though the meeting is spoken in Chinese. Do NOT output Chinese in these fields.'
-        : '\n\n【输出语言】所有 text/claim/note 一律中文。';
-      // 之前这一段写成了独立表达式（分号后 + '…'），依据要求从没进过 prompt（2026-09-17 修）
-      const sys = langHead + this.buildBriefBlock() + (this.triagePrompt || '你是会议实时助手，从转写提取 highlights/todos/factchecks，只输出 JSON。')
-        + '\n【洞察门槛】insights 每条必须带 type（conflict / recheck / answer 之一）、source（引用【本场背景】/ 决策板 / 项目记忆里的具体文档名、决策编号、会议日期或数字）和 why（省了本人哪一步）；conflict 还必须带 evidence（会上原话）和 refs，recheck 必须带 evidence；缺任一项的不要输出；不给建议、不纠听写、不写「无法核实 / 需确认」；每轮 ≤2 条，没有就 []。'
-        + triageFast.outputRules({ enUI, sweep: gateOn && !gate })   // 批 5：只输出新增 + 字段短句；门卫开着时的定时轮只补漏
-        + langTail;
+      const sys = liveInsight.systemPrompt({ enUI, sweep: gateOn && !gate });   // 门卫开着时的定时轮只补漏
       const fbLines = (this.viewFeedback || []).slice(-12).map(x => `- [${x.rating}] ${x.kind || ''}：${x.claim}${x.comment ? '（他说：' + x.comment + '）' : ''}`).join('\n');
-      // 批 4（F5）：按 type 的 useless 计数降权（app/feedback-weight.js：某类 useless ≥2 且多于 useful+adopt → 提示词明说「这一类最多 1 条」，归一化后再硬拦）
-      const fbBlock = (fbLines ? `\n\n【他对你之前看法的反馈（useless 的这类少给，useful/adopt 的这类多给，comment 是他的原话）】\n${fbLines}` : '') + feedbackWeight.promptBlock(this.viewFeedback || []);
-      const userReminder = enUI ? '\n\n(Reminder: write all text/claim/note fields in English.)' : '';
-      // 本机资料（项目状态 + 本场检索到的会议记忆 + 上次已发出的事）只从这一个入口出去，
+      const fbBlock = fbLines ? `\n\n【他对你之前洞察的反馈（useless 的这类少给，useful/adopt 的这类多给，comment 是他的原话）】\n${fbLines}` : '';
+      // 本机资料（项目状态 + 决策板 + 本场检索到的会议记忆）只从这一个入口出去，
       // 带了哪几份、哪一版会跟着这次调用记进用量账（app/context-pack.js）。
       // 批 5：一场会第一次分诊全量带资料，之后 hash 不变就换成一行占位（用量账 contextDelta = same / full，app/triage-fast.js PackDelta）
       const pack = this.packDelta.apply(contextPack.build(this.env, { purpose: 'live', dataDir: DATA, session: this, meetingId: this.id }));
-      const trace = { sessionId: this.id, purpose: 'triage', pack, skip: this.llmSkip || 0, timeoutMs: LIVE_LLM_TIMEOUT_MS, thinking: triageFast.liveThinking(this.env) };   // 批 5：分诊默认关思考（LLM_LIVE_THINKING）
+      const trace = { sessionId: this.id, purpose: 'triage', pack, skip: this.llmSkip || 0, timeoutMs: LIVE_LLM_TIMEOUT_MS, thinking: triageFast.liveThinking(this.env), tools: false };   // 09-24：分诊不给工具（模型会去 Read 文件，一轮拖到 35 s）   // 批 5：分诊默认关思考（LLM_LIVE_THINKING）
       const gateBlock = gateOn ? this.jev.marksBlock(endIndex) : '';
-      const raw = await askModel(this.env, sys, `${pack.text}${fbBlock}\n\n【已有条目】${existed}${gateBlock}\n\n【最新转写】\n${recent}${userReminder}`, triageFast.MAX_OUTPUT_TOKENS, 'live', trace);
+      const existing = (this.factchecks || []).filter(x => x && !x.stale).map(x => x.claim).filter(Boolean);
+      const logExisting = (this.highlights || []).filter(x => x && !x.stale).map(x => x.text).filter(Boolean);
+      const user = liveInsight.userPrompt({ packText: pack.text + fbBlock, brief: this.brief || '', existing, log: logExisting, recent, gateBlock, enUI });
+      const raw = await askModel(this.env, sys, user, liveInsight.MAX_OUTPUT_TOKENS, 'live', trace);
       // R4：同一场连续 2 次首选超时 → 这场后续都跳过首选（skip），别每 40 秒白等一次；超时那一段也算分诊过，游标照样前进，不越积越长。
       if (trace.timedOut) { this.llmTimeoutStreak++; if (this.llmTimeoutStreak >= 2 && !this.llmSkip) { this.llmSkip = 1; log('会中分诊连续 ' + this.llmTimeoutStreak + ' 次首选超时，本场后续跳过首选模型 ' + this.id); } }
       else if (raw) this.llmTimeoutStreak = 0;
       if (!raw) { if (trace.timedOut && (this.editEpoch || 0) === epochAtStart) { this.lastTriageIndex = endIndex; this.charsSinceTriage = Math.max(0, this.charsSinceTriage - inputChars); if (this.jev) this.jev.consume(endIndex); } this.triaging = false; return; }
       if (this.brief!==contextVersion) { this.triaging = false; return; }
-      let j = null; const cleaned = raw.replace(/^```json?|```$/g, '').trim(); try { j = JSON.parse(cleaned); } catch (e) { j = salvageJson(cleaned); if (j) log('triage JSON 被截断，已抢救部分条目 ' + this.id); }
+      const j = liveInsight.parse(raw);
+      if (!j) log('triage JSON 解析失败 ' + this.id);
       if (j) {
         // 先判作废再动指针：反过来会把这段标记成「已分诊」而结果又被丢掉，
         // 用户改一句话就换来那 40 秒的要点永久缺失。
         if ((this.editEpoch || 0) !== epochAtStart) { log('triage 结果作废：期间用户改过逐字稿 ' + this.id); this.triaging = false; return; }
         if (this.finalized) { log('triage 结果作废：会已经结束 ' + this.id); this.triaging = false; return; }
         this.lastTriageIndex=endIndex; this.charsSinceTriage=Math.max(0,this.charsSinceTriage-inputChars); if (this.jev) this.jev.consume(endIndex);
-        const fresh=(items,old,key)=>{const seen=new Set(old.map(x=>require('./work-hub').norm(x[key])));return (Array.isArray(items)?items:[]).filter(x=>{if(!x||!x[key]||/与已有条目重复|无新增|already (?:recorded|covered)|no new information/i.test(x[key]))return false;const k=require('./work-hub').norm(x[key]);if(seen.has(k))return false;seen.add(k);return true;});};
-        // 模型会把已有条目的 id 原样回显，一律由服务端重新发号，否则会出现重复 id
+        // 服务端发号 + 来源段；去重在 live-insight.normalize（与已出过的洞察 / 要点日志比相似度）
         const stamp = a => { for (const x of a) { if (!x) continue; x.id = 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1); x.sourceRefs = segIds.map(id => ({ segId: id })); } return a; };
-        // 置信度不采信模型自述：说「大概率对/可能有误」必须能在最新转写里指出依据；指不出就降成「拿不准」
-        // 0.6.14 起模型输出 insights（洞察）；旧模型 / 回看旧场次仍可能是 factchecks，两路都收，统一存进 this.factchecks（存储字段名不改，日志 / 快照 / 回看全兼容）
-        if (Array.isArray(j.insights)) { const before = j.insights.length; const ictx = { brief: this.brief, names: [...this.attendeeNames(), ...this.rosterNames()] }; j.factchecks = feedbackWeight.capDemoted(j.insights.map(f => normalizeInsight(f, ictx)).filter(Boolean), this.viewFeedback || []).slice(0, 2); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} insights without concrete source/why`); }
-        else if (Array.isArray(j.factchecks)) { const hay = viewNorm(recent); const before = j.factchecks.length; j.factchecks = j.factchecks.filter(f => !viewIsJunk(f)).filter(f => { normalizeView(f); return viewGrounded(f, hay); }); if (before !== j.factchecks.length) log(`[triage] dropped ${before - j.factchecks.length}/${before} views without verbatim evidence`); }
-        const fb = { type: 'feedback', highlights: stamp(fresh(j.highlights,this.highlights,'text')), todos: stamp(fresh(j.todos,this.todos,'text')), factchecks: stamp(fresh(j.factchecks,this.factchecks,'claim')) }; this.highlights.push(...fb.highlights); this.todos.push(...fb.todos); this.factchecks.push(...fb.factchecks); this.broadcast(fb); log(`triage${gate ? '(jev)' : ''} ${Date.now() - t0}ms h=${fb.highlights.length} t=${fb.todos.length} f=${fb.factchecks.length} ${this.id}`);
+        const r = liveInsight.normalize(j, { existing, logExisting, enUI });
+        // 存储字段名不改：洞察进 factchecks（回看 / 归档 / 统计全兼容），要点日志进 highlights（log:true，会中折叠不占屏）；待办只经洞察的 action.do=todo 由本人点出来，不再自动抽
+        const fb = { type: 'feedback', highlights: stamp(r.log.map(text => ({ text, log: true }))), todos: [], factchecks: stamp(r.insight ? [r.insight] : []) };
+        this.highlights.push(...fb.highlights); this.factchecks.push(...fb.factchecks); this.broadcast(fb);
+        log(`triage${gate ? '(jev)' : ''} ${Date.now() - t0}ms i=${fb.factchecks.length}${r.insight ? '(' + r.insight.label + ')' : ''} log=${fb.highlights.length} ${this.id}`);
         try { const hit = this.pushGate ? this.pushGate.consider(fb) : []; if (hit.length) this.larkPush(hit); } catch (e) { log('push whitelist exc ' + e.message); } }
     } catch (e) { log('triage exc ' + e.message); }
     this.triaging = false;

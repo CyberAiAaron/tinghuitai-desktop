@@ -149,6 +149,8 @@ select.inline{width:auto;max-width:46vw;text-overflow:ellipsis}
 @keyframes slidein{from{transform:translateY(-6px);opacity:0}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion: reduce){.card.fresh{animation:none}}
 .card .k{font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:3px;white-space:nowrap}
+.card.ck.live .ins-main b{font-weight:650}.card.ck.live .ins-main .kind{margin-left:6px}.card.ck.live .v.src{color:var(--muted)}.card.ck.live .ins-res{margin-top:4px;color:var(--muted)}.card.ck.live .live-act{margin-top:6px}.card.ck.live .live-act[disabled]{opacity:.5;cursor:not-allowed}
+.hl-log{margin-top:10px;border-top:1px dashed var(--line);padding-top:6px;color:var(--faint);font-size:12px}.hl-log summary{cursor:pointer;color:var(--muted)}.hl-log .hl-log-row{padding:2px 0 2px 4px}.hl-log .tm{font-family:var(--mono);font-size:11px;margin-right:6px}
 .card.todo{border-left:3px solid var(--todo)} .card.hl{border-left:3px solid var(--hl)} .card.ck{border-left:3px solid var(--check)} .card.conf{border-left:3px solid var(--conf);background:color-mix(in srgb,var(--conf) 8%,var(--panel-2))}
 .card .v{font-size:12px;margin-top:2px;color:var(--muted)}
 .verdict{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:5px;margin-right:6px;border:1px solid var(--line)}
@@ -454,7 +456,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     </section>
     <section class="pane" id="p-ck" data-p="ck">
       <h2><i></i><span data-i18n="h_ck">看法</span><span class="right" data-i18n="unverified">来自你的项目记忆</span></h2>
-      <div class="scroll list" id="ck"><div class="empty">讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。</div></div>
+      <div class="scroll list" id="ck"><div class="empty">会改变你下一句该说什么、或会后该做什么的事，会出现在这里；每条最多一个动作。空着 = 暂时没有。</div></div>
     </section>
   </main>
 

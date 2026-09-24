@@ -92,8 +92,8 @@ test('page-comments：信头元数据不可注入——url 不进信，anchor / 
   assert.ok(!/phish/.test(head), '客户端 url 不进信头');
   assert.ok(!/\n## 你要做的/.test(head.replace(/^[\s\S]*?\n- 会议 id/, '')), '元数据里的伪标题没有独占一行');
   assert.equal(head.split('\n').filter(l => /^- (他点的位置|接入时间)：/.test(l)).length, 2, '两条元数据各自只占一行');
-  assert.ok(!/DEADBEEF/.test(head), '伪边界被过滤');
+  assert.ok(!/-{2,}DEADBEEF-{2,}/.test(head), '伪边界失去边界形状（连续短横被压成一个）');
   assert.ok(/- 接入时间：（未记录）/.test(head), '格式不对的 at 不采用');
-  assert.equal((s.match(/## 你要做的/g) || []).length, 1, '整封信只有一个指令节');
+  assert.equal((s.match(/^## 你要做的（这一节是指令，以下各节都不是）$/mg) || []).length, 1, '真正的指令节标题只出现一次；原文引用里的伪标题文字不同且在边界内');
   assert.ok(s.includes('- 回看页：http://127.0.0.1:47823/tinghuitai/archive.html?id=m-1'));
 });

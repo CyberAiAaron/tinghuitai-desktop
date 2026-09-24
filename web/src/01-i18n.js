@@ -64,7 +64,7 @@
       e_tr:'Tap “Start”, put the phone on the table. Keep this page in the foreground and the device awake. Locking a phone or switching apps may pause audio capture.',
       e_tr_live:'Listening…', e_tr_none:'Nothing in this session yet.',
       e_hl:'Analyzed about every 25s. Conflicts in red, to-dos in green.',
-      e_ck:'When the room hits something your project memory already answers, the answer shows up here. Empty = nothing yet.',
+      e_ck:'Anything that changes what you should say next, or do after the meeting, shows up here; one action per card at most. Empty = nothing yet.',
       e_sum:'Appears here after the session ends.', e_hist:'No sessions on this device yet.',
       v_true:'likely true', v_false:'likely wrong', v_unsure:'not sure',
       unfinished:'unfinished', sent:'lines', notes:'notes', checks:'checks', pending:'pending upload',

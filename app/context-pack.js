@@ -74,6 +74,31 @@ const TABLE = {
     why: '洞察要对照项目现状才问得出真问题（决策断点、和既定口径的冲突），凝练版状态里定位 + 已定的事 + 未定项这几节够了；整个背景目录会把它拖成综述。',
     render: p => (p['project-state'] ? '【项目现状（凝练版节选：定位 / 已定的事 / 未定项与口径差）】\n' + p['project-state'] + '\n\n' : ''),
   },
+  'insights-deep': {
+    title: '回看页洞察 · 深度档（军师：目的 / 假设 / 方案评估 / 行业 / 更优路 / 待拍板）',
+    // Aaron 09-24：浅档只带 3000 字节选，出来的是 recall 不是 insight。深度档把「他怎么想、项目定到哪、外面怎么做」都递进去：
+    //   项目状态全文 ＞ 六本台账的「现行口径」段 ＞ 决策板最新导出全文（硬约束）＞ 他的方法论与工作方式 ＞ 行业竞品情报本机备份。
+    // 顺序就是优先级：Aaron 口述 ＞ 他的文档 / 决策板 ＞ 会议；行业备份放最后，只作对照，不作真源。
+    parts: [
+      { key: 'project-state', cap: 30000 },
+      { key: 'memory-files', cap: 0, perFile: 4000, glob: 'ledger_*.md', sections: [/现行口径/], withTitle: true, label: 'ledgers' },
+      { key: 'kb-latest', cap: 14000, match: /^决策板D1-D8_(\d{4}-\d{2}-\d{2})\.md$/, label: 'decision-board-full' },
+      { key: 'memory-files', cap: 0, perFile: 6000, files: ['reference_aaron_methodology.md', 'user_aaron_working_style.md'], label: 'aaron' },
+      { key: 'kb-latest', cap: 8000, match: /^(行业|竞品)[^/]*_(\d{4}-\d{2}-\d{2})\.md$/, label: 'industry' },
+    ],
+    why: '第一性原理的洞察要同时看到项目全貌、已拍板的硬约束、他本人的判断框架和外面的做法；浅档那 3000 字只够复述会议。',
+    render: p => [
+      p['project-state'] ? '【一、项目状态（凝练版全文）】\n' + p['project-state'] : '',
+      p['memory-files/ledgers'] ? '【二、六本主题台账 · 现行口径（每本只取这一段）】\n' + p['memory-files/ledgers'] : '',
+      p['kb-latest/decision-board-full'] ? '【三、决策板 D1–D8 最新只读副本（已拍板口径 = 硬约束）】\n' + p['kb-latest/decision-board-full'] : '',
+      p['memory-files/aaron'] ? '【四、会议负责人的方法论与工作方式（用他的框架说话）】\n' + p['memory-files/aaron'] : '',
+      p['kb-latest/industry'] ? '【五、行业与竞品情报（本机备份，非实时；引用时写文件名）】\n' + p['kb-latest/industry'] : '',
+    ].filter(Boolean).join('\n\n') + '\n\n',
+    note: p => (p['kb-latest/decision-board-full']
+      ? '\n资料里带了决策板最新导出：已拍板的 D1–D8 口径是硬约束，会上或你自己的判断与之冲突时点名「与决策板 Dx 冲突」，不得另选口径。'
+      : '\n这台机器没读到决策板导出：conflictsWithBoard 给空数组，不要编造 D 号。')
+      + (p['kb-latest/industry'] ? '\n行业资料只有本机备份，没有联网：industry 里引备份写文件名，引你自己的知识写「模型知识（未核实）」。' : '\n没有行业备份：industry 里只能写「模型知识（未核实）」。'),
+  },
   title: { title: '自动起标题', parts: [], why: '只给这场会起名，带项目资料会让标题往项目大词上飘。', render: () => '' },
   // —— 会后处理台（app/actions.js）——
   'actions.classify': { title: '处理台 · 事项分类', parts: [], why: '判断一条待办属于四类中的哪一类，只看这条待办本身。', render: () => '' },
@@ -291,6 +316,48 @@ function pickSections(r, patterns, cap) {
   return { ...r, text, truncated: text.length < raw.length, sections: picked.length };
 }
 
+
+// —— 记忆投影目录里的文件（深度洞察用）——
+// 按文件名或通配从记忆投影目录取几份：每份截 perFile；sections 给了就只取标题匹配的那几节（withTitle 时带上文件第一行 # 标题）。
+function loadMemoryFiles(spec, { env, dataDir }) {
+  const dir = memoryProjectionDir(dataDir, env), key = 'memory-files/' + (spec.label || 'files');
+  const names = Array.isArray(spec.files) && spec.files.length ? spec.files.slice(0, 10)
+    : (spec.glob ? globUnder(dir, String(spec.glob)).map(f => path.basename(f)).slice(0, 10) : []);
+  const parts = [], texts = [];
+  for (const name of names) {
+    const r0 = readOne(path.join(dir, name), 0);
+    if (r0.missing) { parts.push({ key: key + '/' + name, title: name, missing: true, source: r0.source, reason: r0.reason }); continue; }
+    let r = r0;
+    if (spec.sections) {
+      const title = (String(r0.text).match(/^#\s+.+$/m) || [''])[0];
+      r = pickSections(r0, spec.sections, Math.max(0, (spec.perFile || 0) - (spec.withTitle ? title.length + 1 : 0)));
+      if (spec.withTitle && title) r = { ...r, text: title + '\n' + r.text };
+    } else if (spec.perFile > 0) { const t = String(r0.text).slice(0, spec.perFile); r = { ...r0, text: t, truncated: t.length < r0.text.length }; }
+    parts.push({ key: key + '/' + name, title: name, source: r.source, chars: r.text.length, truncated: !!r.truncated, version: r.version, syncedAt: r.syncedAt });
+    if (r.text) texts.push('=== 文件：' + name + ' ===\n' + r.text);
+  }
+  let text = texts.join('\n\n'), cut = false;
+  if (spec.cap > 0 && text.length > spec.cap) { text = text.slice(0, spec.cap); cut = true; }
+  if (!names.length) parts.push({ key, title: spec.glob || 'memory-files', missing: true, source: dir, reason: '目录里没有匹配的文件' });
+  return { key, text, parts, truncated: cut, configured: names.length > 0 };
+}
+
+// —— kb_backup 里最新一份按日期命名的导出（深度洞察用）——
+// 目录和决策板同一个（app/decision-board.js 的 boardDir）；「最新」按文件名里的日期，不按 mtime。
+function loadKbLatest(spec, { env }) {
+  const key = 'kb-latest/' + (spec.label || 'file');
+  const dir = require('./decision-board').boardDir(env);
+  if (!dir) return { key, text: '', parts: [{ key, title: key, missing: true, source: '(未配置 PROJECT_CONTEXT_DIR)', reason: '没配背景目录' }] };
+  let names = []; try { names = fs.readdirSync(dir); } catch (e) { return { key, text: '', parts: [{ key, title: key, missing: true, source: dir, reason: '目录不在' }] }; }
+  const dated = names.map(n => { const m = n.match(spec.match); return m ? { n, d: m[m.length - 1] } : null; }).filter(Boolean)
+    .sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+  if (!dated.length) return { key, text: '', parts: [{ key, title: key, missing: true, source: dir, reason: '目录里没有匹配的导出' }] };
+  const r = readOne(path.join(dir, dated[0].n), spec.cap);
+  if (r.missing) return { key, text: '', parts: [{ key, title: dated[0].n, missing: true, source: r.source, reason: r.reason }] };
+  return { key, text: '=== 文件：' + dated[0].n + ' ===\n' + r.text, truncated: r.truncated,
+    parts: [{ key, title: dated[0].n, source: r.source, chars: r.text.length, truncated: r.truncated, version: r.version, syncedAt: r.syncedAt }] };
+}
+
 // ============================ 组装 ============================
 function loadPart(spec, { env, dataDir, memoryBlock }) {
   const cap = Number(spec.cap) || 0, perFile = Number(spec.perFile) || 0;
@@ -331,6 +398,8 @@ function loadPart(spec, { env, dataDir, memoryBlock }) {
     case 'focus-files': { const r = loadFileGroup('focus', fileList(env.PROJECT_FOCUS_FILES), cap, perFile); return { text: r.text, parts: r.parts, configured: r.configured }; }
     case 'fact-files': { const r = loadFileGroup('facts', fileList(env.FACT_SOURCE_FILES), cap, perFile); return { text: r.text, parts: r.parts, configured: r.configured }; }
     case 'context-files': { const r = loadContextFiles(env, cap, perFile); return { text: r.text, parts: r.parts, configured: r.configured }; }
+    case 'memory-files': { const r = loadMemoryFiles(spec, { env, dataDir }); return { key: r.key, text: r.text, parts: r.parts, configured: r.configured }; }
+    case 'kb-latest': { const r = loadKbLatest(spec, { env }); return { key: r.key, text: r.text, parts: r.parts }; }
     default: return { text: '', parts: [] };
   }
 }
@@ -353,7 +422,7 @@ function build(env, { purpose, dataDir, session, meetingId, memoryBlock, budget 
   let configured = spec.parts.length === 0;
   for (const p of spec.parts) {
     const one = loadPart(p, { env: env || {}, dataDir: dir, memoryBlock: mem });
-    pieces[p.key] = one.text || '';
+    pieces[one.key || p.key] = one.text || '';   // 同一种资料在一个用途里可以出现两次（各带 label），按块名登记
     parts.push(...one.parts);
     if (one.configured) configured = true;
     if (p.key === 'project-state' || p.key === 'core-context' || p.key === 'roster' || p.key === 'meeting-memory') configured = true;

@@ -39,12 +39,12 @@ function cleanAnchor(a) {
 // 信的正文。边界是一次性随机串，只有恰好等于边界的整行才算结束——原文里伪造不出来。
 // 信头元数据只许单行、受限字符集；回看页链接一律服务端拼，客户端传来的 url 不进信（审核 0924 指出可注入伪指令）
 const META_BAD = /[^0-9A-Za-z_.:=\/,; ·\-\u4e00-\u9fff]/g;
-const metaLine = (v, n) => String(v == null ? '' : v).replace(/[\r\n\t]+/g, ' ').replace(META_BAD, '').slice(0, n);
+const metaLine = (v, n) => String(v == null ? '' : v).replace(/[\r\n\t]+/g, ' ').replace(META_BAD, '').replace(/-{2,}/g, '-').slice(0, n);
 function renderLetter(c, { pageBase, direct }) {
   const nonce = crypto.randomBytes(4).toString('hex').toUpperCase();
   const B = '--------' + nonce + '--------';
   const where = metaLine([c.anchor.selector, Object.entries(c.anchor.dataset).map(([k, v]) => 'data-' + k + '=' + v).join(' ')].filter(Boolean).join(' · '), 240);
-  const at = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(c.at || '') ? metaLine(c.at, 40) : '（未记录）';
+  const at = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/.test(String(c.at || '').trim()) ? metaLine(c.at, 40) : '（未记录）';
   return `# 回看页评论交办：${c.comment.replace(/\s+/g, ' ').slice(0, 60)}
 
 这条来自听会台回看页。Aaron 在页面上点了某一块内容旁的 💬，写了一句话，点了「交给 Claude」，转给你。

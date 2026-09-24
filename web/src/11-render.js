@@ -140,11 +140,11 @@
       }
     }
     const cks = cur.factchecks.filter(x=>!viewJunk(x)).sort((a,b)=>(a.at||0)-(b.at||0));
-    const nCk = cks.map(x=>x.claim+'\u0002'+(x.rating||'')+(x.comment||'')+(x.pendingFix?'p':'')).join('\u0001') + '|' + ui + '|' + (cur.i18n && cur.i18n[ui] ? JSON.stringify(cur.i18n[ui]).length : 0);
+    const nCk = cks.map(x=>x.claim+'\u0002'+(x.rating||'')+(x.comment||'')+(x.pendingFix?'p':'')+(x.liveDone?JSON.stringify(x.liveDone):'')).join('\u0001') + '|' + ui + '|' + (cur.i18n && cur.i18n[ui] ? JSON.stringify(cur.i18n[ui]).length : 0) + '|log' + (cur.highlights||[]).length;
     if (nCk !== sigCk) {
       const first = sigCk === '';
       sigCk = nCk;
-      keepScroll(el.ck, () => { el.ck.innerHTML = viewListHtml(cks, first); }); if (first) el.ck.scrollTop = el.ck.scrollHeight;
+      keepScroll(el.ck, () => { el.ck.innerHTML = viewListHtml(cks, first) + hlLogHtml(cur.highlights); }); if (first) el.ck.scrollTop = el.ck.scrollHeight;
     }
     const myTodosEl=$('#my-todos'); if(myTodosEl){ const h=myTodosHtml(cur.todos||[]); if(myTodosEl.dataset.sig!==h){ myTodosEl.dataset.sig=h; myTodosEl.innerHTML=h; myTodosEl.hidden=!h; } }
     el.ctr.textContent = tr.length; el.chl.textContent = items.length; el.cck.textContent = cks.length;
@@ -167,7 +167,23 @@
   function insightType(x){ return ['conflict','recheck','answer','goal','best','doubt','remind'].includes(x&&x.type)?x.type:'answer'; }
   function insightTypeLabel(t){ return ({conflict:ui==='en'?'Mismatch':'对不上',recheck:ui==='en'?'Stalled':'空转',answer:ui==='en'?'Answer':'递答案',goal:ui==='en'?'Purpose':'目的',best:ui==='en'?'Best option':'最佳方案',doubt:ui==='en'?'Doubt':'存疑',remind:ui==='en'?'Note':'提醒'})[t]||''; }
   function insightActionLabel(t){ return ({conflict:ui==='en'?'Check & attach doc':'核对并附文档',recheck:ui==='en'?'Set a date':'定日期'})[t]||''; }
-  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k"></span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.at?`<span class="tm">${hms(x.at).slice(0,5)}</span>`:''}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  // 会中唯一一种卡（app/live-insight.js，Aaron 2026-09-24）：insight 一行加粗 + why 一行灰 + 最多一个按钮。live:2 或 action.do 是 ask/todo/note/handoff 的走这里。
+  const LIVE_DOS=['ask','todo','note','handoff'];
+  function isLiveCard(x){ return !!x && (x.live===2 || (x.action && LIVE_DOS.includes(x.action.do))); }
+  function liveActionHtml(x){
+    const a=x.action||{}, en=ui==='en'; if(!LIVE_DOS.includes(a.do)||!a.text) return '';
+    const d=x.liveDone||{};
+    if(d.do==='ask') return `<div class="v ins-res">${en?'You could ask: ':'你可以问：'}${esc(a.text)}${d.copied?(en?' (copied)':'（已复制）'):''}</div>`;
+    if(d.do==='todo') return `<div class="v ins-res">${en?'Added to to-dos: ':'已加待办：'}${esc(a.text)}</div>`;
+    if(d.do==='note') return `<div class="v ins-res">${en?'Noted: ':'已记：'}${esc(a.text)}</div>`;
+    const label=esc(a.label||({ask:'问一句',todo:'加待办',note:'记一笔',handoff:'交给人'})[a.do]);
+    if(a.do==='handoff') return `<button class="btn sm live-act" type="button" data-do="handoff" disabled title="${en?'Hand off from the review page after the meeting':'会后在回看页交给某人'}">${label}</button><span class="v src">${esc(a.text)}</span>`;
+    return `<button class="btn sm live-act" type="button" data-do="${esc(a.do)}" title="${esc(a.text)}">${label}</button>`;
+  }
+  function liveCard(x, fresh){ const t=x.type==='conflict'?'conflict':'live'; return `<div class="card ck live kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?esc(hms(x.at).slice(0,5)):''}</span><div><div class="ins-main"><b>${esc(tt(x.claim))}</b>${x.label?` <span class="kind">${esc(tt(x.label))}</span>`:''}</div>${(x.why||x.note)?`<div class="v src">${esc(tt(x.why||x.note))}</div>`:''}${liveActionHtml(x)}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  // 要点日志：分诊的 log 行（highlights 里 log:true）和旧要点都折在看法栏底部，不占屏
+  function hlLogHtml(hl){ const rows=(hl||[]).filter(x=>x&&x.text&&!x.stale).sort((a,b)=>(a.at||0)-(b.at||0)); if(!rows.length) return ''; const en=ui==='en'; return `<details class="hl-log"><summary>${en?'Log ':'要点日志 '}<span class="count">${rows.length}</span></summary>${rows.slice(-40).map(x=>`<div class="hl-log-row">${x.at?`<span class="tm">${esc(hms(x.at).slice(0,5))}</span>`:''}${esc(tt(x.text))}</div>`).join('')}</details>`; }
+  function viewCard(x, fresh){ if(isLiveCard(x)) return liveCard(x, fresh); const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k"></span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.at?`<span class="tm">${hms(x.at).slice(0,5)}</span>`:''}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
   // 批 3：按钮 + 执行态 + 产物。点 = 批准（POST /insight-action，web/src/25b-insight-action.js）；等待期能撤回；失败能重试；资料里没这条（offer）出「照会上说的新建」（再点带 args.createIfMissing）；做完显示正确值 / 原文 / 「打开文档」或任务链接。
   function insightActionHtml(x,t,label){
     const st=x.actionState||{}, s=st.status||'', en=ui==='en', d=(x.action&&x.action.do)||({conflict:'open_source',recheck:'set_date'})[t]||'';
@@ -194,7 +210,7 @@
     return btn(en?'One-pager':'一页纠错单');
   }
   function viewListHtml(cks, first){
-    if(!cks.length) return `<div class="empty">${T('e_ck')||'讨论到你项目记忆里已有答案的事，答案会出现在这里。空着 = 暂时没有。'}</div>`;
+    if(!cks.length) return `<div class="empty">${T('e_ck')||'会改变你下一句该说什么、或会后该做什么的事，会出现在这里；每条最多一个动作。空着 = 暂时没有。'}</div>`;
     const older=cks.slice(0,Math.max(0,cks.length-VIEW_SHOW)), recent=cks.slice(-VIEW_SHOW);
     const fold=older.length?`<details class="ck-older"><summary>${ui==='en'?('Earlier '+older.length):('更早 '+older.length+' 条')}</summary>${older.map(x=>viewCard(x,false)).join('')}</details>`:'';
     return fold+recent.map((x,i)=>viewCard(x,!first&&i===recent.length-1)).join('');
