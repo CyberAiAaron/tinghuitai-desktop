@@ -100,7 +100,7 @@
     host.hidden=false;
     host.innerHTML=
       '<section><h2><span class="n">1</span>这场会改变了什么<span class="sp"></span><span class="hint">⌘E 改鼠标所在的那一块 · 回车存 · Esc 撤回</span></h2>'+(view.changes.length?view.changes.map((c,k)=>'<div class="v2-row"><span class="v2-tag k-'+esc(c.kind)+'">'+esc(c.kind)+'</span>'+ed('changes.'+k,'',c.text)+'</div>').join(''):'<div class="v2-row"><span>这场没整理出改变。</span></div>')+'</section>'
-      +'<section><h2><span class="n">2</span>军师怎么看</h2>'+insightsHtml()+'</section>'
+      +'<section><h2><span class="n">2</span>想法</h2>'+insightsHtml()+'</section>'
       +(view.next?'<section><h2><span class="n">3</span>下一步最重要的一件事</h2><div class="v2-next"><div>'+ed('next.text','big',view.next.text,'p')+'</div>'+card(view.next,'next')+'</div></section>':'')
       +minutesHtml(view.minutes);
     host.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>send(b.dataset.go));
@@ -144,7 +144,7 @@
     if(!el)return;e.preventDefault();beginEdit(el);
   });
   function beginEdit(el){
-    // 「军师怎么看」那一块编辑的是 markdown 原文（不是渲染后的文字），换行用 Shift+Enter，回车存
+    // 「想法」那一块编辑的是 markdown 原文（不是渲染后的文字），换行用 Shift+Enter，回车存
     const isMd=el.dataset.path==='insights_md';
     const orig=isMd?String(view.insightsMd||''):el.textContent;
     editing={el,orig,path:el.dataset.path,isMd};

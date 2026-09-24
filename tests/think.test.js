@@ -15,7 +15,7 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'tht-think-'));
 test('① load：数据目录里的那份压过仓库自带的；没有就退回 app/THINK.md；改了内容下一次就读到新的', () => {
   think.reset();
   const repo = think.load('');
-  assert.ok(repo.includes('第一性原理') && repo.includes('自由写'), '默认读 app/THINK.md');
+  assert.ok(repo.includes('你要做的事') && repo.includes('不当核对员'), '默认读 app/THINK.md');
   assert.equal(think.file(''), path.join(root, 'app/THINK.md'));
   const dir = tmp();
   try {
