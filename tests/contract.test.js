@@ -175,7 +175,7 @@ test('TRIAGE carries the three insight types, the F2 rules and the §5.2 schema,
   for (const s of ['自由 markdown','没有模板','不要「洞察 / 原因 / 行动」这种表头','≤120 字','`@人名：` 开头的一行','NONE','不要 JSON']) assert.ok(live.includes(s),'live-insight.js 提示词缺：'+s);
   assert.ok(!live.includes('"do":"ask|todo|note|handoff"'),'JSON schema 已经去掉');
   const think=read('app/THINK.md');
-  for (const s of ['第一性原理','站在巨人的肩膀上','自由写']) assert.ok(think.includes(s),'THINK.md 缺：'+s);
+  for (const s of ['你要做的事','具体怎么做的','不当核对员']) assert.ok(think.includes(s),'THINK.md 缺：'+s);
   assert.match(read('app/llm.js'), /require\('\.\/think'\)\.prefix\(system, dataDir\)/, 'ask() 前置 THINK.md');
   assert.match(read('app/meeting-pipeline.py'), /system = think_prefix\(system\)/, '会后管线也前置 THINK.md');
   assert.match(server, /liveInsight\.systemPrompt\(/, 'server.js 分诊要用 live-insight 的提示词');

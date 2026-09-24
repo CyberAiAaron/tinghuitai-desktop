@@ -150,7 +150,7 @@ test('页面契约：首屏只有 v2 三块 + 纪要标题，旧版全量收进 
   assert.match(html, /<script src="archive-v2\.js\?v=\d+"><\/script><script src="page-comments\.js/);
   assert.equal((html.match(/id="v2-more"/g) || []).length, 1);
   for (const item of ["'认人'", "'下载 / 分享'", "'逐字稿'", "'旧版全量视图'"]) assert.ok(js.includes(item), '菜单缺 ' + item);
-  assert.match(js, /这场会改变了什么/); assert.match(js, /军师怎么看/); assert.match(js, /下一步最重要的一件事/); assert.match(js, /会议纪要/);
+  assert.match(js, /这场会改变了什么/); assert.match(js, /想法/); assert.match(js, /下一步最重要的一件事/); assert.match(js, /会议纪要/);
   assert.doesNotMatch(js, /bf-updates|议题表|待办看板/, '首屏不出现记忆更新栏 / 议题表 / 待办看板');
   assert.equal((js.match(/fetch\('\/asr-relay\/person-handoff/g) || []).length, 1, '「发」只有一个出口');
   assert.match(js, /confirmed:true/); assert.match(js, /kind:'todo'/);
