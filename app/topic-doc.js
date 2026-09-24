@@ -201,6 +201,7 @@ function create(options = {}) {
       date: meetingDate(enhanced),
       topic,
       owner: topics[topic] && topics[topic].owner || '',
+      hasDocument: !!docToken,   // 没配飞书文档的主题只给预览，界面不出「接受」
       status: 'pending',
       sections,
     };

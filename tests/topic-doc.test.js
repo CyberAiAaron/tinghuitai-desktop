@@ -177,3 +177,12 @@ test('topic-doc: 模型第一次回坏 JSON，带着错误重试后成功', asyn
   assert.match(seen[1], /上一次输出不合格/);
   assert.strictEqual(diff.sections.flatMap(g => g.items).length, 1);
 });
+
+test('topic-doc: 没配飞书文档的主题，差异记录标 hasDocument=false；有文档的标 true', async () => {
+  const api = topicDoc.create({ dataDir: tempDir(), topics: TOPICS, ask: async () => model([{ section: '未决问题', text: 'SM7750 路标未定', evidence: ['s1'] }]) });
+  const noDoc = await api.computeDiff(enhanced({ title: 'x', transcript: [{ seg: 's1', text: 'sm7750 roadmap' }] }), '# 基线');
+  assert.strictEqual(noDoc.topic, '高通路标');
+  assert.strictEqual(noDoc.hasDocument, false);
+  const withDoc = await api.computeDiff(enhanced(), '# 基线');
+  assert.strictEqual(withDoc.hasDocument, true);
+});

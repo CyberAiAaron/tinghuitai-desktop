@@ -16,6 +16,7 @@
     if(!groups.length){show(head+'<p class="td-empty">这场会对该主题没有新增。</p>');return;}
     const body=groups.map(g=>'<div class="td-sec"><div class="td-h">'+esc(g.section)+'</div>'+g.items.map(it=>
       '<label class="td-item"><input type="checkbox" data-id="'+esc(it.id)+'" checked> <span class="td-add">+ '+esc(it.text)+'</span> <span class="td-ev">'+esc((it.evidence||[]).join(' '))+'</span></label>').join('')+'</div>').join('');
+    if(d.hasDocument===false){show(head+body+'<p class="td-empty">该主题还没配飞书文档，只能预览、不能写回。在数据目录 topics.json 给它填 doc 后可用。</p>');return;}
     show(head+body+'<div class="td-bar"><button type="button" class="btn sm" id="td-accept">接受，写进主题文档</button><span id="td-msg" class="td-msg"></span></div>');
     box.querySelector('#td-accept').onclick=accept;
   }
