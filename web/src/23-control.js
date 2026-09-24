@@ -10,7 +10,7 @@
   };
   el.lang.onchange = () => { updateModeChip(); if (running) { note('这场进行中，识别方式结束后再换；语言可以随时切。', true); el.lang.value = (cur && cur.lang) || 'auto'; updateModeChip(); } };
   el.start.onclick = async () => {
-    if(!await checkMac()){note(ui==='en'?'Recording service unavailable. Reopen the installed app.':'录音服务未连接，请重新打开听会台；无需重复填写模型 Key。',true);return;}
+    if(!await checkMac()){if(!cfg.relayToken&&!window.THT_BOOT){note(ui==='en'?'This window has no relay passcode. Open Settings and paste it into “Mac relay passcode”, or reopen from the link with the passcode.':'这个窗口没有口令：点「设置」把口令粘进「Mac 中转口令」，或删掉主屏幕图标、用带口令的链接重新添加。',true);return;}note(ui==='en'?'Recording service unavailable. Reopen the installed app.':'录音服务未连接，请重新打开听会台；无需重复填写模型 Key。',true);return;}
     await loadServerSettings();
     if (!window.THT_BOOT) await refreshBoot();   // 远端窗口：boot 只能靠带口令的 /setup 拿，点开始前再确认一次（09-22）
     // 一把钥匙都没配的人，点开始时直接按本机转写起：不用注册、不用填任何东西。

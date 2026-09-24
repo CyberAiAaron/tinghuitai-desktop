@@ -3,6 +3,19 @@
   const PRESET = {deepseek:{base:'https://api.deepseek.com', quick:'deepseek-chat', model:'deepseek-chat'}, anthropic:{base:'', quick:'claude-haiku-4-5', model:'claude-sonnet-4-5'}, openai:{base:'', quick:'', model:''}};
   let ctx = ''; try { ctx = localStorage.getItem('tht-ctx') || ''; } catch(e){}
   let cfg = Object.assign({}, DEF); try { Object.assign(cfg, JSON.parse(localStorage.getItem('tht-settings')||'{}')); } catch(e){}
+  // 手机首次连并服务（09-22）：远端窗口拿不到 bootstrap.js，口令只能自己带。链接里带 ?token= 或 #token= 就收下存好，
+  // ?token= 随即从地址里去掉（fragment 不上服务器）。
+  // 主屏幕图标（09-22）：iOS 从主屏幕打开是独立存储、看不到 Safari 里存的口令，所以远端页把口令留在地址 #token=，
+  // 「添加到主屏幕」时连同口令一起存进图标；manifest 不写 start_url，图标就用添加时的地址。
+  try { const sp = new URLSearchParams(location.search), hp = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const t = (sp.get('token') || hp.get('token') || '').trim();
+    const remote = !/^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+    // 只在远端且本窗口还没口令时收下：本机窗口口令以 bootstrap 为准；已有口令不被别人给的链接静默换掉（Codex 意见），要换去设置里改。
+    if (remote && t.length >= 24 && !cfg.relayToken) { cfg.relayToken = t; localStorage.setItem('tht-settings', JSON.stringify(cfg)); }
+    sp.delete('token'); hp.delete('token');
+    if (remote && (cfg.relayToken || '').length >= 24) hp.set('token', cfg.relayToken);
+    const q = sp.toString(), h = hp.toString(), url = location.pathname + (q ? '?' + q : '') + (h ? '#' + h : '');
+    if (url !== location.pathname + location.search + location.hash) history.replaceState(null, '', url); } catch(e){}
   const ctxHint = () => { $('#s-ctx-hint').textContent = ctx ? `已加载 ${ctx.length} 字。` : '未填：Mac 离线时会中分析只能靠转写本身。'; };
   const dlg = $('#dlg');
   // L-13：以前有两套设置界面——设置弹窗和 setup.html，同一批配置两处都能改，setup.html 还有 5 个入口。

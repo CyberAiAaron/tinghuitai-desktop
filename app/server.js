@@ -139,6 +139,7 @@ function viewNorm(s) { return String(s || '').replace(/[\s“”"'‘’「」�
 function viewGrounded(f, hay) { const ev = viewNorm(f && f.evidence); if (ev.length < 6 || !hay) return false; if (hay.includes(ev.slice(0, 10)) || hay.includes(ev.slice(0, 8))) return true; for (let i = 5; i + 10 <= ev.length; i += 5) if (hay.includes(ev.slice(i, i + 10))) return true; return false; }
 // 洞察（0.6.14）的服务端门槛在 app/insight-filter.js：claim ≤30 字、source 必须命中本场背景 / 名单 / 日期 / 决策编号 / 时间戳、why 必须说清省了哪一步。
 const { normalizeInsight } = require('./insight-filter');
+const thinkPass = require('./think-pass');   // 思考档（0.6.18）：强模型定时想目的 / 争点 / 最佳方案，推到看法栏
 const feedbackWeight = require('./feedback-weight');   // 批 4（F5）：反馈按 type 计数，useless 多的那一类少给
 const sessionStats = require('./session-stats');       // 批 4（F5）：每场结束的四个数（Jev / Sonnet 调用、洞察、采纳），从 usage.jsonl 与场次算
 function viewIsJunk(f) { if (!f || typeof f !== 'object') return true; if (!String(f.claim || '').trim()) return true; return VIEW_JUNK.test(String(f.note || '')) || VIEW_JUNK.test(String(f.claim || '')); }
@@ -296,6 +297,8 @@ class Session {
     this.jev = new jevGate.Gate({ env, dataDir: DATA, sessionId: this.id, log, onTrigger: () => this.runTriage({ gate: true }) });
     if (this.jev.requested && !this.jev.available) log('JEV_GATE=on 但没有 JEV_API_KEY，门卫不启用 ' + this.id);
     this.triageTimer = setInterval(() => this.runTriage(), triageFast.triageInterval(this.jev.enabled));
+    this.lastThinkIndex = 0; this.charsSinceThink = 0; this.thinking = false;
+    if (String(env.THINK_PASS || 'on') !== 'off') this.thinkTimer = setInterval(() => this.runThink(), thinkPass.THINK_INTERVAL_MS);
     this.packDelta = new triageFast.PackDelta({ enabled: triageFast.PackDelta.enabledIn(env) });   // 批 5：TRIAGE_CONTEXT_DELTA='1' 才占位，默认每轮全量
     // 会中提醒白名单（app/push-whitelist.js）：分诊结果先过它，命中才 larkPush；默认 off = 零推送，分诊不受影响。
     this.pushGate = new pushWhitelist.Gate(env, { log });
@@ -444,7 +447,7 @@ class Session {
       this.fixNames(row); this.broadcast({type:'final', text: row.text, seg: row.id});
       this.gateFinal(row);
       this.transcript.push(row);
-      this.charsSinceTriage += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
+      this.charsSinceTriage += text.length; this.charsSinceThink += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
     } else {
       this.broadcast({type:'partial', text});
     }
@@ -541,7 +544,7 @@ class Session {
         this.fixNames(row); out.text = row.text; out.seg = row.id;
         this.broadcast(out); this.volcFailStreak = 0;
         this.gateFinal(row);
-        this.transcript.push(row); this.charsSinceTriage += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
+        this.transcript.push(row); this.charsSinceTriage += text.length; this.charsSinceThink += text.length; this.lastFinalTs = Date.now(); this.checkpoint();
       } else {
         this.broadcast(out);
       }
@@ -668,6 +671,37 @@ class Session {
     /不对|不行|别做|取消|有问题|我不同意|风险/,
   ];
   hitsTrigger(text) { return Session.TRIGGERS.some(re => re.test(text)); }
+  // 思考档（app/think-pass.js）。定时：新转写够了才叫；full=true（POST /rethink）：把整场按窗口重想一遍，用于补跑。
+  async runThink({ full = false } = {}) {
+    if (this.finalized || this.thinking || !this.transcript.length) return;
+    if (!full && (this.charsSinceThink < thinkPass.THINK_MIN_CHARS || this.transcript.length <= this.lastThinkIndex)) return;
+    this.thinking = true; const t0 = Date.now(); const epochAtStart = this.editEpoch || 0;
+    try {
+      const rows = this.transcript.filter(x => x && x.text && !repeatedASR(x.text) && !fillerASR(x.text));
+      const line = x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`;
+      const windows = [];
+      if (full) { const all = rows.map(line).join('\n'); for (let i = 0; i < all.length; i += thinkPass.RECENT_CHARS) windows.push(all.slice(i, i + thinkPass.RECENT_CHARS)); }
+      else { const all = rows.map(line).join('\n'); windows.push(all.slice(-thinkPass.RECENT_CHARS)); }
+      const endIndex = this.transcript.length, enUI = this.uiLang === 'en';
+      const pack = contextPack.build(this.env, { purpose: 'live', dataDir: DATA, session: this, meetingId: this.id });
+      let added = 0;
+      for (const recent of windows) {
+        if (!recent.trim()) continue;
+        const existing = (this.factchecks || []).map(x => x && x.claim).filter(Boolean);
+        const trace = { sessionId: this.id, purpose: 'think', pack, timeoutMs: 90000 };
+        const raw = await askModel(this.env, thinkPass.systemPrompt(enUI), thinkPass.userPrompt({ packText: pack.text, existingClaims: existing, recent, enUI }), thinkPass.MAX_OUTPUT_TOKENS, 'think', trace);
+        if (!raw) { log('think 没回应 ' + this.id); continue; }
+        if (this.finalized) return;
+        const at = Math.round((Date.now() - this.startTs) / 1000);
+        const items = thinkPass.normalize(thinkPass.parse(raw), existing).map(x => ({ ...x, at, id: 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1), sourceRefs: [] }));
+        if (items.length) { this.factchecks.push(...items); this.broadcast({ type: 'feedback', highlights: [], todos: [], factchecks: items }); added += items.length; }
+      }
+      if ((this.editEpoch || 0) === epochAtStart) { this.lastThinkIndex = endIndex; this.charsSinceThink = 0; }
+      if (added) this.checkpoint();
+      log(`think${full ? '(full)' : ''} ${Date.now() - t0}ms v=${added} ${this.id}`);
+    } catch (e) { log('think exc ' + e.message); }
+    this.thinking = false;
+  }
 
   async runDeepPass(recentText, segIds, epochAtStart) {
     if (this.deepRunning || this.finalized) return;
@@ -921,7 +955,7 @@ class Session {
     if (this.mac) { try { await this.mac.drain(); } catch (e) {} this.mac = null; }
     if (this.dg) { try { await this.dg.drain(); } catch (e) {} this.dg = null; }
     if (this.finalized) return; this.finalized = true;
-    clearInterval(this.triageTimer); clearInterval(this.memoryTimer); clearInterval(this.endTimer); clearInterval(this.stallTimer); clearTimeout(this.recomputeTimer); if (this.graceTimer) clearTimeout(this.graceTimer); if (this.jev) this.jev.close();
+    clearInterval(this.triageTimer); clearInterval(this.thinkTimer); clearInterval(this.memoryTimer); clearInterval(this.endTimer); clearInterval(this.stallTimer); clearTimeout(this.recomputeTimer); if (this.graceTimer) clearTimeout(this.graceTimer); if (this.jev) this.jev.close();
     if (this.draining) { clearInterval(this.draining); this.draining = null; }
     if (this.queuedAudioBytes > 0) { this.transcriptionGapSeconds += this.queuedAudioBytes / 32000; log('volc queue left at end ' + Math.round(this.queuedAudioBytes / 32000) + 's -> gap ' + this.id); this.queuedAudio = []; this.queuedAudioBytes = 0; }   // 未来得及回灌的音频计入缺口，会后本地补转
     this.endVolc();
@@ -2038,6 +2072,16 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); return res.end(html);
   }
   // 看法反馈：有用 / 没用 / 采纳 一击 + 一句话。写账本，并回流到这一场后续的 triage prompt（Aaron 2026-09-17：靠反馈收敛）。
+  // 思考档补跑：POST /rethink?sid=<会话>（本机或主口令）。把这场整段转写按窗口重想一遍，结果照常推到看法栏。
+  if (p.endsWith('/rethink')) {
+    if (!authed || !isLocalReq(req)) { res.writeHead(401); return res.end('unauthorized'); }
+    if (req.method !== 'POST') { res.writeHead(405); return res.end('method'); }
+    const sess = SESSIONS.get(String(u.searchParams.get('sid') || ''));
+    if (!sess || sess.finalized) { res.writeHead(404); return res.end(JSON.stringify({ ok: false, error: '没有这场在开的会' })); }
+    const before = (sess.factchecks || []).length;
+    sess.runThink({ full: true }).then(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, added: (sess.factchecks || []).length - before })); });
+    return;
+  }
   if (p.endsWith('/view-feedback')) {
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };

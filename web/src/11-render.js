@@ -62,7 +62,7 @@
       const first = sigHl === '';
       sigHl = nHl;
       // 原始要点仍可编辑；凝练正文不覆盖原始记录。
-      const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}${x.stale?' stale':''}${x.revised?' revised':''}${x.recomputed&&!x.stale?' recomputed':''}${x.pendingFix?' pending':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:(x.at?hms(x.at).slice(0,5):'')}</span><div>${esc(tt(x.text))}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}${x.k==='todo'?`<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button>`:''}${threadHtml(x.id||'',x.k,x.text)}</div></div>`;
+      const cardOf = (x, fresh, label) => `<div class="card ${x.k==='hl'&&/^⚠️?\s*(冲突|Conflict)/i.test(x.text)?'conf':x.k}${fresh?' fresh':''}${x.stale?' stale':''}${x.revised?' revised':''}${x.recomputed&&!x.stale?' recomputed':''}${x.pendingFix?' pending':''}" data-fix="hl" data-kind="${x.k}" data-key="${esc(x.text)}" title="点一下可以改或删"><span class="k">${label!=null?label:''}</span><div>${esc(tt(x.text))}${x.at?`<span class="tm">${hms(x.at).slice(0,5)}</span>`:''}${x.owner?`<div class="v">→ ${esc(tt(x.owner))}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.how?`<div class="v" style="margin-top:4px">${ui==='en'?'💡 Suggestion: ':'💡 建议：'}${esc(tt(x.how))}</div>`:''}${x.k==='todo'?`<button class="ask-claude" type="button" data-ask="${esc(x.text)}" title="让我的 Agent 先做一版方案">${ui==='en'?'Let my agent try':'给我的 Agent 先做做看'}</button>`:''}${threadHtml(x.id||'',x.k,x.text)}</div></div>`;
 
       const pinned=$('#hl-pinned');
       // 他手动收起过的议题，记在这里；换了一个「正在聊」的议题时才重新自动展开
@@ -76,7 +76,7 @@
       for(const g of grouped){
         const a=g.from==null?'':hms(g.from).slice(0,5),b=g.to==null?'':hms(g.to).slice(0,5);
         const span=a+(b&&b!==a?'–'+b:'');
-        if(g.ungrouped){pending.push(`<section class="outline-pending">${cardOf(g.list[0],g.live,g.no+'.')}<small class="outline-time">${esc(span)}</small></section>`);continue;}
+        if(g.ungrouped){pending.push(`<section class="outline-pending">${cardOf(g.list[0],g.live,g.no+'.')}</section>`);continue;}
         const key=String(cur.id)+':'+hlKey(g.list[0].text);
         // REQ-007：收起来时一行一个议题——标题 + 一句结论 + 状态。正在聊的那个自动展开到论点层，
         // 证据（原始要点）会中不展开。他自己收起来过的，下一次渲染不再强行打开。
@@ -163,10 +163,11 @@
   const VIEW_SHOW = 8;
   // 主动智能批 2：三类 type 徽标（对不上 / 空转 / 递答案）+ 一个按钮占位（批 3 接 POST /insight-action 才启用；answer 没有按钮）。
   // 沿用 .card.ck .kind 的徽标样式，不开新窗口。旧场次没有 type 的按 answer 显示。
-  function insightType(x){ return ['conflict','recheck','answer'].includes(x&&x.type)?x.type:'answer'; }
-  function insightTypeLabel(t){ return ({conflict:ui==='en'?'Mismatch':'对不上',recheck:ui==='en'?'Stalled':'空转',answer:ui==='en'?'Answer':'递答案'})[t]||''; }
+  // 0.6.18 思考档（app/think-pass.js）多了 goal / best / doubt / remind 四类，与旧三类同一套徽标。
+  function insightType(x){ return ['conflict','recheck','answer','goal','best','doubt','remind'].includes(x&&x.type)?x.type:'answer'; }
+  function insightTypeLabel(t){ return ({conflict:ui==='en'?'Mismatch':'对不上',recheck:ui==='en'?'Stalled':'空转',answer:ui==='en'?'Answer':'递答案',goal:ui==='en'?'Purpose':'目的',best:ui==='en'?'Best option':'最佳方案',doubt:ui==='en'?'Doubt':'存疑',remind:ui==='en'?'Note':'提醒'})[t]||''; }
   function insightActionLabel(t){ return ({conflict:ui==='en'?'Check & attach doc':'核对并附文档',recheck:ui==='en'?'Set a date':'定日期'})[t]||''; }
-  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k">${x.at?hms(x.at).slice(0,5):''}</span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
+  function viewCard(x, fresh){ const t=insightType(x); const meta=[x.source, x.why||x.note].filter(Boolean).map(t=>esc(tt(t))).join(' · '); const act=insightActionLabel(t); return `<div class="card ck kind-${t}${fresh?' fresh':''}${x.pendingFix?' pending':''}" data-fix="ck" data-key="${esc(x.claim)}" data-id="${esc(x.id||'')}" data-type="${t}" title="${ui==='en'?'Tap to edit':'点一下改或删'}"><span class="k"></span><div><span class="kind">${insightTypeLabel(t)}</span>${esc(tt(x.claim))}${x.at?`<span class="tm">${hms(x.at).slice(0,5)}</span>`:''}${x.evidence?`<div class="v src">${ui==='en'?'Said':'原话'}：「${esc(tt(x.evidence))}」</div>`:''}${meta?`<div class="v src">${meta}</div>`:''}${x.memo?`<div class="v memo">📝 ${esc(x.memo)}</div>`:''}${x.comment?`<div class="v memo">💬 ${esc(x.comment)}</div>`:''}${act?insightActionHtml(x,t,act):''}${threadHtml(x.id||'','insight',x.claim)}</div></div>`; }
   // 批 3：按钮 + 执行态 + 产物。点 = 批准（POST /insight-action，web/src/25b-insight-action.js）；等待期能撤回；失败能重试；资料里没这条（offer）出「照会上说的新建」（再点带 args.createIfMissing）；做完显示正确值 / 原文 / 「打开文档」或任务链接。
   function insightActionHtml(x,t,label){
     const st=x.actionState||{}, s=st.status||'', en=ui==='en', d=(x.action&&x.action.do)||({conflict:'open_source',recheck:'set_date'})[t]||'';

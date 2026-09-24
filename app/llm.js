@@ -57,7 +57,7 @@ function normalize(p, env) {
 function legacyChain(env) {
   const chain = [];
   if (env.LLM_PROVIDER === 'claude' || env.LLM_PROVIDER === 'codex')
-    chain.push({ type: 'cli', kind: env.LLM_PROVIDER, models: env.LLM_PROVIDER === 'claude' ? { live: env.LLM_MODEL_LIVE || 'sonnet', post: env.LLM_MODEL_POST || 'opus' } : {} });
+    chain.push({ type: 'cli', kind: env.LLM_PROVIDER, models: env.LLM_PROVIDER === 'claude' ? { live: env.LLM_MODEL_LIVE || 'sonnet', post: env.LLM_MODEL_POST || 'opus', think: env.LLM_MODEL_THINK || '' } : {} });
   if (env.DEEPSEEK_API_KEY)
     chain.push({ type: 'openai', name: /deepseek/i.test(env.LLM_BASE_URL || '') ? 'DeepSeek' : (env.LLM_MODEL || 'AI'), baseUrl: env.LLM_BASE_URL, keyFrom: 'DEEPSEEK_API_KEY', models: { live: env.LLM_MODEL_QUICK || env.LLM_MODEL, post: env.LLM_MODEL } });
   return chain;
@@ -70,6 +70,7 @@ function chainOf(env) {
 function pickModel(p, kind) {
   const m = p.models || {};
   if (kind === 'live' || kind === 'quick' || kind === 'triage') return m[kind] || m.live || m.post || '';
+  if (kind === 'think') return m.think || m.post || m.live || '';   // 思考档（app/think-pass.js）：settings LLM_MODEL_THINK，没配退回慢思考档
   return m.post || m.live || '';
 }
 
