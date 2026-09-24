@@ -677,7 +677,7 @@ class Session {
   async runThinkNow({ full = false } = {}) {
     if (this.finalized || this.thinking || !this.transcript.length) return;
     if (!full && (this.charsSinceThink < thinkPass.THINK_MIN_CHARS || this.transcript.length <= this.lastThinkIndex)) return;
-    this.thinking = true; const t0 = Date.now(); const epochAtStart = this.editEpoch || 0;
+    this.thinking = true; const t0 = Date.now(); const epochAtStart = this.editEpoch || 0; const charsAtStart = this.charsSinceThink;
     try {
       const rows = this.transcript.filter(x => x && x.text && !repeatedASR(x.text) && !fillerASR(x.text));
       const line = x => `[${x.at}s]${x.speaker ? 'S' + x.speaker + ':' : ''}${x.text}`;
@@ -699,7 +699,7 @@ class Session {
         const items = thinkPass.normalize(thinkPass.parse(raw), existing).map(x => ({ ...x, at, id: 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1), sourceRefs: [] }));
         if (items.length) { this.factchecks.push(...items); this.broadcast({ type: 'feedback', highlights: [], todos: [], factchecks: items }); added += items.length; }
       }
-      if ((this.editEpoch || 0) === epochAtStart) { this.lastThinkIndex = endIndex; this.charsSinceThink = 0; }
+      if ((this.editEpoch || 0) === epochAtStart) { this.lastThinkIndex = endIndex; this.charsSinceThink = Math.max(0, this.charsSinceThink - charsAtStart); }   // Codex 四审：请求期间新到的字不清零
       if (added) this.checkpoint();
       log(`think${full ? '(full)' : ''} ${Date.now() - t0}ms v=${added} ${this.id}`);
     } catch (e) { log('think exc ' + e.message); }
