@@ -7,6 +7,8 @@ set -euo pipefail
 V="${1:?用法: release-publish.sh <版本> [--dry-run]}"; DRY="${2:-}"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 ZIP="/tmp/tinghuitai-desktop-v${V}.zip"; [ -f "$ZIP" ] || { echo "❌ 缺 $ZIP"; exit 1; }
+# 双击安装的 .dmg（packaging/make-app.sh 产出）。有就一起发，没有就只发 zip，不挡发布。
+DMG="${THT_DMG:-/tmp/tinghuitai-app/听会台-${V}.dmg}"
 # updater.js 现在要求 sha256 必填（审查 X4）。手填这一格漏过、或停在上一版，装机端就只会看到
 # 「更新包没有校验值」。按真 zip 算一遍写进去，正常发版不会被自己拦住。
 node "$SRC/scripts/stamp-release.js" "$V" "$ZIP" "$SRC/version.json"
@@ -18,6 +20,7 @@ for R in CyberAiAaron GitAaronW; do
   else gh repo clone "$R/tinghuitai-desktop" "$D" -- --depth 1 -q; fi
   cd "$D"; git checkout -q -B "release/v$V"
   cp "$ZIP" "tinghuitai-desktop-v$V.zip"; cp "$ZIP" tinghuitai-desktop.zip
+  if [ -f "$DMG" ]; then cp "$DMG" "Tinghuitai-v$V.dmg"; cp "$DMG" Tinghuitai.dmg; fi
   for f in version.json CHANGELOG.json README.md AI-SETUP.md 开始用.md; do [ -f "$SRC/$f" ] && cp "$SRC/$f" "$f"; done
   [ -d "$SRC/docs" ] && rsync -a --delete "$SRC/docs/" docs/
   git add -A

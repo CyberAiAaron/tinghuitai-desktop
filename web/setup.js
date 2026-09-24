@@ -8,6 +8,7 @@ const T={zh:{
  dg_hint:'去 console.deepgram.com 用邮箱注册，在 API Keys 页建一个 Key，粘到下面。按控制台要求完成注册。',
  l_dg:'Deepgram API Key',
  asr_mac:'本机转写（不用注册）', asr_mac_d:'用这台 Mac 自带的语音识别，无需语音 API Key，不区分说话人。离线能力取决于系统与已安装的语言资源。',
+ s1ready:'转写已经配好了，不用注册账号，直接往下走。', s1swap:'换成我自己的火山账号',
  s1hint:'需要一个火山引擎账号（手机号就能注册），开通「大模型流式语音识别」这项服务，火山官方给 20 小时免费额度。开通后在应用详情里复制两串东西，填到下面。',
  s1more:'怎么拿？',
  v1:'打开火山语音控制台，开通「大模型流式语音识别」。', v2:'进应用详情，复制 App Key 和 Access Key 两项。',
@@ -35,6 +36,7 @@ const T={zh:{
  dg_hint:'Sign up at console.deepgram.com, create a key on the API Keys page, paste it below. Follow the console signup requirements.',
  l_dg:'Deepgram API key',
  asr_mac:'On this Mac (recommended, no signup)', asr_mac_d:'Uses the speech recognition built into macOS. No speech API key, no speaker separation. Offline support depends on macOS and installed language resources.',
+ s1ready:'Transcription is already set up — no account needed. Just keep going.', s1swap:'Use my own Volcano account instead',
  s1hint:'You need a Volcano Engine account, then enable its streaming speech recognition service. Volcano lists a 20-hour free trial. Once enabled, copy two values from your app details into the boxes below.',
  s1more:'How do I get these?',
  v1:'Open the Volcano speech console and enable streaming speech recognition.', v2:'Open the app details and copy App Key and Access Key.',
@@ -65,7 +67,18 @@ function applyLang(){
   document.documentElement.lang=L==='zh'?'zh-CN':'en';
   for(const el of document.querySelectorAll('[data-t]')) el.textContent=t(el.dataset.t);
   for(const b of document.querySelectorAll('#lang button')) b.setAttribute('aria-selected',String(b.dataset.l===L));
-  paintPlaceholders(); paintStatus(); paintCli();
+  paintPlaceholders(); paintStatus(); paintCli(); paintVolcReady();
+}
+// 试用包里火山凭据是随包配好的：这时第一屏不该再摆一段「去注册火山账号」的教程，
+// 换成一行「已经配好」，两个 key 框收进折叠里，想换成自己的账号才展开。
+function paintVolcReady(){
+  const d=document.getElementById('volc-keys'), h=document.getElementById('s1hint');
+  if(!d||!h||!state) return;
+  const ready=!!state.volcConfigured;
+  const sum=d.querySelector('summary');
+  if(ready){ h.textContent=t('s1ready'); if(sum) sum.hidden=false; if(!d.dataset.touched) d.open=false; }
+  else { h.textContent=t('s1hint'); d.open=true; if(sum) sum.hidden=true; }
+  if(!d.dataset.bound){ d.dataset.bound='1'; d.addEventListener('toggle',()=>{d.dataset.touched='1';}); }
 }
 function paintPlaceholders(){
   if(!state) return;
@@ -90,7 +103,9 @@ async function refresh(){
   // 还没选过的话：中文系统默认火山（中文最准），非中文系统默认本机转写（火山要中国账号，对老外是死路）
   // 这台机器能本机转写就默认选它：一把钥匙都不用填，保存就能开会。
   // 以前中文界面默认选火山，没有火山账号的人打开这页就被「请填写 App Key」挡住（2026-09-14）。
-  const fallbackAsr = state.macAsrAvailable ? 'mac' : (L === 'zh' ? 'volc' : 'deepgram');
+  // 还没选过转写方式时：火山凭据已经配好（试用包随包带、或自己填过）就默认云端转写——
+  // 它分说话人、Intel Mac 也能跑；本机转写只在没有可用云端凭据时兜底。
+  const fallbackAsr = state.volcConfigured ? 'volc' : (state.macAsrAvailable ? 'mac' : (L === 'zh' ? 'volc' : 'deepgram'));
   const pickAsr = ['mac','deepgram','volc'].includes(state.asrProvider) ? state.asrProvider : fallbackAsr;
   document.querySelector('input[name=asr][value=mac]').disabled=!state.macAsrAvailable;
   const r2=document.querySelector('input[name=asr][value="'+pickAsr+'"]'); if(r2) r2.checked=true;
