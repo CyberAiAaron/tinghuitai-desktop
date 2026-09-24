@@ -201,7 +201,7 @@ function create(options = {}) {
       date: meetingDate(enhanced),
       topic,
       owner: topics[topic] && topics[topic].owner || '',
-      hasDocument: !!docToken,   // 没配飞书文档的主题只给预览，界面不出「接受」
+      hasDocument: !!String(docToken || '').trim(),   // 没配飞书文档的主题只给预览，界面不出「接受」
       status: 'pending',
       sections,
     };
@@ -227,7 +227,7 @@ function create(options = {}) {
     const wanted = [...new Set(ids.map(value => String(value || '').trim()).filter(Boolean))];
     const selected = wanted.map(id => all.find(item => item.id === id));
     if (selected.some(item => !item)) throw bad('选择里有不存在的条目');
-    if (config.doc == null) return { ok: true, skipped: 'no_document', topic: record.topic, applied: [] };
+    if (!String(config.doc || '').trim()) return { ok: true, skipped: 'no_document', topic: record.topic, applied: [] };
     const applied = [];
     for (const item of selected) {
       const xml = itemXml(item, record);

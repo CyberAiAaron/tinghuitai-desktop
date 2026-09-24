@@ -186,3 +186,15 @@ test('topic-doc: 没配飞书文档的主题，差异记录标 hasDocument=false
   const withDoc = await api.computeDiff(enhanced(), '# 基线');
   assert.strictEqual(withDoc.hasDocument, true);
 });
+
+test('topic-doc: doc 配成空字符串时，预览标无文档、写回也跳过，两处判断一致', async () => {
+  const cfg = { '软件': { doc: '  ', owner: 'L', keywords: ['sm7750'] } };
+  let larkCalls = 0;
+  const api = topicDoc.create({ dataDir: tempDir(), topics: cfg, ask: async () => model([{ section: '未决问题', text: '路标未定', evidence: ['s1'] }]), lark: { docValidateAppend: async () => { larkCalls++; return { ok: true }; } } });
+  const rec = await api.computeDiff(enhanced({ transcript: [{ seg: 's1', text: 'sm7750 roadmap' }] }), '# 基线');
+  assert.strictEqual(rec.hasDocument, false);
+  const id = rec.sections.flatMap(g => g.items)[0].id;
+  const r = await api.apply(rec.meetingId, [id], { confirmed: true });
+  assert.strictEqual(r.skipped, 'no_document');
+  assert.strictEqual(larkCalls, 0);
+});
