@@ -223,6 +223,9 @@ const isTimeoutCode = code => /timeout|abort/i.test(String(code || ''));
 // trace 可带 skip（跳过链上前几家）和 timeoutMs（每家等多久，0 = 适配器默认）；调用后回填 trace.timedOut：
 // 这一次最先试的那家有没有超时（不管后面有没有备用顶上）——会中分诊靠它数连续超时，/health 的 llmTimeouts 也从这里累计。
 async function askModel(env, system, user, maxTokens, tier, trace) {
+  // 开箱自动选模型要几秒；这几秒里开的会拿到的 env 还没有模型，会一直「没回应」到散会（0.6.19 试用实测）。
+  // 本场还没模型时，按当前设置补上 LLM_* 这几项（写回 env，本场之后都用它）。
+  if (env && !env.LLM_PROVIDER) { try { const now = loadEnv(); if (now.LLM_PROVIDER) for (const k of Object.keys(now)) if (/^LLM_/.test(k)) env[k] = now[k]; } catch (e) {} }
   // 不认品牌：按 settings 的降级链挨个试（app/llm.js）。换一家模型只改配置，不动这里。
   const r = await llm.ask(env, { kind: tier || 'post', system, user, maxTokens, dataDir: DATA, log, fetchImpl: fetch,
     skip: (trace && trace.skip) || 0, timeoutMs: (trace && trace.timeoutMs) || 0, thinking: trace ? trace.thinking : undefined, tools: trace && trace.tools === false ? false : undefined });
