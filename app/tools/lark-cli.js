@@ -96,4 +96,39 @@ async function taskCreate({ summary, description = '', assignee = '', due = '' }
   return { ok: true, url, id };
 }
 
-module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, clip, norm };
+// 私聊发一条 markdown（交给某人 handoff 用，2026-09-24）。写类：调用方自己过确认门禁再来。
+async function messageSend({ openId, markdown }, opts = {}) {
+  if (!/^ou_[A-Za-z0-9]{1,64}$/.test(String(openId || ''))) return { ok: false, error: '收件人 open_id 不像样' };
+  const md = clip(String(markdown || '').trim(), 4000);
+  if (!md) return { ok: false, error: '消息是空的' };
+  const r = await runCli(['im', '+messages-send', '--user-id', openId, '--markdown', md, '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const d = (r.json && r.json.data) || {};
+  return { ok: true, messageId: String(d.message_id || (d.message && d.message.message_id) || '') };
+}
+
+// 新建一份 XML 文档（本人身份，天然 owner）。返回 {ok,token,url}。
+async function docCreate({ title, content }, opts = {}) {
+  const t = clip(String(title || '').trim(), 120);
+  if (!t) return { ok: false, error: '文档标题是空的' };
+  const r = await runCli(['docs', '+create', '--title', t, '--content', String(content || ''), '--doc-format', 'xml', '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const doc = ((r.json && r.json.data) || {}).document || {};
+  const token = String(doc.document_id || ''), url = String(doc.url || '');
+  if (!token) return { ok: false, error: '飞书回包里没有文档 token', uncertain: true };
+  return { ok: true, token, url };
+}
+
+// 在文档末尾追加一段 XML（docs +update --command append）。返回 {ok,revision}。
+async function docAppend({ token, content }, opts = {}) {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9]{10,64}$/.test(t)) return { ok: false, error: '文档 token 不像样' };
+  const c = String(content || '').trim();
+  if (!c) return { ok: false, error: '要追加的内容是空的' };
+  const r = await runCli(['docs', '+update', '--doc', t, '--command', 'append', '--content', c, '--doc-format', 'xml', '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const doc = ((r.json && r.json.data) || {}).document || {};
+  return { ok: true, revision: doc.revision_id == null ? '' : String(doc.revision_id) };
+}
+
+module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, docCreate, docAppend, clip, norm };

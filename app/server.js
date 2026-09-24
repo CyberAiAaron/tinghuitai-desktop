@@ -1195,7 +1195,7 @@ async function proxyHub(req, res, u, upstream) {
 
 function serveStatic(req, res, p) {
   let rel;try{rel=decodeURIComponent(p.replace(/^\/tinghuitai\/?/, '')).split('?')[0]||'index.html';}catch{res.writeHead(400);return res.end('invalid path');}
-  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json','workspace-nav.js','activity.html','activity.js','activity.css','assistant-widget.js','assistant-widget.css']);
+  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','page-comments.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json','workspace-nav.js','activity.html','activity.js','activity.css','assistant-widget.js','assistant-widget.css']);
   if(!allowed.has(rel)){res.writeHead(404);return res.end('not found');}
   const full = path.join(STATIC_DIR, rel);
   if (!full.startsWith(STATIC_DIR + path.sep) && full !== STATIC_DIR) { res.writeHead(403); return res.end('forbidden'); }
@@ -1386,6 +1386,8 @@ process.on('uncaughtException', e => { crashedSinceStart++; try { log('未捕获
 const workspaceRoute=require('./workspace').create({dataDir:DATA,config:loadEnv,isLocal:isLocalReq,ask:askModel,active:()=>[...SESSIONS.values()].some(s=>!s.finalized)});
 const shareBundles=require('./share-bundles')({settings});
 const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
+const pageComments=require('./page-comments').create({dataDir:DATA,log});   // 回看页到处评论 → 写信唤醒本机 Claude（Aaron 2026-09-24）
+const personHandoff=require('./person-handoff');   // 「交给某人」：飞书任务 + 私聊 + 行动清单文档 @他（Aaron 2026-09-24）
 // 卡片对话框（第③批）：每条消息起一次本机 claude -p。开着的场次改内存对象，结束的场次改 pending 文件。
 const cardThread=require('./card-thread').create({dataDir:DATA,log,getLive:id=>{const s=SESSIONS.get(id);return s&&!s.finalized?s:null;},
   readFile:id=>{const f=pendingFileFor(id);return f?journal.read(f):null;},writeFile:(id,obj)=>{const f=pendingFileFor(id);if(f)journal.write(f,obj);},
@@ -1521,6 +1523,8 @@ async function handleRequest(req, res) {
   if(p.endsWith('/sharing/lark-status')&&req.method==='GET'){
     if(!authed){res.writeHead(401);res.end();return;}const key=crypto.createHash('sha256').update(u.searchParams.get('id')||'').digest('hex').slice(0,16);const job=journal.read(path.join(DATA,'state','lark-exports',key+'.json'));res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({status:job?.status||'none',url:job?.fullTextVerified&&job?.privateVerified?job.url:undefined,error:job?.error}));return;
   }
+  if(p.endsWith('/page-comments')||p.endsWith('/page-comment')){if(await pageComments(req,res,u,authed))return;}
+  if(p.endsWith('/person-handoff'))return personHandoff.route(req,res,{authed,dataDir:DATA,log,port:PORT});
   if(p.startsWith('/sharing/slack') || p.startsWith('/asr-relay/sharing/slack')){if(await slackShareRoute(req,res,u,authed))return;}
   if(await workspaceRoute(req,res,u))return;
   if(await require('./setup-routes')(req,res,u,{isLocal:isLocalReq(req),localReason:()=>localReqReason(req),settings,active:()=>[...SESSIONS.values()].some(s=>!s.finalized),testModel:()=>askModel(loadEnv(),'Reply exactly OK','OK',8,'live'),tokenOk:t=>tokenOk(loadEnv(),t)}))return;

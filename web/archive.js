@@ -329,6 +329,7 @@ function paintActions(){
   if(risks)risks.innerHTML=risksHtml();
   paintSay();
   wireActions(box);
+  wireHandoff(box,cid=>{const c=(actData.cards||[]).find(x=>x.id===cid)||{};return {meetingId:sessionIdOf(),meetingTitle:(record&&record.title)||'',kind:'todo',text:c.text||'',context:c.reason||'',due:c.due||(c.draft&&c.draft.due)||''};},paintActions);
 }
 // 待办表的一行：# / 事项（类型标签 + 说明）/ 负责人 / 期限 / 动作。展开的草稿占整行。
 function actRow(c,n){
@@ -342,9 +343,10 @@ function actRow(c,n){
     +(c.sentNote?'<div class="bf-act-why">'+esc(c.sentNote)+'</div>':'')
     +(c.claimFailed&&c.claimNote?'<div class="bf-act-why">'+esc(c.claimNote)+'</div>':'')+'</td>'
     +'<td>'+(owner?nm(owner,map):'<span class="bf-sug">—</span>')+'</td><td>'+(due?esc(due):'<span class="bf-sug">—</span>')+'</td>'
-    +'<td class="td-act">'+mainAction(c,open)+'<button type="button" class="bf-x" data-x="'+esc(c.id)+'" title="'+T('我不认这条','Not mine')+'" aria-label="'+T('我不认这条','Not mine')+'">✕</button>'
+    +'<td class="td-act">'+mainAction(c,open)+(c.state==='sent'?'':hoBtn(c.id))+'<button type="button" class="bf-x" data-x="'+esc(c.id)+'" title="'+T('我不认这条','Not mine')+'" aria-label="'+T('我不认这条','Not mine')+'">✕</button>'
     +(note?'<div class="bf-act-state'+(/没|失败|不/.test(note)?' bad':'')+'">'+esc(note)+'</div>':'')+'</td></tr>'
-    +(open?'<tr class="bf-draft-row" data-card="'+esc(c.id)+'"><td colspan="5"><div class="bf-draft">'+draftHtml(c)+'</div></td></tr>':'');
+    +(open?'<tr class="bf-draft-row" data-card="'+esc(c.id)+'"><td colspan="5"><div class="bf-draft">'+draftHtml(c)+'</div></td></tr>':'')
+    +(hoOpen.has(c.id)||hoNote.get(c.id)?'<tr class="bf-draft-row"><td colspan="5">'+hoForm(c.id,/^S\d+$/.test(owner)?'':owner)+'</td></tr>':'');
 }
 // ===== 一句话改待办（Aaron 09-22 定）=====
 // 不限模板：规则听得懂的当场改，听不懂的服务端问模型翻译成同一套操作。这里不外发：「派给谁」只填草稿，还要点「派发」。
@@ -522,12 +524,13 @@ function paintUpdates(){
     else act='<div class="upd-a"><textarea class="upd-in" data-upd-in="'+esc(it.uid)+'" rows="2" placeholder="'+esc(T('要改就在这里改，再点「改一下」','Edit here, then click Edit'))+'">'+esc(updEdit.get(it.uid)||'')+'</textarea>'
       +'<button type="button" class="bf-btn" data-upd="'+esc(it.uid)+'" data-act="accept"'+(updBusy?' disabled':'')+'>'+T('接受','Accept')+'</button> '
       +'<button type="button" class="bf-btn" data-upd="'+esc(it.uid)+'" data-act="edit"'+(updBusy?' disabled':'')+'>'+T('改一下','Edit')+'</button> '
-      +'<button type="button" class="bf-btn ghost" data-upd="'+esc(it.uid)+'" data-act="reject"'+(updBusy?' disabled':'')+'>'+T('不要','Reject')+'</button></div>';
-    return '<div class="upd'+(d?' done':'')+'">'+head+body+act+'</div>';
+      +'<button type="button" class="bf-btn ghost" data-upd="'+esc(it.uid)+'" data-act="reject"'+(updBusy?' disabled':'')+'>'+T('不要','Reject')+'</button> '+hoBtn(it.uid)+'</div>';
+    return '<div class="upd'+(d?' done':'')+'" data-upd-card="'+esc(it.uid)+'">'+head+body+act+hoForm(it.uid,hoGuess(it.after))+'</div>';
   }).join('');
   h+='<div class="upd-foot">'+(pend.length>1?'<button type="button" class="bf-btn" data-upd-all="1"'+(updBusy?' disabled':'')+'>'+T('全部接受','Accept all')+'</button> ':'')
     +'<button type="button" class="bf-btn ghost" data-upd-run="1"'+(updBusy?' disabled':'')+'>'+T('重新对照','Compare again')+'</button></div>';
   box.innerHTML=h;wireUpdates(box);
+  wireHandoff(box,uid=>{const it=items.find(x=>x.uid===uid)||{};return {meetingId:sessionIdOf(),meetingTitle:(record&&record.title)||'',kind:'decision',text:it.field+'：'+(it.after||''),context:T('原：','Before: ')+(it.before||'')+(it.evidence?'\n'+it.evidence:'')};},paintUpdates);
 }
 function wireUpdates(box){
   box.querySelectorAll('[data-upd-in]').forEach(el=>el.addEventListener('input',()=>updEdit.set(el.getAttribute('data-upd-in'),el.value)));
@@ -770,4 +773,36 @@ async function takeSend(target, extra){
       : (j.error||'没发出去'), !j.ok);
   }catch(e){ takeMsg('没发出去：'+e.message, true); }
   finally{ btn.disabled=false; }
+}
+
+// ===== 交给某人（Aaron 2026-09-24「give to Abel」）：一下 = 给他建飞书任务 + 私聊他 + 追加到行动清单文档并 @他 =====
+// 名字从「补充：给 abel 决定」这类文字里猜一个默认值，发之前你还能改；发出只走 /person-handoff，那边有 confirmed 门禁和幂等。
+const hoOpen=new Set(),hoNote=new Map();let hoBusy=false;
+function sessionIdOf(){try{return new URLSearchParams(location.search).get('id')||'';}catch{return '';}}
+function hoGuess(text){const m=/给\s*([A-Za-z][A-Za-z .]{1,20}?)\s*(决定|定|做|跟|确认|看)/.exec(text||'')||/(?:give|hand|ask)\s+(?:to\s+)?([A-Z][a-z]+(?: [A-Z][a-z]+)?)/.exec(text||'');return m?m[1].trim():'';}
+function hoBtn(id){return '<button type="button" class="bf-t" data-ho="'+esc(id)+'" title="'+T('建任务 + 私聊 + 行动清单 @他','Task + DM + action list @')+'">'+T('交给…','Hand to…')+'</button>';}
+function hoForm(id,def){
+  const note=hoNote.get(id)||'';
+  if(!hoOpen.has(id))return note?'<div class="bf-act-state'+(/失败|没|✗/.test(note)?' bad':'')+'">'+note+'</div>':'';
+  return '<div class="bf-ho" data-ho-form="'+esc(id)+'"><input type="text" maxlength="60" placeholder="'+T('给谁（名字）','Who (name)')+'" value="'+esc(def||'')+'">'
+    +'<button type="button" class="bf-btn" data-ho-go="'+esc(id)+'"'+(hoBusy?' disabled':'')+'>'+T('发出：任务 + 私聊 + 行动清单 @他','Send: task + DM + list @')+'</button>'
+    +'<button type="button" class="bf-btn ghost" data-ho-x="'+esc(id)+'">'+T('取消','Cancel')+'</button>'+(note?'<div class="bf-act-state">'+note+'</div>':'')+'</div>';
+}
+function wireHandoff(box,payloadOf,repaint){
+  box.querySelectorAll('[data-ho]').forEach(b=>b.onclick=()=>{hoOpen.add(b.dataset.ho);repaint();});
+  box.querySelectorAll('[data-ho-x]').forEach(b=>b.onclick=()=>{hoOpen.delete(b.dataset.hoX);repaint();});
+  box.querySelectorAll('[data-ho-go]').forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.hoGo,form=b.closest('.bf-ho'),person=(form.querySelector('input').value||'').trim();
+    if(!person){hoNote.set(id,T('先写给谁','Name someone first'));repaint();return;}
+    hoBusy=true;hoNote.set(id,T('发出中…','Sending…'));repaint();
+    try{
+      const r=await fetch('/asr-relay/person-handoff?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payloadOf(id),person,confirmed:true,sourceId:id}),signal:AbortSignal.timeout(90000)});
+      const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+      const part=(k,l)=>j[k]&&j[k].ok?(j[k].url?'<a href="'+esc(j[k].url)+'" target="_blank" rel="noopener">'+l+' ✓</a>':l+' ✓'):l+' ✗'+(j[k]&&j[k].error?' '+esc(j[k].error):'');
+      hoNote.set(id,(j.fallbackToAaron?T('没找到这个人，先建给你：','Person not found, sent to you: '):T('已交给 ','Handed to ')+esc((j.assignee&&j.assignee.name)||person)+'：')
+        +part('task',T('任务','Task'))+' · '+part('message',T('私聊','DM'))+' · '+part('doc',T('行动清单','Action list')));
+      hoOpen.delete(id);
+    }catch(e){hoNote.set(id,T('没发出去：','Failed: ')+esc(e.message||String(e)));}
+    hoBusy=false;repaint();
+  });
 }
