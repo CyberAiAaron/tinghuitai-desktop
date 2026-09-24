@@ -62,3 +62,8 @@ test('老场次没有军师正文：想法退到纪要结论、行动退到待�
   const { lines } = DM.buildCard({ title: '老会', result: old, url: 'u' });
   assert.deepEqual(lines, ['• 结论一', '• 结论二', '@Abel Mei：给功耗曲线', '@Cary Luo：排用研']);
 });
+
+test('卡片行动负责人：S 编号与未指定一律写待定', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../app/dm-push.js'), 'utf8');
+  assert.ok(/\^S\\d\+\$/.test(src) && src.includes("'待定'"));
+});

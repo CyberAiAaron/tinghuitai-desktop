@@ -14,6 +14,7 @@ const KIND = 'meeting-dm';
 const clip = (s, n) => { const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const strip = s => String(s || '').replace(/\*\*|__|`|^#+\s*/g, '').trim();
 
+// 行动负责人：声音编号（S0…）/ 未指定 一律写「待定」——认人已删（Aaron 09-24），编号对读者没意义
 // 想法标题：insights_md 每段取标题（加粗行 / 小标题），没有就取段首句；@人名 的行不算想法
 function ideaTitles(md, max = 3) {
   const out = [];
@@ -31,7 +32,7 @@ function ideaTitles(md, max = 3) {
 // 行动一人一行：同一个人的多条合并，用「；」连
 function actionLines(insights, max) {
   const by = new Map();
-  for (const i of insights || []) { const who = i.owner || i.named || '待定'; if (!by.has(who)) by.set(who, []); by.get(who).push(i.action); }
+  for (const i of insights || []) { const raw = String(i.owner || i.named || '').trim(); const who = !raw || /^S\d+$|^未指定$|^未认人$/i.test(raw) ? '待定' : raw; if (!by.has(who)) by.set(who, []); by.get(who).push(i.action); }
   return [...by].slice(0, max).map(([who, acts]) => '@' + who + '：' + clip(acts.join('；'), 60));
 }
 
