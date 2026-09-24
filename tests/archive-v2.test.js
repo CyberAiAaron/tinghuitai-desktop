@@ -28,13 +28,18 @@ test('首屏三块：改变 ≤3 行且每行 ≤40 字带类型标签；洞察 
   // 09-24 第二轮（Aaron「no template」）：第 2 块正文 = insights_md 自由 markdown；缺它时由旧 insights 数组兜底拼出来
   assert.ok(v.insightsMd.includes('**Pin 摄像头比手机多出什么？这一句超过二十个字了吧**'), '兜底 markdown 里有问题行');
   assert.ok(v.insightsMd.includes('@Abel Mei：做这件事 1'), '兜底 markdown 里有指派行');
-  assert.deepEqual(v.insights.map(i => i.sourceId).slice(0, 2), ['v2-ins-1', 'v2-ins-2']);
+  const sid = (o, t) => 'v2-ins-' + crypto.createHash('sha1').update(o + '|' + t).digest('hex').slice(0, 10);
+  assert.deepEqual(v.insights.map(i => i.legacyId).slice(0, 2), ['v2-ins-1', 'v2-ins-2']);
+  assert.equal(v.insights[0].sourceId, sid(v.insights[0].owner, v.insights[0].action), 'sourceId 按负责人|动作取哈希');
   assert.deepEqual(v.insights.map(i => i.action).slice(0, 2), ['做这件事 1', '做这件事 2'], '行动卡只从 @人名： 行来');
   // insights_md 在场时直接用它，且只对 @人名： 行出卡
   const md = V2.buildView({ ...sample(), insightsMd: '结论先说。\n\n- 一条\n\n@Hannah Yin：确认高通路标\n这行不是指派' });
   assert.match(md.insightsMd, /^结论先说。/);
   assert.equal(md.insights.length, 1);
-  assert.deepEqual(md.insights[0], { n: 1, action: '确认高通路标', owner: 'Hannah Yin', topic: '高通路标', named: 'Hannah Yin', sourceId: 'v2-ins-1' });
+  assert.deepEqual(md.insights[0], { n: 1, action: '确认高通路标', owner: 'Hannah Yin', topic: '高通路标', named: 'Hannah Yin', sourceId: sid('Hannah Yin', '确认高通路标'), legacyId: 'v2-ins-1' });
+  // 洞察重跑换了顺序，同一条动作的 sourceId 不变
+  const re = V2.buildView({ ...sample(), insightsMd: '@Abel Mei：先做别的\n\n@Hannah Yin：确认高通路标' });
+  assert.equal(re.insights[1].sourceId, md.insights[0].sourceId);
   assert.equal(v.next.sourceId, 'v2-next'); assert.match(v.next.text, /^白板 OCR 第一版载体/);
   // 纪要：一句话主题 + 只保留有结论的二级标题 + 结论 ≤5 + 待办 + 参会人（谢绝的不算）
   assert.equal(v.minutes.topic, '本次会议围绕 OCR 展开。');
@@ -165,3 +170,13 @@ test('页面契约：首屏只有 v2 三块 + 纪要标题，旧版全量收进 
   assert.match(server, /let result=archiveV2\.decorate\(meetingPipeline\.result\(rid\),\{dataDir:DATA\}\)/);
 });
 
+
+test('旧序号收据：收件人对得上才算已发，对不上不挂到别人卡上', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v2-legacy-'));
+  const d = path.join(dir, 'state', 'send-receipts', 'person-handoff'); fs.mkdirSync(d, { recursive: true });
+  const k = require('../app/send-gate').hash(['person-handoff', 'm-l', 'v2-ins-1']);
+  fs.writeFileSync(path.join(d, k + '.json'), JSON.stringify({ status: 'sent', at: 1, assignee: { name: 'Abel Mei' } }));
+  const mk = (md) => V2.decorate({ id: 'm-l', brief: { insights_md: md } }, { dataDir: dir }).view.insights[0];
+  assert.equal(mk('@Luna Min：画流程图').sent, null, '第 1 条换成 Luna 了，不能显示已发给 Abel');
+  assert.ok(mk('@Abel Mei：算像素').sent, '第 1 条还是 Abel，旧收据照认，防止重发');
+});

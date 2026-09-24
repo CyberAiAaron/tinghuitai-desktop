@@ -2,7 +2,7 @@
 // 会后页 v2（Aaron 2026-09-24 14:35 拍板）：会后 10 秒内知道这场会改变了什么、要我拍什么、该问谁。
 // 服务端从 enhanced.json 挑出四块（改变 / 洞察→行动 / 下一步 / 可分享纪要），前端只渲染。
 // ⌘E 改过的文字落在 enhanced.overrides（键 = 视图路径，如 "changes.0"、"insights.2.answer"），渲染时 override 优先。
-const fs = require('fs'), path = require('path');
+const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const owners = require('./owners');
 const sendGate = require('./send-gate');
 const personHandoff = require('./person-handoff');
@@ -34,7 +34,7 @@ function actionsFromMd(md) {
     const raw = oneLine(m[1]), text = clip(m[2], 200); if (!text) continue;
     const cls = owners.classify(raw + ' ' + text);
     const owner = known.has(raw) ? raw : cls.owner;
-    out.push({ n: out.length + 1, action: text, owner, topic: cls.topic, named: raw, sourceId: 'v2-ins-' + (out.length + 1) });
+    out.push({ n: out.length + 1, action: text, owner, topic: cls.topic, named: raw, sourceId: 'v2-ins-' + crypto.createHash('sha1').update(owner + '|' + text).digest('hex').slice(0, 10), legacyId: 'v2-ins-' + (out.length + 1) });
     if (out.length >= 8) break;
   }
   return out;
@@ -133,8 +133,10 @@ function decorate(result, { dataDir } = {}) {
   let view;
   try { view = applyOverrides(buildView(result), result.overrides); } catch (e) { return result; }
   const mid = String(result.id || '');
-  // sourceId 按条目序号记；洞察重跑后序号会换人，收据上的收件人和这张卡的负责人对不上就当没发
-  const own = (x) => { const s = sentState(dataDir, mid, x.sourceId); return s && s.person && x.owner && s.person !== x.owner ? null : s; };
+  // sourceId 按「负责人|动作」取哈希，洞察重跑换了顺序也对得上。0.6.18 前的收据按序号记（legacyId），
+  // 只在收件人和这张卡负责人一致时才认，免得把别人的已发挂到这张卡上，也免得真发过的卡被当成没发再发一次
+  const own = (x) => { const s = sentState(dataDir, mid, x.sourceId); if (s) return s;
+    const l = x.legacyId && sentState(dataDir, mid, x.legacyId); return l && (!l.person || l.person === x.owner) ? l : null; };
   for (const i of view.insights) i.sent = own(i);
   if (view.next) view.next.sent = own(view.next);
   return { ...result, view };
