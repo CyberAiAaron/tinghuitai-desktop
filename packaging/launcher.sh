@@ -66,7 +66,10 @@ NEWER="$("$NODE" -e "
 const a=String(process.argv[1]).split('.').map(Number),b=String(process.argv[2]).split('.').map(Number);
 for(let i=0;i<3;i++){const x=a[i]||0,y=b[i]||0;if(x!==y){console.log(x>y?1:0);process.exit(0);}}
 console.log(0);" "$BUNDLED_VER" "$INSTALLED_VER" 2>/dev/null || echo 1)"
-if [[ ! -f "$ROOT/program/scripts/launch.js" || "$NEWER" == "1" ]]; then
+# 同版本号重新打包（修复包不 bump 版本）时，version.json 里的 sha256 会变：也要铺一遍。
+SAME_BUILD=1
+if [[ "$BUNDLED_VER" == "$INSTALLED_VER" ]] && ! /usr/bin/cmp -s "$RES/program/version.json" "$ROOT/program/version.json"; then SAME_BUILD=0; fi
+if [[ ! -f "$ROOT/program/scripts/launch.js" || "$NEWER" == "1" || "$SAME_BUILD" == "0" ]]; then
   say "installing program $BUNDLED_VER over $INSTALLED_VER"
   mkdir -p "$ROOT/program"
   /usr/bin/ditto "$RES/program" "$ROOT/program" || die "复制程序文件失败。"
