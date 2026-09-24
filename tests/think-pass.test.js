@@ -21,3 +21,14 @@ test('思考档：提示词带已有看法与转写，节奏常量是目标不�
   assert.ok(u.includes('【已有看法】') && u.includes('- A') && u.includes('【最新转写】\nR'));
   assert.ok(t.THINK_INTERVAL_MS >= 20000 && t.MAX_ITEMS >= 2);
 });
+
+test('思考档：模型档 think 没配时退回 post，配了就用配的', () => {
+  const llm = require('../app/llm');
+  const pick = require('../app/llm').__pickModel || null;
+  // 通过公开入口验证：legacyChain 推出的 models 里带 think
+  const env = { LLM_PROVIDER: 'claude', LLM_MODEL_POST: 'opus', LLM_MODEL_THINK: 'claude-fable-5-1' };
+  const p = llm.chainOf(env)[0];
+  assert.strictEqual(p.models.think, 'claude-fable-5-1');
+  assert.strictEqual(llm.pickModel(p, 'think'), 'claude-fable-5-1');
+  assert.strictEqual(llm.pickModel({ models: { post: 'opus' } }, 'think'), 'opus');
+});

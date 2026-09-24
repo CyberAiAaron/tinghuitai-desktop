@@ -672,7 +672,9 @@ class Session {
   ];
   hitsTrigger(text) { return Session.TRIGGERS.some(re => re.test(text)); }
   // 思考档（app/think-pass.js）。定时：新转写够了才叫；full=true（POST /rethink）：把整场按窗口重想一遍，用于补跑。
-  async runThink({ full = false } = {}) {
+  // 同一时刻只跑一份：定时那份在跑时来了补跑，排在它后面等它结束再跑（Codex 6c7a525e：原来直接返回、接口却回 200 added=0）。
+  runThink(opts) { const run = () => this.runThinkNow(opts); this.thinkChain = (this.thinkChain || Promise.resolve()).then(run, run); return this.thinkChain; }
+  async runThinkNow({ full = false } = {}) {
     if (this.finalized || this.thinking || !this.transcript.length) return;
     if (!full && (this.charsSinceThink < thinkPass.THINK_MIN_CHARS || this.transcript.length <= this.lastThinkIndex)) return;
     this.thinking = true; const t0 = Date.now(); const epochAtStart = this.editEpoch || 0;

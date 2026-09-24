@@ -3,7 +3,7 @@
 // 与分诊（app/triage-fast.js）分开跑：分诊管要点 / 待办，思考档只管看法；0.6.14 的洞察门槛（insight-filter）
 // 拦得太死（09-22 上线后 48 轮 0 条），这里只做四道轻门：claim 非空、不是套话、不与已有看法重复、字数上限。
 // 节奏是目标不是死规矩：约 1 分钟 2 条 —— 每 THINK_INTERVAL_MS 看一次，新转写 ≥ THINK_MIN_CHARS 才叫模型，每次最多 MAX_ITEMS 条。
-const THINK_INTERVAL_MS = 30000;
+const THINK_INTERVAL_MS = 40000;    // 每轮最多 2 条 → 上限 3 条/分钟，实际被去重压到 1–2 条（Codex 6c7a525e：30 s 会到 4 条/分钟）
 const THINK_MIN_CHARS = 120;
 const MAX_ITEMS = 2;
 const MAX_OUTPUT_TOKENS = 900;
