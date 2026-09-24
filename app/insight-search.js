@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const web = require('./tools/web');
-const FIXED_BLOCKLIST = ['chansey', '26191', 'nothing'];
+const FIXED_BLOCKLIST = ['chansey', '26191', 'nothing', 'moneta', '歌尔', 'goertek'];
 const NAME_STOPWORDS = new Set(['AI', 'Phone', 'Project', 'Brain', 'Product', 'Owner', 'Context', 'Trust', 'Mac', 'Codex', 'Claude', 'Lark', 'Slack',
   'Meeting', 'Review', 'Daily', 'Sync', 'User', 'Trial', 'One', 'Pager', 'Remote', 'Control', 'Device', 'Model', 'Design', 'System',
   'Development', 'Cloud', 'Edge', 'Layer', 'Bridge', 'Agent', 'Workshop', 'Weekly', 'Catch', 'OpenAI', 'Apple', 'Microsoft']);
@@ -98,3 +98,21 @@ async function collectIndustryReferences({ insightsMeta = {}, dataDir, meetingId
   return output;
 }
 module.exports = { pickQueries, isSafeQuery, loadSensitiveNames, extractNames, collectIndustryReferences, appendAudit, auditFile };
+
+// 命令行入口（meeting-pipeline.py 用）：stdin 收 {queries, dataDir, meetingId}，stdout 回 {ok, references, audit, queries}。
+// 去敏门禁在 pickQueries 里，Python 侧再过一遍 _clean_industry_queries，两层都得过。
+if (require.main === module) {
+  let raw = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => { raw += chunk; });
+  process.stdin.on('end', async () => {
+    try {
+      const input = raw.trim() ? JSON.parse(raw) : {};
+      const dataDir = input.dataDir || process.env.THT_DATA_DIR;
+      const references = await collectIndustryReferences({ insightsMeta: { industryQueries: input.queries || [] }, dataDir, meetingId: input.meetingId || '' });
+      process.stdout.write(JSON.stringify({ ok: true, references, audit: auditFile(dataDir), queries: references.map(r => r.query) }) + '\n');
+    } catch (e) {
+      process.stdout.write(JSON.stringify({ ok: false, error: String(e && e.message || e).slice(0, 200), references: [] }) + '\n');
+    }
+  });
+}

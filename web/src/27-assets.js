@@ -152,4 +152,5 @@
   $('#clear').onclick = () => { if (running || !cur) return; if (!confirm(T('clearConfirm')||'删除这一场的转写和分析？')) return; state.sessions = state.sessions.filter(s=>s.id!==cur.id); cur = null; persist(); el.tr.innerHTML='<div class="empty">已清空。</div>'; el.hl.innerHTML=''; $('#hl-pinned').innerHTML='';$('#hl-pinned').hidden=true; el.ck.innerHTML=''; el.sum.innerHTML=''; el.ctr.textContent=el.chl.textContent=el.cck.textContent='0'; };
 
   cfg.key='';cfg.relayToken=window.THT_BOOT?.relayToken||cfg.relayToken;
-  ['s-provider','s-key','s-base','s-quick','s-model','s-relay'].forEach(id=>document.getElementById(id)?.closest('.field')?.setAttribute('hidden',''));
+  // 远端窗口（没有 THT_BOOT）留着「Mac 中转口令」这一格，手机才有地方填口令
+  ['s-provider','s-key','s-base','s-quick','s-model'].concat(window.THT_BOOT?['s-relay']:[]).forEach(id=>document.getElementById(id)?.closest('.field')?.setAttribute('hidden',''));

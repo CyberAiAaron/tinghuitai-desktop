@@ -37,7 +37,7 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   const input=path.join(dir,key+'.input.json');write(input,session);
   const job={schema:2,key,sessionId:String(session.id),title:session.title||'未命名会议',input,status:'queued',phase:'等待整理',created:new Date().toISOString(),attempts:0};write(jobPath,job);pump();return job;
  }
- function list(){return fs.readdirSync(dir).filter(f=>f.endsWith('.job.json')).map(f=>{try{return read(path.join(dir,f));}catch{return null;}}).filter(Boolean).sort((a,b)=>a.created.localeCompare(b.created));}
+ function list(){return fs.readdirSync(dir).filter(f=>f.endsWith('.job.json')).map(f=>{try{return read(path.join(dir,f));}catch{return null;}}).filter(Boolean).sort((a,b)=>String(a.created||"").localeCompare(String(b.created||"")));}
  // 只自动补跑最近 7 天的会：一次补 22 场老会议会连着跑一小时模型，老的交给他自己点「重新整理」
  const fresh=j=>Date.now()-Date.parse(j.created||0)<7*864e5;
  // 重跑要想真的把总结补出来，必须先把上一版 enhanced 挪走：meeting-pipeline.py 只有在
@@ -144,5 +144,5 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
  // 认人（会后一屏）把名字写进归档结果的 names。空串 = 清掉这个名字，认错了要能改回来。
  function setNames(id,patch){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))return null;
   return patchEnhanced(p.enhanced,{names:patch||{}});}
- const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{stopped=true;clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
+ const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,patchResult:(id,patch)=>{const p=paths(id);if(!p||!fs.existsSync(p.enhanced)){const e=Error('这场会还没整理完');e.code=404;throw e;}return patchEnhanced(p.enhanced,patch);},result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{stopped=true;clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
 };

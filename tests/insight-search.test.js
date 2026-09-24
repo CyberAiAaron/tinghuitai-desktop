@@ -39,3 +39,15 @@ test('每个安全查询写一行审计，snippet 截到 300 字；失败也留�
   ]);
   assert.equal(fs.statSync(insight.auditFile(dataDir)).mode & 0o777, 0o600);
 });
+
+test('固定黑名单也挡歌尔侧代号 Moneta / 歌尔 / Goertek', () => {
+  assert.deepEqual(insight.pickQueries(['Moneta pin', '歌尔 麦克风', 'Goertek acoustic module', 'MEMS microphone array'], { projectDir: tmp('search-none') }), ['MEMS microphone array']);
+});
+test('命令行入口：stdin 收 queries，被黑名单挡掉的词不出网、不写审计；回 ok / references / audit', () => {
+  const { spawnSync } = require('child_process');
+  const dataDir = tmp('search-cli');
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'app', 'insight-search.js')], { input: JSON.stringify({ queries: ['Chansey camera', '26191 pin'], dataDir, meetingId: 'm1' }), encoding: 'utf8', env: { ...process.env, PROJECT_CONTEXT_DIR: path.join(dataDir, 'no-project') } });
+  const out = JSON.parse(r.stdout.trim());
+  assert.equal(out.ok, true); assert.deepEqual(out.references, []); assert.deepEqual(out.queries, []); assert.equal(out.audit, insight.auditFile(dataDir));
+  assert.equal(fs.existsSync(insight.auditFile(dataDir)), false, '没发出去的词不该有审计行');
+});

@@ -92,7 +92,7 @@ function detect() {
 // 实测 2026-09-20：默认 60,971 token / 次，换成下面这套 1,222 token / 次，同一句 READY 回答一致。
 const MIN_SYSTEM = '你是会议记录分析助手。只输出被要求的内容，不解释、不寒暄。';
 
-function args(kind, { model = '', system = '' } = {}) {
+function args(kind, { model = '', system = '', tools } = {}) {
   if (kind === 'codex') return ['exec', '--sandbox', 'read-only', '--skip-git-repo-check',
     '--ignore-user-config', '--ignore-rules', '--ephemeral', '-c', 'project_doc_max_bytes=0', '-'];
   const a = ['-p', '--output-format', 'json'];
@@ -101,8 +101,9 @@ function args(kind, { model = '', system = '' } = {}) {
     '--setting-sources', '',          // 不读 ~/.claude 的 settings、CLAUDE.md、skill
     '--strict-mcp-config',            // 不连任何 MCP
     '--disable-slash-commands',       // 不加载 skill
-    '--tools', 'Read',                // 工具表只留 Read，工具描述是大头
-    '--allowedTools', 'Read',
+    // 工具表：默认只留 Read（工具描述是大头）；tools === false → 一个都不给（会中分诊用：09-24 回放实测模型会去 Read 文件，
+    // 一次分诊 1,971 输出 token 里正文只有 271 字、耗时 35 s，全是多轮工具调用；分诊只要读 prompt 里的资料，不该翻盘）
+    ...(tools === false ? ['--tools', ''] : ['--tools', 'Read', '--allowedTools', 'Read']),
     '--disallowedTools', 'Bash,Edit,Write,WebFetch,WebSearch',
     '--system-prompt', system || MIN_SYSTEM,
   );
@@ -116,7 +117,7 @@ function args(kind, { model = '', system = '' } = {}) {
 //   会中分诊那 2,000 多输出 token 里大半是思考（一次 4 条要点、正文 212 字，output_tokens 2,278），所以 max_tokens 砍不到它。
 // ⚠️ 没走 CLAUDE_CODE_MAX_OUTPUT_TOKENS 限输出：实测超限时 claude -p 直接 is_error「exceeded the N output token maximum」，
 //   整次调用报废而不是截断——比原来「截断 + 抢救」更糟，而且思考 token 也算在里面。输出上限只对接口那条路（app/llm.js openai）生效。
-function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null, thinking } = {}) {
+function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null, thinking, tools } = {}) {
   const spec = kind === 'custom' ? custom : null;
   if (kind === 'custom' && !spec) return Promise.resolve({ ok: false, reason: 'not_configured' });
   let bin = spec ? spec.bin : findBin(kind);
@@ -128,7 +129,7 @@ function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}
     const finish = v => { if (!done) { done = true; resolve(v); } };
     let p;
     const home = kind === 'codex' ? codexHome(dataDir) : '';
-    try { p = spawn(bin, spec ? customArgs(spec, { prompt: full, model }) : args(kind, { model, system }),
+    try { p = spawn(bin, spec ? customArgs(spec, { prompt: full, model }) : args(kind, { model, system, tools }),
       spec ? { cwd: dataDir || process.cwd(), env: customEnv() }
            : { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}),
                ...(kind === 'claude' && Number.isFinite(Number(thinking)) && thinking !== undefined && thinking !== null && thinking !== '' ? { MAX_THINKING_TOKENS: String(Math.max(0, Math.floor(Number(thinking)))) } : {}) } }); }
@@ -231,4 +232,4 @@ async function probe(kind, dataDir) {
 
 // 卡片对话框（app/card-thread.js）要起的是能用工具的那家命令行；牌子只在这里认，那边不写厂商名。
 const agentBin = () => findBin('claude');
-module.exports = { detect, findBin, codexHome, ask, askDetailed, probe, mainModel, agentBin };
+module.exports = { detect, findBin, codexHome, ask, askDetailed, probe, mainModel, agentBin, args };
