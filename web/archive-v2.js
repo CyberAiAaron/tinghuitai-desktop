@@ -37,6 +37,7 @@
       +(err.get(sid)?'<span class="err">'+esc(err.get(sid))+'</span>':'')
       +'</div>'
       +(sent?'<div class="st"><span class="sent">已发 · '+hhmm(sent.at)+(sent.person&&sent.person!==who?' · 给 '+esc(sent.person):'')+(sent.partial?' · 部分没成':'')+(sent.taskUrl?' · <a href="'+esc(sent.taskUrl)+'" target="_blank" rel="noopener">任务</a>':'')+'</span>'
+        +(sent.partial?'<button type="button" class="go" data-retry="'+esc(sid)+'" title="任务、私聊、行动清单里没成的那几样再发一次，已成的不重发"'+(busy.has(sid)?' disabled':'')+'>'+(busy.has(sid)?'发送中…':'补发没成的')+'</button>':'')
         +'<span class="sub">发出去的任务和私聊撤不回；要改，去飞书里改那条任务。</span></div>'
        :'<button type="button" class="go" data-go="'+esc(sid)+'" title="把这个人在这场会的所有行动合成一条：一条飞书任务 + 一条私聊 + 行动清单 @他。发出后撤不回。"'+(busy.has(sid)?' disabled':'')+'>'+(busy.has(sid)?'发送中…':'发')+'</button>')
       +'</div>';
@@ -104,6 +105,7 @@
       +(view.next?'<section><h2><span class="n">3</span>下一步最重要的一件事</h2><div class="v2-next"><div>'+ed('next.text','big',view.next.text,'p')+'</div>'+card(view.next,'next')+'</div></section>':'')
       +minutesHtml(view.minutes);
     host.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>send(b.dataset.go));
+    host.querySelectorAll('[data-retry]').forEach(b=>b.onclick=()=>send(b.dataset.retry,true));
     const cp=$('#v2-copy');if(cp)cp.onclick=async()=>{try{await navigator.clipboard.writeText(minutesMd(view.minutes));msg('纪要已复制（Markdown）');}catch(e){msg('复制没成：'+e.message);}};
     const sh=$('#v2-share');if(sh)sh.onclick=()=>{const b=$('#download');if(b)b.click();};
   }
@@ -112,20 +114,21 @@
   // ---- 「发」：复用 /person-handoff（一人一条任务 + 一条私聊 + 行动清单 @他）。点任何一张卡 = 把这个人在这场会所有还没发的行动收齐，一次 POST body.items，
   //      对方只收到一条消息（Aaron 09-24："to the same guy it should be in one message"）。发出后每张卡各自变「已发 · 时间」。----
   function cards(){const L=[];if(view.next)L.push({sid:view.next.sourceId,owner:view.next.owner,text:view.next.text,node:view.next});for(const i of view.insights)L.push({sid:i.sourceId,owner:i.owner,text:i.action||i.stance,node:i});return L.filter(c=>c.sid&&c.text);}
-  function batchOf(sid){
+  // retry：只收这个人「部分没成」的那几张（服务端 retryFailed 只补失败的渠道）；普通发：只收还没发的
+  function batchOf(sid,retry){
     const me=cards().find(c=>c.sid===sid);if(!me)return null;
     const who=me.owner||'Aaron Wang';
-    const items=cards().filter(c=>(c.owner||'Aaron Wang')===who&&!c.node.sent&&!busy.has(c.sid));
+    const items=cards().filter(c=>(c.owner||'Aaron Wang')===who&&(retry?c.node.sent&&c.node.sent.partial:!c.node.sent)&&!busy.has(c.sid));
     return {person:who,items:items.length?items:[me]};
   }
   function meetingDate(){try{const d=new Date(start||Date.now());const p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}catch(e){return '';}}
-  async function send(sid){
-    const b=batchOf(sid);if(!b||busy.has(sid))return;
+  async function send(sid,retry){
+    const b=batchOf(sid,retry);if(!b||busy.has(sid))return;
     const sids=b.items.map(c=>c.sid);
     sids.forEach(s=>{busy.add(s);err.delete(s);});render();
     try{
       const r=await fetch('/asr-relay/person-handoff?token='+tok(),{method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({meetingId:mid,kind:'todo',person:b.person,items:b.items.map(c=>({text:c.text,sourceId:c.sid})),confirmed:true,meetingTitle:title,meetingDate:meetingDate()}),signal:AbortSignal.timeout(120000)});
+        body:JSON.stringify({meetingId:mid,kind:'todo',person:b.person,items:b.items.map(c=>({text:c.text,sourceId:c.sid})),confirmed:true,...(retry?{retryFailed:true,retryConfirmed:true}:{}),meetingTitle:title,meetingDate:meetingDate()}),signal:AbortSignal.timeout(120000)});
       const j=await r.json().catch(()=>({}));
       if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
       const sent={at:j.at||Date.now(),partial:!!j.partial,person:(j.assignee&&j.assignee.name)||b.person,taskUrl:(j.task&&j.task.url)||''};

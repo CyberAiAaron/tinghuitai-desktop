@@ -182,3 +182,10 @@ test('旧序号收据：收件人对得上才算已发，对不上不挂到别�
   fs.writeFileSync(path.join(d, k + '.json'), JSON.stringify({ status: 'sent', at: 1 }));
   assert.equal(mk('@Abel Mei：算像素').sent, null, '旧收据没有收件人，不认');
 });
+
+test('v2 部分没成：卡上有「补发没成的」，只收部分没成的卡，带 retryFailed', () => {
+  const js = fs.readFileSync(path.join(root, 'web', 'archive-v2.js'), 'utf8');
+  assert.match(js, /sent\.partial\?'<button type="button" class="go" data-retry=/);
+  assert.match(js, /retry\?c\.node\.sent&&c\.node\.sent\.partial:!c\.node\.sent/);
+  assert.match(js, /\.\.\.\(retry\?\{retryFailed:true,retryConfirmed:true\}:\{\}\)/);
+});
