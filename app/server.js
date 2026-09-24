@@ -18,6 +18,7 @@ const retention = require('./retention');   // 录音保留期：只删 audio/ �
 const transcriptPick = require('./transcript-pick');  // D5：同一场会「用哪份转写」的唯一一份规则
 const assistantCore = require('../web/assistant-core');
 const Busboy = require('busboy');
+const topicDocModule = require('./topic-doc');
 
 const meetingTrash = require('./meeting-trash');
 const settings = require('./config');
@@ -1194,7 +1195,7 @@ async function proxyHub(req, res, u, upstream) {
 
 function serveStatic(req, res, p) {
   let rel;try{rel=decodeURIComponent(p.replace(/^\/tinghuitai\/?/, '')).split('?')[0]||'index.html';}catch{res.writeHead(400);return res.end('invalid path');}
-  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','page-comments.js','archive-v2.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json','workspace-nav.js','activity.html','activity.js','activity.css','assistant-widget.js','assistant-widget.css']);
+  const allowed=new Set(['index.html','work.html','work.js','work-style.css','theme.css','recording-safety.js','sw.js','manifest.json','icon-192.png','icon-512.png','work-icon-192.png','work-icon-512.png','local-ready.json','setup.html','setup.js','bootstrap.js','archive.html','archive.js','page-comments.js','archive-v2.js','topic-doc-panel.js','memory.html','briefs.html','briefs.js','briefs.css','work-manifest.json','workspace-nav.js','activity.html','activity.js','activity.css','assistant-widget.js','assistant-widget.css']);
   if(!allowed.has(rel)){res.writeHead(404);return res.end('not found');}
   const full = path.join(STATIC_DIR, rel);
   if (!full.startsWith(STATIC_DIR + path.sep) && full !== STATIC_DIR) { res.writeHead(403); return res.end('forbidden'); }
@@ -1387,6 +1388,26 @@ const shareBundles=require('./share-bundles')({settings});
 const slackShareRoute=require('./slack-share')({settings,isLocal:isLocalReq,getBundle:key=>shareBundles.read(key).bundle});
 const pageComments=require('./page-comments').create({dataDir:DATA,log});   // 回看页到处评论 → 写信唤醒本机 Claude（Aaron 2026-09-24）
 const personHandoff=require('./person-handoff');   // 「交给某人」：飞书任务 + 私聊 + 行动清单文档 @他（Aaron 2026-09-24）
+const topicDocService=topicDocModule.create({dataDir:DATA,log});   // 每主题一份飞书真源文档：会后差异预览，回看页点「接受」才写（confirmed:true）
+const topicDocHandlers=Object.create(null);
+topicDocService.routes({get:(route,handler)=>{topicDocHandlers['GET '+route]=handler;},post:(route,handler)=>{topicDocHandlers['POST '+route]=handler;}});
+async function handleTopicDocHttp(req,res,u,authed) {
+  const routePath=u.pathname.startsWith('/asr-relay/')?u.pathname:'/asr-relay'+u.pathname;
+  const handler=topicDocHandlers[req.method+' '+routePath];
+  if(!handler)return false;
+  const send=(code,body)=>{res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
+  if(!authed){send(401,{ok:false,error:'请连接 Mac'});return true;}
+  let body={};
+  if(req.method==='POST'){
+    let raw='';
+    try{for await(const c of req){raw+=c;if(Buffer.byteLength(raw)>8e6)throw Error('请求过长');}}
+    catch(e){send(413,{ok:false,error:e.message});return true;}
+    try{body=JSON.parse(raw||'{}');}catch(e){send(400,{ok:false,error:'JSON 格式不对'});return true;}
+  }
+  let code=200;
+  await handler({query:Object.fromEntries(u.searchParams),body},{status(n){code=n;return this;},json(value){send(code,value);return value;}});
+  return true;
+}
 const archiveV2=require('./archive-v2');   // 会后页 v2：服务端挑四块 + ⌘E override（Aaron 2026-09-24）
 // 卡片对话框（第③批）：每条消息起一次本机 claude -p。开着的场次改内存对象，结束的场次改 pending 文件。
 const cardThread=require('./card-thread').create({dataDir:DATA,log,getLive:id=>{const s=SESSIONS.get(id);return s&&!s.finalized?s:null;},
@@ -1472,6 +1493,7 @@ async function calendarMatch(sess) {
 
 async function handleRequest(req, res) {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || tokenOk(env0, u.searchParams.get('token')); const p = u.pathname;
+  if(await handleTopicDocHttp(req,res,u,authed))return;
   // 「这次整理用了哪些资料」：只读，给以后界面上那一栏用（本轮不做界面）。
   // 默认只回元数据（哪几块、哪一版、多少字、截没截），要全文得显式 &full=1——
   // 资料原文里有项目内部内容，不该因为一次随手 GET 就整段吐出来。
