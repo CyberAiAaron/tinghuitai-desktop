@@ -133,8 +133,10 @@ function decorate(result, { dataDir } = {}) {
   let view;
   try { view = applyOverrides(buildView(result), result.overrides); } catch (e) { return result; }
   const mid = String(result.id || '');
-  for (const i of view.insights) i.sent = sentState(dataDir, mid, i.sourceId);
-  if (view.next) view.next.sent = sentState(dataDir, mid, view.next.sourceId);
+  // sourceId 按条目序号记；洞察重跑后序号会换人，收据上的收件人和这张卡的负责人对不上就当没发
+  const own = (x) => { const s = sentState(dataDir, mid, x.sourceId); return s && s.person && x.owner && s.person !== x.owner ? null : s; };
+  for (const i of view.insights) i.sent = own(i);
+  if (view.next) view.next.sent = own(view.next);
   return { ...result, view };
 }
 
