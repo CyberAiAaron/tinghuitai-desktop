@@ -63,16 +63,18 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   // P-03：以前只有 error 会自动重试，「归档完成但总结没出来」的那些就永远停在那儿，
   // 界面还显示「已归档」。现在这类自动补跑一次（只一次，空会和坏数据不会无限重跑）。
   // R8：partial（总结缺段、说话人存疑）以前永远停在那儿，只有他自己点「重新整理」才动。现在也自动补跑，上限 2 次。
+  // 09-25 验收：模型整个不可用时 2 秒内连烧 3 次、恢复后再也不试。自动补跑之间至少隔 10 分钟（THT_AUTO_RETRY_GAP_MS 可调）
+  const gap=Number(process.env.THT_AUTO_RETRY_GAP_MS||600000),cool=x=>Date.now()-(Number(x.lastAutoRetryAt)||0)>=gap;
   const j=list().find(x=>x.status==='queued'||x.status==='running'
     ||(x.status==='error'&&x.attempts<4&&x.nextRetry*1000<Date.now())
-    ||(x.status==='done'&&x.summaryGenerated!==true&&(x.summaryRetries||0)<1&&fresh(x))
-    ||(x.status==='partial'&&(x.partialRetries||0)<2&&fresh(x)));if(!j)return;
+    ||(x.status==='done'&&x.summaryGenerated!==true&&(x.summaryRetries||0)<1&&fresh(x)&&cool(x))
+    ||(x.status==='partial'&&(x.partialRetries||0)<2&&fresh(x)&&cool(x)));if(!j)return;
   if(j.status==='done'){const p2=path.join(dir,j.key+'.job.json');const cur=read(p2);
     shelveEnhanced(j.key);
-    write(p2,{...cur,status:'queued',phase:'总结没出来，自动补跑一次',summaryRetries:(cur.summaryRetries||0)+1});
+    write(p2,{...cur,status:'queued',phase:'总结没出来，自动补跑一次',summaryRetries:(cur.summaryRetries||0)+1,lastAutoRetryAt:Date.now()});
     log('自动补跑总结 '+j.key);}
   if(j.status==='partial'){const p2=path.join(dir,j.key+'.job.json');const cur=read(p2);
-    write(p2,{...cur,status:'queued',phase:'整理不完整，自动补跑一次',partialRetries:(cur.partialRetries||0)+1});
+    write(p2,{...cur,status:'queued',phase:'整理不完整，自动补跑一次',partialRetries:(cur.partialRetries||0)+1,lastAutoRetryAt:Date.now()});
     log('自动补跑不完整的整理 '+j.key);}
   // detached：Python 自己起了 node 桥、桥可能再起命令行。超时要杀的是整棵树，所以给它自己的进程组。
   child=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),path.join(dir,j.key+'.job.json')],{env:{...process.env,THT_PIPELINE_DIR:dir,THT_NODE:process.execPath,THT_CFG_JSON:cfgJson()},stdio:['ignore','ignore','pipe'],detached:true});
