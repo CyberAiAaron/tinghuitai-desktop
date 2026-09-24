@@ -39,7 +39,7 @@ function normalize(body) {
   const sourceId = String(b.sourceId || '').trim().slice(0, 120);
   if (sourceId && !/^[A-Za-z0-9_.:-]{1,120}$/.test(sourceId)) throw bad('sourceId 不对');
   const meetingTitle = oneLine(b.meetingTitle).slice(0, 120);
-  return { meetingId, person, kind, text, context, due: dueRaw || plusDays(3), dueDefault: !dueRaw, sourceId, meetingTitle };
+  return { meetingId, person, kind, text, context, due: dueRaw || plusDays(3), dueDefault: !dueRaw, sourceId, meetingTitle, retryConfirmed: b.retryConfirmed === true };
 }
 
 const kindLabel = k => (k === 'decision' ? '待决定' : '待办');
@@ -61,7 +61,10 @@ async function ensureDoc(dataDir, cli) {
 }
 
 // 三件事本体。不抛（除非三件全败），每项 {ok, ...} 或 {ok:false, error}
-async function perform(input, { dataDir, execImpl, log = () => {}, archiveBase = '' }) {
+async function perform(input, prev, { dataDir, execImpl, log = () => {}, archiveBase = '' }) {
+  // prev = 上一次的收据（补发时）。已成功的项原样沿用不再外发；失败但「不确定」的项要 retryConfirmed 才重做
+  const keep = k => !!(prev && prev[k] && (prev[k].ok || (prev[k].uncertain && !input.retryConfirmed)));
+  const skipped = [];
   const cliOpts = { execImpl, log };
   const cli = {
     resolveIds: n => lark.resolveIds(n, cliOpts),
@@ -95,7 +98,7 @@ async function perform(input, { dataDir, execImpl, log = () => {}, archiveBase =
     input.context ? '依据：' + input.context : '',
     input.dueDefault ? '截止：' + input.due + '（默认截止，可改）' : '截止：' + input.due,
   ].filter(Boolean);
-  try {
+  if (keep('task')) { out.task = prev.task; skipped.push('task'); } else try {
     const r = await cli.taskCreate({ summary: clip(summary, 120), description: descLines.join('\n'), assignee: openId, due: input.due });
     out.task = r.ok ? { ok: true, url: r.url, id: r.id } : { ok: false, error: r.error, uncertain: !!r.uncertain };
   } catch (e) { out.task = { ok: false, error: String(e.message || e).slice(0, 200) }; }
@@ -109,13 +112,13 @@ async function perform(input, { dataDir, execImpl, log = () => {}, archiveBase =
     out.task && out.task.ok && out.task.url ? '任务：' + out.task.url + (input.dueDefault ? '（截止 ' + input.due + '，默认值，可改）' : '（截止 ' + input.due + '）') : '（飞书任务没建成' + (out.task && out.task.error ? '：' + out.task.error : '') + '）',
     '', SIGN,
   ].filter(l => l !== '').join('\n');
-  try {
+  if (keep('message')) { out.message = prev.message; skipped.push('message'); } else try {
     const r = await cli.messageSend({ openId, markdown: md });
     out.message = r.ok ? { ok: true, messageId: r.messageId, to: openId } : { ok: false, error: r.error, uncertain: !!r.uncertain };
   } catch (e) { out.message = { ok: false, error: String(e.message || e).slice(0, 200) }; }
 
   // c. 行动清单追加一行并 @ 人
-  try {
+  if (keep('doc')) { out.doc = prev.doc; skipped.push('doc'); } else try {
     const d = await ensureDoc(dataDir, cli);
     if (!d.ok) out.doc = { ok: false, error: d.error, uncertain: !!d.uncertain };
     else {
@@ -134,6 +137,9 @@ async function perform(input, { dataDir, execImpl, log = () => {}, archiveBase =
   } catch (e) { out.doc = { ok: false, error: String(e.message || e).slice(0, 200) }; }
 
   const okCount = ['task', 'message', 'doc'].filter(k => out[k] && out[k].ok).length;
+  out.partial = okCount < 3;
+  out.failed = ['task', 'message', 'doc'].filter(k => !(out[k] && out[k].ok));
+  if (skipped.length) out.skipped = skipped;
   if (!okCount) {
     // 三件全没成：确定都没发出去才允许重来；任何一件「不确定」就留 pending 收据（门禁要 retryConfirmed）
     const e = Error('三件事都没做成：' + ['task', 'message', 'doc'].map(k => (out[k] && out[k].error) || '?').join('；'));
@@ -150,7 +156,7 @@ async function run({ dataDir, body, execImpl, log = () => {}, archiveBase = '' }
   const receipt = await sendGate.send({
     dataDir, kind: 'person-handoff', body: body || {}, key,
     meta: { meetingId: input.meetingId, sourceId: input.sourceId, person: input.person, kind: input.kind },
-    run: () => perform(input, { dataDir, execImpl, log, archiveBase }),
+    run: prev => perform(input, prev, { dataDir, execImpl, log, archiveBase }),
   });
   return receipt;
 }

@@ -112,3 +112,37 @@ test('路由：口令不对 401；没 confirmed 400；缺人 400——都不调�
   assert.match(arg(calls[1], '--description'), /http:\/\/127\.0\.0\.1:47823\/archive\.html\?id=m-1/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('部分成功可补发：retryFailed 只重做失败项，成功项一条命令都不再跑；不带 retryFailed 原样回收据', async () => {
+  const dir = tmp(), calls = [];
+  const r1 = await PH.run({ dataDir: dir, body: body(), execImpl: fakeExec(calls, { msgFail: true }) });
+  assert.equal(r1.partial, true); assert.deepEqual(r1.failed, ['message']);
+  const c2 = [];
+  const r2 = await PH.run({ dataDir: dir, body: body(), execImpl: fakeExec(c2) });
+  assert.equal(r2.alreadySent, true); assert.equal(c2.length, 0);
+  const c3 = [];
+  const r3 = await PH.run({ dataDir: dir, body: body({ retryFailed: true, retryConfirmed: true }), execImpl: fakeExec(c3) });
+  assert.equal(r3.resumed, true); assert.equal(r3.partial, false); assert.equal(r3.message.ok, true);
+  assert.deepEqual(r3.skipped, ['task', 'doc']);
+  assert.deepEqual(c3.map(a => a[0] + ' ' + a[1]).filter(s => !/contact/.test(s)), ['im +messages-send'], '只补发私聊');
+  assert.equal(r3.task.url, r1.task.url);
+  // 补完后再点：不再跑
+  const c4 = [];
+  const r4 = await PH.run({ dataDir: dir, body: body({ retryFailed: true, retryConfirmed: true }), execImpl: fakeExec(c4) });
+  assert.equal(r4.alreadySent, true); assert.equal(c4.length, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('补发时「不确定」的失败项没带 retryConfirmed 就不重做，收据仍标 partial', async () => {
+  const dir = tmp();
+  const uncertainExec = (bin, args, o, cb) => { if (args[0] + ' ' + args[1] === 'im +messages-send') return cb(Object.assign(Error('ETIMEDOUT'), { killed: true }), '', ''); return fakeExec([], {})(bin, args, o, cb); };
+  const r1 = await PH.run({ dataDir: dir, body: body(), execImpl: uncertainExec });
+  assert.equal(r1.message.ok, false);
+  if (r1.message.uncertain) {
+    const c = [];
+    const r2 = await PH.run({ dataDir: dir, body: body({ retryFailed: true }), execImpl: fakeExec(c) });
+    assert.equal(r2.partial, true); assert.equal(r2.message.uncertain, true);
+    assert.equal(c.filter(a => a[1] === '+messages-send').length, 0, '不确定的项没确认不重发');
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
