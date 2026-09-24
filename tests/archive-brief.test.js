@@ -136,7 +136,7 @@ test('深度档：--only insights 默认走深度档、--shallow 走浅档；写
   const src = fs.readFileSync(path.join(root, 'app/meeting-pipeline.py'), 'utf8');
   assert.match(src, /fn=make_insights if shallow else make_insights_deep/); assert.match(src, /sys\.argv\[3\]=='--shallow'/);
   assert.match(src, /for k in \('insights','insights_md','insightsBrief','insightsMeta','insightsWarning'\):/, '写回也带 insights_md 这个键');
-  for (const s of ['按 THINK.md 写', '不复述会议，不核对文档或决策记录，不用内部代号', '没拍板的方案不写成已定', '未核实', '不得编 URL', '@<人名>：', '300 字以内'])
+  for (const s of ['按 THINK.md 写', '不复述会议，不核对文档或决策记录，不用内部代号', '没拍板的方案不写成已定', '未核实', '不得编 URL', '@<人名>：', '1000 字以内'])
     assert.ok(src.includes(s), '缺硬约束：' + s);
   assert.doesNotMatch(src, /insights 最多 5 条，按对 Aaron 决策的影响排序/, '深度档 prompt 里不该再出现浅档那套固定字段 schema');
   assert.match(src, /context=\{'purpose': 'insights-deep'/); assert.match(src, /_apply_insights\(brief, make_insights_deep/, '归档管线也走深度档');

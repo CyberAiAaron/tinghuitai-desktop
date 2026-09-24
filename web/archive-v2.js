@@ -49,14 +49,14 @@
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s"']+)\)/g,function(m,x,u){return '<a href="'+u+'" target="_blank" rel="noopener">'+x+'</a>';}); }
   function mdHtml(src){
     const lines=String(src==null?'':src).replace(/\r/g,'').split('\n');
-    let out='',list=null,first=true;
+    let out='',list=null,first=true,sec=0;
     const closeList=function(){ if(list){ out+=(list==='ol'?'</ol>':'</ul>'); list=null; } };
     for(const raw of lines){
       const l=raw.trim();
       if(!l){ closeList(); continue; }
       if(/^(-{3,}|\*{3,})$/.test(l)){ closeList(); out+='<hr class="md-hr">'; continue; }
       const h=/^(#{1,6})\s+(.*)$/.exec(l);
-      if(h){ closeList(); out+='<h3 class="md-h'+(h[1].length<=2?' md-h2':'')+'">'+mdInline(h[2])+'</h3>'; first=false; continue; }
+      if(h){ closeList(); if(sec)out+='</article>'; sec++; out+='<article class="md-story"><div class="md-no">'+String(sec).padStart(2,'0')+'</div><h3 class="md-h">'+mdInline(h[2].replace(/\*\*/g,''))+'</h3>'; first=false; continue; }
       const q=/^>\s?(.*)$/.exec(l);
       if(q){ closeList(); out+='<blockquote class="md-q">'+mdInline(q[1])+'</blockquote>'; continue; }
       const ol=/^(\d+)[.)]\s+(.*)$/.exec(l);
@@ -69,7 +69,7 @@
       out+='<p class="md-p'+(at?' md-at':'')+(lead?' md-lead':'')+'">'+mdInline(l)+'</p>';
       first=false;
     }
-    closeList();
+    closeList(); if(sec)out+='</article>';
     return out;
   }
   function insightsHtml(){
