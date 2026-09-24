@@ -52,13 +52,13 @@ const CHEAT_SHEET = [
   '  找人 open_id：lark-cli contact +search-user --query "Cary Luo" --as user',
   '  看忙闲：lark-cli calendar +freebusy --start 2026-09-24 --end 2026-09-24 --user-id ou_a,ou_b --as user　　看日程：lark-cli calendar +agenda --start <日期> --end <日期> --as user',
   '  建日程：lark-cli calendar +create --summary "…" --start "2026-09-24T14:00+08:00" --end "2026-09-24T15:00+08:00" --attendee-ids ou_a,ou_b --as user',
-  '  发私聊：lark-cli im +messages-send --user-id ou_xxx --text "…" --as user（正文末尾加「— Aaron 的 Claude 代回」）',
+  '  发私聊：lark-cli im +messages-send --user-id ou_xxx --text "…" --as user（正文末尾加代回落款）',
   '  建任务：lark-cli task +create --summary "…" --description "…" --assignee ou_xxx --due 2026-09-25 --as user',
 ];
 const SLACK_CHEAT_SHEET = [
   '  Slack 走 tht-slack（口令已在本机配置里，命令里不用填；缺权限时它会回 missing_scope，照实报）：',
   '  Slack 搜消息：tht-slack search --query "in:#channel 关键词" --limit 8　　读频道最近几条：tht-slack read-channel --channel C0xxx --limit 10',
   '  Slack 读线程：tht-slack read-thread --channel C0xxx --ts 1726000000.000100　　查人：tht-slack user --user U0xxx（或 --email a@b.c）',
-  '  Slack 发消息：tht-slack send --channel C0xxx --text "…"　　发私聊：tht-slack dm --user U0xxx --text "…"（会自动补「— Aaron 的 Claude 代回」）',
+  '  Slack 发消息：tht-slack send --channel C0xxx --text "…"　　发私聊：tht-slack dm --user U0xxx --text "…"（会自动补代回落款）',
 ];
 module.exports = { READ_TOOLS, LARK_READ_TOOLS, SLACK_READ_TOOLS, WRITE_TOOLS, WRITE_BY_ACTION, ACTIONS, MCP_READ_TOOLS, MCP_WRITE_TOOLS, LARK_MCP_TOOL_IDS, pendingActionOf, writeToolsFor, readToolsFor, CHEAT_SHEET, SLACK_CHEAT_SHEET };

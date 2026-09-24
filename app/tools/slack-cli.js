@@ -2,12 +2,15 @@
 'use strict';
 // tht-slack：卡片对话框里那个无头 agent 用的 Slack 命令行（壳是仓库里的 app/tools/bin/tht-slack，app/card-thread.js 校验过它再把目录前置到 PATH）。
 // 和 lark-cli 一样是 Bash 里的一条命令、输出 JSON；口令从本机 settings.json 读（SLACK_USER_TOKEN / SLACK_BOT_TOKEN，同 app/slack-share.js），
-// 不进参数、不进输出、不进日志。读类：search / read-channel / read-thread / user；写类：send / dm（正文自动补「— Aaron 的 Claude 代回」）。
+// 不进参数、不进输出、不进日志。读类：search / read-channel / read-thread / user；写类：send / dm（正文自动补代回落款，见 REPLY_SIGN）。
 // 写类能不能被调到不由这里管——card-thread 只在用户确认了对应动作的那一轮才把 Bash(tht-slack send:*) / dm 放进 allowedTools。
 const fs = require('fs'), path = require('path'), os = require('os');
 const slack = require('./slack');
 
-const SIGN = '— Aaron 的 Claude 代回';
+// 代回落款：settings.json 的 REPLY_SIGN 优先（作者本人配「— Aaron 的 Claude 代回」），包里默认中性
+const DEFAULT_SIGN = '— 由 Claude 代回';
+function signOf(env = process.env) { try { const v = String(JSON.parse(fs.readFileSync(settingsFile(env), 'utf8')).REPLY_SIGN || '').trim(); return v || DEFAULT_SIGN; } catch (e) { return DEFAULT_SIGN; } }
+const SIGN = DEFAULT_SIGN;
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
 const READ_CMDS = ['search', 'read-channel', 'read-thread', 'user'];
 const WRITE_CMDS = ['send', 'dm'];
@@ -76,7 +79,7 @@ async function main(argv, { env = process.env, fetchImpl } = {}) {
   let text = String(a.text === true ? '' : (a.text || '')).trim();
   if (!text) return { ok: false, error: '要 --text' };
   if (text.length > 4000) return { ok: false, error: '正文超过 4000 字' };
-  if (!text.includes(SIGN)) text = text + '\n' + SIGN;
+  const sign = signOf(env); if (!text.includes(sign)) text = text + '\n' + sign;
   const p = { channel: target, text, unfurl_links: 'false', unfurl_media: 'false' };
   if (a['thread-ts'] && a['thread-ts'] !== true) p.thread_ts = a['thread-ts'];
   const r = await call(writeTok, 'chat.postMessage', p);
@@ -88,4 +91,4 @@ if (require.main === module) {
   main(process.argv.slice(2)).then(r => { process.stdout.write(JSON.stringify(r) + '\n'); process.exit(r.ok ? 0 : 1); },
     e => { process.stdout.write(JSON.stringify({ ok: false, error: clip(e && e.message, 200) }) + '\n'); process.exit(1); });
 }
-module.exports = { main, parseArgs, SIGN, READ_CMDS, WRITE_CMDS };
+module.exports = { main, parseArgs, SIGN, signOf, READ_CMDS, WRITE_CMDS };
