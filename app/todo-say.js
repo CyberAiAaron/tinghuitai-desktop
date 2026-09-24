@@ -41,14 +41,14 @@ const RE_DONE = /做完了|完成了|已完成|搞定了|办好了|已经做了|
 const RE_EDIT = /(?:改成|改为|换成|改叫|写成)\s*[:：]?\s*(.+)$/s;
 const RE_DUE = /(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*[日号]?|今天|明天|后天|下*(?:周|星期)[一二三四五六日天])\s*(?:前|之前|以前|截止|到期)?/;
 // 中文口语里的「周五前」这类时间在句尾，要先把它摘出来再找负责人，不然 RE_ASSIGN 会把「周五」吃进名字。
-function stripDue(s) { const m = RE_DUE.exec(s); return m ? { rest: s.replace(m[0], ' ').trim(), due: parseDue(m[0]) } : { rest: s, due: '' }; }
+function stripDue(s, at = new Date()) { const m = RE_DUE.exec(s); return m ? { rest: s.replace(m[0], ' ').trim(), due: parseDue(m[0], at) } : { rest: s, due: '' }; }
 
 function parseOne(raw, at) {
   const s = String(raw || '').trim();
   if (!s) return null;
   let m;
   if ((m = RE_ADD.exec(s))) {
-    const body = m[1].trim(); const { rest, due } = stripDue(body);
+    const body = m[1].trim(); const { rest, due } = stripDue(body, at);
     const who = RE_ASSIGN.exec(rest);
     const text = clip((who ? rest.replace(who[0], ' ') : rest).replace(/\s+/g, ' ').replace(/[，,。;；:：\s]+$/, ''), 300);
     if (!text) return null;
@@ -59,7 +59,7 @@ function parseOne(raw, at) {
   const rest0 = s.replace(nm[0], ' ').trim();
   if (RE_REMOVE.test(rest0)) return { op: 'remove', n };
   if (RE_DONE.test(rest0)) return { op: 'done', n };
-  const { rest, due } = stripDue(rest0);
+  const { rest, due } = stripDue(rest0, at);
   if ((m = RE_EDIT.exec(rest))) return { op: 'edit', n, text: clip(m[1].replace(/[。；;]+$/, ''), 300), ...(due ? { due } : {}) };
   const who = RE_ASSIGN.exec(rest);
   if (who) return { op: 'assign', n, owner: clip(who[1], 60), ...(due ? { due } : {}) };

@@ -38,7 +38,7 @@ function semanticRisks(rows) {
 }
 function evaluate(summary, rows) {
   const cards = rows.filter(row => row.insight && row.insight.md);
-  const times = cards.map(row => Number(row.atEnd)).filter(Number.isFinite).sort((a, b) => a - b);
+  const times = cards.map(row => Number(row.emitAt != null ? row.emitAt : row.atEnd)).filter(Number.isFinite).sort((a, b) => a - b);
   const gaps = times.slice(1).map((time, index) => time - times[index]);
   const mean = Number(summary.per10min && summary.per10min.after);
   const peak = Math.max(0, ...((summary.after && summary.after.buckets) || []).map(Number));

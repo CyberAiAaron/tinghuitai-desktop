@@ -67,6 +67,7 @@ const before = { highlights: (sess.highlights || []).length, todos: (sess.todos 
     let endIndex = rows.findIndex(r => (Number(r.at) || 0) > t); if (endIndex < 0) endIndex = rows.length;
     if (endIndex <= lastTriageIndex) continue;
     if (maxRounds && round >= maxRounds) break;
+    if (L.inWarmup(1, t * 1000 + 1)) continue;   // 与生产同：开场 5 分钟不出卡（起点记作 0 秒）
     if (L.inCooldown(lastCardAtSec * 1000, t * 1000)) continue;   // 冷却中：不推进 lastTriageIndex，增量留给冷却期满那一轮
     if (L.overBurstCap(cardTimesSec.map(s => s * 1000), t * 1000)) continue;   // 滚动 10 分钟已出够 2 张，和生产 server.js 同一层限制
     round++;
@@ -82,9 +83,9 @@ const before = { highlights: (sess.highlights || []).length, todos: (sess.todos 
     const parsed = L.parse(res.text);
     const r = L.normalize(parsed, { existing, logExisting, enUI });
     const atStart = Number(rows[idx[0]] && rows[idx[0]].at) || 0, atEnd = Number(rows[endIndex - 1].at) || 0;
-    if (r.insight) { r.insight.id = 'r' + (++seq); r.insight.at = atEnd; state.factchecks.push(r.insight); lastCardAtSec = atEnd; cardTimesSec.push(atEnd); if (cardTimesSec.length > 20) cardTimesSec.splice(0, cardTimesSec.length - 20); }
+    if (r.insight) { r.insight.id = 'r' + (++seq); r.insight.at = atEnd; state.factchecks.push(r.insight); lastCardAtSec = t; cardTimesSec.push(t); if (cardTimesSec.length > 20) cardTimesSec.splice(0, cardTimesSec.length - 20); }
     for (const text of r.log) state.highlights.push({ id: 'r' + (++seq), text, at: atEnd, log: true });
-    const row = { round, atStart, atEnd, rowsIn: win.length, ms, inTok: res.usage ? res.usage.in : null, outTok: res.usage ? res.usage.out : null, thinking: res.usage ? (res.usage.thinking || 0) : null, turns: res.usage ? (res.usage.turns || 0) : null, provider: res.provider || '', model: res.model || '', err: res.errorCode || '',
+    const row = { round, emitAt: r.insight ? t : null, atStart, atEnd, rowsIn: win.length, ms, inTok: res.usage ? res.usage.in : null, outTok: res.usage ? res.usage.out : null, thinking: res.usage ? (res.usage.thinking || 0) : null, turns: res.usage ? (res.usage.turns || 0) : null, provider: res.provider || '', model: res.model || '', err: res.errorCode || '',
       parsedOk: !!parsed, insight: r.insight ? { md: r.insight.md, chars: chars(r.insight.md), hasAssignee: hasAssignee(r.insight.md), claim: r.insight.claim, type: r.insight.type, action: r.insight.action } : null, log: r.log, rawInsight: parsed ? parsed.md : null };
     log.push(row); fs.appendFileSync(jsonl, JSON.stringify({ ...row, raw: String(res.text || '').slice(0, 3000) }) + '\n');
     process.stderr.write(`  ${sid} #${round} ${atStart}-${atEnd}s ${ms}ms in=${row.inTok} out=${row.outTok} ${r.insight ? '洞察 ' + chars(r.insight.md) + '字 ' + r.insight.claim : '—'}${parsed ? '' : ' (未解析)'}${row.err ? ' err=' + row.err : ''}\n`);
