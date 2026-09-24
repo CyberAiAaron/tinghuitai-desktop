@@ -8,6 +8,9 @@ const root = path.join(__dirname, '..'), pause = ms => new Promise(r => setTimeo
 const freePort = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 const IA = require(path.join(root, 'app/insight-actions.js'));
 const TOKEN = 'k'.repeat(40), SID = 'ia-b4';
+// 命题文档 token 是个人配置（<数据目录>/docs.json），测试写一份
+const DOC_TOKENS = {"board": "A2hQdjgAUoIV1vxecJzlFw57gId", "prd": "COqzdiAr6oGyX3xZb6alPLxQghg", "arch": "UifYd8eGCoxyyuxEIZjlzBHNgae", "ur": "Rxi9djN7vo9FrwxWXhhlYsmQgAR", "intel": "SRLMdavSXoUyEnxhZyllQe9qgEh"};
+const writeDocs = d => fs.writeFileSync(path.join(d, 'docs.json'), JSON.stringify(DOC_TOKENS));
 const PAGE = { said: 'Cary 说流失率是 4.1%', recorded: '决策板 D3（2026-09-17）记的是 6.3%', source: '决策板 D3，2026-09-17 夜间导出', decision: '已附决策板文档链接，会后总结带冲突条' };
 
 // ---------- 单元：onePager ----------
@@ -70,6 +73,7 @@ function kbFixture() {
 }
 async function startServer({ dir, port, cli, kb, claude }) {
   fs.mkdirSync(path.join(dir, 'pending'), { recursive: true });
+  writeDocs(dir);
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ RELAY_TOKEN: TOKEN, ARCHIVE_TARGET: 'local', MEMORY_PROJECTION_DIR: path.join(dir, 'mem'), DECISION_BOARD_DIR: kb, INSIGHT_ACTION_GRACE_MS: 0, LLM_PROVIDER: 'claude' }));
   const child = spawn(process.execPath, [path.join(root, 'app/server.js')], { env: { ...process.env, THT_DATA_DIR: dir, THT_PORT: String(port), THT_NO_OPEN: '1', THT_TEST: '1', THT_LARK_CLI: cli.bin, THT_CLAUDE_BIN: claude, FAKE_LOG: path.join(dir, 'claude.log'), FAKE_RESULT: JSON.stringify(PAGE) }, stdio: 'ignore' });
   const base = 'http://127.0.0.1:' + port;

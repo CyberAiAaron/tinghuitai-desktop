@@ -782,7 +782,7 @@ async function takeSend(target, extra){
   finally{ btn.disabled=false; }
 }
 
-// ===== 交给某人（Aaron 2026-09-24「give to Abel」）：一下 = 给他建飞书任务 + 私聊他 + 追加到行动清单文档并 @他 =====
+// ===== 交给某人（例如「交给张三」）：一下 = 给他建飞书任务 + 私聊他 + 追加到行动清单文档并 @他 =====
 // 名字从「补充：给 abel 决定」这类文字里猜一个默认值，发之前你还能改；发出只走 /person-handoff，那边有 confirmed 门禁和幂等。
 const hoOpen=new Set(),hoNote=new Map(),hoPartial=new Map();let hoBusy=false;
 function sessionIdOf(){try{return new URLSearchParams(location.search).get('id')||'';}catch{return '';}}
@@ -806,7 +806,7 @@ function wireHandoff(box,payloadOf,repaint){
       const r=await fetch('/asr-relay/person-handoff?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payloadOf(id),person,confirmed:true,sourceId:id,...(hoPartial.get(id)?{retryFailed:true,retryConfirmed:true}:{})}),signal:AbortSignal.timeout(90000)});
       const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
       const part=(k,l)=>j[k]&&j[k].ok?(j[k].url?'<a href="'+esc(j[k].url)+'" target="_blank" rel="noopener">'+l+' ✓</a>':l+' ✓'):l+' ✗'+(j[k]&&j[k].error?' '+esc(j[k].error):'');
-      hoPartial.set(id,!!j.partial);hoNote.set(id,(j.partial?T('只成了一部分，失败：','Partly sent, failed: ')+esc((j.failed||[]).join('、'))+'；':'')+(j.fallbackToAaron?T('没找到这个人，先建给你：','Person not found, sent to you: '):T('已交给 ','Handed to ')+esc((j.assignee&&j.assignee.name)||person)+'：')
+      hoPartial.set(id,!!j.partial);hoNote.set(id,(j.partial?T('只成了一部分，失败：','Partly sent, failed: ')+esc((j.failed||[]).join('、'))+'；':'')+(j.fallbackToSelf?T('没找到这个人，先建给你：','Person not found, sent to you: '):T('已交给 ','Handed to ')+esc((j.assignee&&j.assignee.name)||person)+'：')
         +part('task',T('任务','Task'))+' · '+part('message',T('私聊','DM'))+' · '+part('doc',T('行动清单','Action list')));
       hoOpen.delete(id);
     }catch(e){hoNote.set(id,T('没发出去：','Failed: ')+esc(e.message||String(e)));}

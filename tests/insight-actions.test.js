@@ -8,6 +8,10 @@ const root = path.join(__dirname, '..'), pause = ms => new Promise(r => setTimeo
 const freePort = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 const IA = require(path.join(root, 'app/insight-actions.js'));
 const TOKEN = 'k'.repeat(40);
+// 命题文档 token 是个人配置（<数据目录>/docs.json），测试写一份假的
+const DOC_TOKENS = {"board": "A2hQdjgAUoIV1vxecJzlFw57gId", "prd": "COqzdiAr6oGyX3xZb6alPLxQghg", "arch": "UifYd8eGCoxyyuxEIZjlzBHNgae", "ur": "Rxi9djN7vo9FrwxWXhhlYsmQgAR", "intel": "SRLMdavSXoUyEnxhZyllQe9qgEh"};
+const writeDocs = d => fs.writeFileSync(path.join(d, 'docs.json'), JSON.stringify(DOC_TOKENS));
+{ const d = fs.mkdtempSync(path.join(os.tmpdir(), 'livemate-ia-data-')); writeDocs(d); process.env.THT_DATA_DIR = d; }
 
 // ---------- 小样本资料 ----------
 function fixtures() {
@@ -110,6 +114,7 @@ function fakeExec(calls, opts = {}) {
     calls.push(args);
     const sub = args[0] + ' ' + args[1];
     if (sub === 'contact +search-user') { const q = args[args.indexOf('--queries') + 1]; return cb(null, JSON.stringify({ ok: true, data: { users: q === 'Cary Luo' ? [{ open_id: 'ou_cary', localized_name: 'Cary Luo', matched_query: 'Cary Luo' }] : [] } }), ''); }
+    if (sub === 'contact +get-user') return cb(null, JSON.stringify({ ok: true, data: { user: { open_id: 'ou_self' } } }), '');
     if (sub === 'task +create') { if (opts.fail) { const e = Error('boom'); return cb(e, '', '飞书拒绝'); } return cb(null, JSON.stringify({ ok: true, data: { task: { guid: 'g-1', url: 'https://example.test/task/g-1' } } }), ''); }
     if (sub === 'drive +inspect') return cb(null, JSON.stringify({ ok: true, data: { url: 'https://example.test/docx/' + args[3], title: 'T' } }), '');
     cb(Error('unexpected ' + sub), '', '');
@@ -132,11 +137,11 @@ test('setDate：owner 解析到 → 派给他；解析不到 → 建给本人并
   calls = [];
   r = await IA.setDate({ card, args: { owner: '不存在的人', due: '2026-10-01' }, session: { id: 's1', title: '硬件周会' }, db: null, execImpl: fakeExec(calls) });
   a = calls.find(x => x[1] === '+create');
-  assert.equal(a[a.indexOf('--assignee') + 1], IA.SELF_OPEN_ID, '解析不到建给本人'); assert.ok(a[a.indexOf('--description') + 1].includes('代办对象：不存在的人')); assert.equal(a[a.indexOf('--due') + 1], '2026-10-01T18:00:00+08:00');
+  assert.equal(a[a.indexOf('--assignee') + 1], 'ou_self', '解析不到建给本人'); assert.ok(a[a.indexOf('--description') + 1].includes('代办对象：不存在的人')); assert.equal(a[a.indexOf('--due') + 1], '2026-10-01T18:00:00+08:00');
   assert.equal(r.patch.task.note, '代办对象：不存在的人');
   calls = [];
   r = await IA.setDate({ card, args: {}, session: { id: 's1', title: '硬件周会' }, db: null, execImpl: fakeExec(calls) });
-  assert.ok(!calls.some(x => x[0] === 'contact'), '没 owner 不去搜人'); a = calls.find(x => x[1] === '+create'); assert.equal(a[a.indexOf('--assignee') + 1], IA.SELF_OPEN_ID); assert.equal(r.patch.task.owner, '本人');
+  assert.ok(!calls.some(x => x[0] === 'contact' && x[1] === '+search-user'), '没 owner 不去搜人'); a = calls.find(x => x[1] === '+create'); assert.equal(a[a.indexOf('--assignee') + 1], 'ou_self'); assert.equal(r.patch.task.owner, '本人');
   // lark-cli 报错：抛出、definite（门禁允许重试）
   await assert.rejects(IA.setDate({ card, args: {}, session: {}, db: null, execImpl: fakeExec([], { fail: true }) }), e => e.definite === true && !e.uncertain);
   if (!db) t.diagnostic('这台 node 没有 sqlite，承诺卡那一段没验');
@@ -160,12 +165,12 @@ test('setDate：没传 owner 时默认承诺卡里的承诺人（Codex 8b2bdefd 
   calls = [];
   r = await IA.setDate({ card, args: {}, session: { id: 's1', title: '硬件周会' }, db: db2, execImpl: fakeExec(calls) });
   a = calls.find(x => x[1] === '+create');
-  assert.equal(a[a.indexOf('--assignee') + 1], IA.SELF_OPEN_ID); assert.equal(r.patch.task.ownerFrom, 'self'); assert.ok(a[a.indexOf('--description') + 1].includes('先建给本人'), '回退原因写进任务描述');
-  assert.ok(!calls.some(x => x[0] === 'contact'), '没有承诺人不去搜人');
+  assert.equal(a[a.indexOf('--assignee') + 1], 'ou_self'); assert.equal(r.patch.task.ownerFrom, 'self'); assert.ok(a[a.indexOf('--description') + 1].includes('先建给本人'), '回退原因写进任务描述');
+  assert.ok(!calls.some(x => x[0] === 'contact' && x[1] === '+search-user'), '没有承诺人不去搜人');
   // 按钮参数优先于承诺卡
   calls = [];
   r = await IA.setDate({ card, args: { owner: 'Aaron' }, session: { id: 's1' }, db, execImpl: fakeExec(calls) });
-  assert.equal(r.patch.task.ownerFrom, 'args'); assert.equal(calls.find(x => x[1] === '+create')[calls.find(x => x[1] === '+create').indexOf('--assignee') + 1], IA.SELF_OPEN_ID);
+  assert.equal(r.patch.task.ownerFrom, 'args'); assert.equal(calls.find(x => x[1] === '+create')[calls.find(x => x[1] === '+create').indexOf('--assignee') + 1], 'ou_self');
 });
 
 test('setDate 兜底 A/B（Aaron 2026-09-22 拍板）：有 memory.db 但查不到承诺卡 → 不建任务、回 offer；带 createIfMissing → 建任务 + 新承诺卡、sourceHit false；没 sqlite 句柄查不了 → 照旧建、sourceHit null', async (t) => {
@@ -233,6 +238,7 @@ case "$1 $2" in
   "task +create") echo '{"ok":true,"data":{"task":{"guid":"g-e2e","url":"https://example.test/task/g-e2e"}}}' ;;
   "drive +inspect") echo '{"ok":true,"data":{"url":"https://example.test/docx/'"$4"'","title":"决策板"}}' ;;
   "contact +search-user") echo '{"ok":true,"data":{"users":[]}}' ;;
+  "contact +get-user") echo '{"ok":true,"data":{"user":{"open_id":"ou_self"}}}' ;;
   *) echo '{"ok":true,"data":{}}' ;;
 esac
 `);
@@ -240,6 +246,7 @@ esac
   return { bin, mode: m => { if (m) fs.writeFileSync(mode, m); else fs.rmSync(mode, { force: true }); }, calls: () => { try { return fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean); } catch (e) { return []; } } };
 }
 async function startServer({ dir, port, cli, kb }) {
+  writeDocs(dir);
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ RELAY_TOKEN: TOKEN, ARCHIVE_TARGET: 'local', MEMORY_PROJECTION_DIR: path.join(dir, 'mem'), DECISION_BOARD_DIR: kb, INSIGHT_ACTION_GRACE_MS: 0, INSIGHT_ACTION_CLI_TIMEOUT_MS: 600, PHONE_TOKENS: ['p'.repeat(40)] }));
   const child = spawn(process.execPath, [path.join(root, 'app/server.js')], { env: { ...process.env, THT_DATA_DIR: dir, THT_PORT: String(port), THT_NO_OPEN: '1', THT_TEST: '1', THT_LARK_CLI: cli.bin }, stdio: 'ignore' });
   const base = 'http://127.0.0.1:' + port;
@@ -323,8 +330,8 @@ test('POST /insight-action set_date：无 owner 建给本人；lark-cli 失败 �
     assert.equal(r.status, 200); assert.equal(r.j.state.status, 'done');
     assert.equal(r.j.card.task.url, 'https://example.test/task/g-e2e'); assert.equal(r.j.card.task.due, '2026-10-08'); assert.equal(r.j.card.task.owner, '本人');
     const creates = cli.calls().filter(x => x.startsWith('task +create')); assert.equal(creates.length, 2);
-    assert.ok(creates[1].includes('--assignee ou_00c28e8ed0b15769a9a5f5e4ea36f7e8') && creates[1].includes('--due 2026-10-08T18:00:00+08:00') && creates[1].includes('--as user'), creates[1]);
-    assert.ok(!cli.calls().some(x => x.startsWith('contact')), '没 owner 不搜人');
+    assert.ok(creates[1].includes('--assignee ou_self') && creates[1].includes('--due 2026-10-08T18:00:00+08:00') && creates[1].includes('--as user'), creates[1]);
+    assert.ok(!cli.calls().some(x => x.startsWith('contact +search-user')), '没 owner 不搜人');
     r = await S.post({ id: 'ia-e2e', cardId: cid, do: 'set_date', args: {}, confirmed: true });
     assert.equal(r.j.alreadySent, true); assert.equal(cli.calls().filter(x => x.startsWith('task +create')).length, 2, '重复点不重建');
     h = await (await fetch(S.base + '/health?token=' + TOKEN)).json(); assert.deepEqual(h.sourceHit, { hit: 0, miss: 1 }, '同一张卡 offer → 新建只记一次缺失');

@@ -57,7 +57,7 @@ test('默认负责人映射：硬件 → Abel Mei，高通路标 → Hannah Yin�
   assert.deepEqual(owners.classify('高通 SM7750 路标'), { topic: '高通路标', owner: 'Hannah Yin' });
   assert.deepEqual(owners.classify('OS 交互 UI app'), { topic: '软件', owner: 'Luna Min' });
   assert.deepEqual(owners.classify('定价怎么定'), { topic: '默认', owner: 'Aaron Wang' });
-  assert.equal(owners.AARON_OPEN_ID, 'ou_00c28e8ed0b15769a9a5f5e4ea36f7e8');
+  assert.equal(owners.AARON_OPEN_ID, undefined, '包里不再写死任何 open_id');
   const v = V2.buildView(sample());
   assert.deepEqual(v.insights.map(i => i.owner).slice(0, 3), ['Abel Mei', 'Hannah Yin', 'Luna Min']);
   // 正文里写了人名但不在 owners.json 里 → 退回 classify

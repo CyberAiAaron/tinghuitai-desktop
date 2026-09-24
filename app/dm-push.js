@@ -1,15 +1,14 @@
 'use strict';
-// 会后自动私聊推送（Aaron 2026-09-24 13:20）：会后整理（brief）出来以后，把「军师怎么看」前 3 条想法的标题
-// + 行动（一人一行）压成一张 ≤8 行的飞书卡片，只发 Aaron 本人私聊，按钮直达这场的回看页。
+// 会后自动私聊推送：会后整理（brief）出来以后，把「军师怎么看」前 3 条想法的标题
+// + 行动（一人一行）压成一张 ≤8 行的飞书卡片，只发给当前登录的飞书用户本人，按钮直达这场的回看页。
 // 规矩：
-//   1) 收件人写死 Aaron 本人，而且只在 飞书命令行登录的就是他本人时才发（= 「发给我自己」）。别人的机器、试用版一律跳过。
+//   1) 只发给当前登录的飞书用户本人（lark.selfOpenId()），拿不到就跳过。
 //   2) 没装 / 没登录飞书命令行：静默跳过，不报错、不打扰。
 //   3) 每场只发一次：收据走 send-gate（state/send-receipts/meeting-dm/），重跑整理不重发；结果不确定时也不重发。
 //   4) 开关 MEETING_DM_PUSH，默认 on；设 off 就不发。
 const sendGate = require('./send-gate');
 const archiveV2 = require('./archive-v2');
 
-const AARON_OPEN_ID = 'ou_00c28e8ed0b15769a9a5f5e4ea36f7e8';
 const KIND = 'meeting-dm';
 const clip = (s, n) => { const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const strip = s => String(s || '').replace(/\*\*|__|`|^#+\s*/g, '').trim();
@@ -66,13 +65,13 @@ async function push({ sessionId, title, result, env = {}, dataDir, pageBase, lar
     if (!lark || !lark.larkAvailable().ok) return { skipped: 'no-lark' };
     if (!buildCard({ title, result, url: '' }).lines.length) return { skipped: 'no-content' };
     const self = await lark.selfOpenId();
-    if (self !== AARON_OPEN_ID) return { skipped: self ? 'not-aaron' : 'no-lark' };
+    if (!self) return { skipped: 'no-lark' };
     const url = String(pageBase || 'http://127.0.0.1:47823').replace(/\/$/, '') + '/tinghuitai/archive.html?id=' + encodeURIComponent(sid);
     const { card, lines } = buildCard({ title, result, url });
-    // 自动管线没有「界面上那一下」：Aaron 09-24 口头批准过这条只发给他自己的推送，confirmed 由这里代出。
-    const r = await sendGate.send({ dataDir, kind: KIND, key: sid, body: { confirmed: true }, meta: { sessionId: sid, to: AARON_OPEN_ID },
+    // 自动管线没有「界面上那一下」：只发给当前登录用户本人，confirmed 由这里代出。
+    const r = await sendGate.send({ dataDir, kind: KIND, key: sid, body: { confirmed: true }, meta: { sessionId: sid, to: self },
       run: async () => {
-        const s = await lark.cardSend({ openId: AARON_OPEN_ID, card, idem: 'tht-dm-' + sendGate.hash(sid).slice(0, 32) });
+        const s = await lark.cardSend({ openId: self, card, idem: 'tht-dm-' + sendGate.hash(sid).slice(0, 32) });
         if (!s.ok) { const e = Error(s.error || '发送失败'); e.definite = !s.uncertain; throw e; }
         return { messageId: s.messageId, lines: lines.length };
       } });
@@ -84,4 +83,4 @@ async function push({ sessionId, title, result, env = {}, dataDir, pageBase, lar
   }
 }
 
-module.exports = { push, buildCard, ideaTitles, actionLines, AARON_OPEN_ID, KIND };
+module.exports = { push, buildCard, ideaTitles, actionLines, KIND };

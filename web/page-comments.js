@@ -97,7 +97,7 @@
     boxEl=el;
     box=document.createElement('div');box.className='pc-box';
     box.innerHTML='<div class="pc-q">💬 '+esc(textOf(el).slice(0,80)||'（这一块）')+'</div>'
-      +'<textarea placeholder="想让 Claude 做什么，直接说。比如：这条派给 Abel，顺便把 ROI 像素表也发他"></textarea>'
+      +'<textarea placeholder="想让 Claude 做什么，直接说。比如：这条派给张三，顺便把 ROI 像素表也发他"></textarea>'
       +'<div class="pc-a"><button type="button" class="pc-go">交给 Claude</button><button type="button" class="pc-x">取消</button><span class="pc-hint">⌘/Ctrl+Enter 发送</span></div>';
     document.body.appendChild(box);
     const r=el.getBoundingClientRect();

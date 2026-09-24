@@ -1,6 +1,6 @@
 'use strict';
-// 「交给某人」（Aaron 2026-09-24：「give to Abel… share a task or message to him, add this action at my Lark document and @ Abel. 真正可以 act for me」）。
-// 09-24 晚 Aaron 看到 Abel 收到 3 条长消息后批评："Too hard to read… too long, a lot of unnecessary evidence… To the same guy it should be in one message."
+// 「交给某人」：把一场会里分给某个人（例如张三）的行动建成飞书任务、私聊他、追加到行动清单文档并 @ 他。
+// 同一个人在同一场会的行动合成一条消息，不写依据和长证据。
 // 所以现在是：同一个人在同一场会的全部行动 → 一次请求（body.items=[{text,due,kind,sourceId}]）→ 三件事各一次：
 //   a. 一条飞书任务：标题 = 第一件（多件加「等 N 件」），描述列全部条目 + 会议日期，--due 取最早截止
 //   b. 一条私聊：「<会议>（<日期>）后的 N 件事：」+ 编号动作（截止）+ 任务链接 + 落款。不写依据、不写来源、不写内网链接、不写「默认值，可改」
@@ -13,7 +13,6 @@ const fs = require('fs'), path = require('path');
 const lark = require('./tools/lark');
 const sendGate = require('./send-gate');
 
-const AARON_OPEN_ID = 'ou_00c28e8ed0b15769a9a5f5e4ea36f7e8';
 const DOC_TITLE = '听会台行动清单';
 const SIGN = '— Aaron 的 Claude 代发';
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
@@ -95,14 +94,15 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
   const cliOpts = { execImpl, log };
   const cli = {
     resolveIds: n => lark.resolveIds(n, cliOpts),
+    selfOpenId: () => lark.selfOpenId(cliOpts),
     taskCreate: a => lark.taskCreate(a, cliOpts),
     messageSend: a => lark.messageSend(a, cliOpts),
     docCreate: a => lark.docCreate(a, cliOpts),
     docAppend: a => lark.docAppend(a, cliOpts),
   };
-  const out = { person: input.person, items: input.items, supplement, assignee: null, fallbackToAaron: false, task: null, message: null, doc: null };
+  const out = { person: input.person, items: input.items, supplement, assignee: null, fallbackToSelf: false, task: null, message: null, doc: null };
 
-  // 0. 找人。找不到不猜（发错人是真外发），任务建给 Aaron 本人并注明代办对象；私聊和 @ 都退到 Aaron。
+  // 0. 找人。找不到不猜（发错人是真外发），任务建给当前登录用户本人并注明代办对象；私聊和 @ 都退给本人。
   let openId = '', name = input.person;
   if (isOpenId(input.person)) openId = input.person;
   else {
@@ -112,15 +112,19 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
       else out.resolveError = r.ok ? ('通讯录里没找到唯一匹配的「' + input.person + '」') : r.error;
     } catch (e) { out.resolveError = String(e.message || e).slice(0, 200); }
   }
-  if (!openId) { out.fallbackToAaron = true; openId = AARON_OPEN_ID; }
-  out.assignee = { openId, name: out.fallbackToAaron ? 'Aaron Wang' : name };
+  if (!openId) {
+    out.fallbackToSelf = true;
+    try { openId = String((await cli.selfOpenId()) || ''); } catch (e) { openId = ''; }
+    if (!openId) { const e = Error('通讯录里没找到「' + input.person + '」，也拿不到当前登录的飞书用户'); e.results = out; e.definite = true; throw e; }
+  }
+  out.assignee = { openId, name: out.fallbackToSelf ? '你本人' : name };
 
   // a. 一条任务：标题 = 第一件（多件加「等 N 件」），描述列全部，截止取最早
   const n = input.items.length;
   const summary = lineOf(input.items[0]) + (n > 1 ? '（等 ' + n + ' 件）' : '');
   const due = input.items.map(it => it.due).sort()[0];
   const descLines = [
-    out.fallbackToAaron ? '代办对象：' + input.person + '（通讯录里没解析到，先建给 Aaron）' : '',
+    out.fallbackToSelf ? '代办对象：' + input.person + '（通讯录里没解析到，先建给你本人）' : '',
     '会议：' + meetingHead(input),
     ...input.items.map((it, i) => (i + 1) + '. ' + lineOf(it) + '（截止 ' + it.due + '）'),
   ].filter(Boolean);
@@ -131,7 +135,7 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
 
   // b. 一条私聊
   const taskUrl = out.task && out.task.ok && out.task.url ? out.task.url : '';
-  const md = (out.fallbackToAaron ? '（本想交给 ' + input.person + '，通讯录里没解析到，先发给你）\n' : '') + messageText(input, taskUrl, supplement);
+  const md = (out.fallbackToSelf ? '（本想交给 ' + input.person + '，通讯录里没解析到，先发给你）\n' : '') + messageText(input, taskUrl, supplement);
   if (keep('message')) { out.message = prev.message; skipped.push('message'); } else try {
     const r = await cli.messageSend({ openId, markdown: md });
     out.message = r.ok ? { ok: true, messageId: r.messageId, to: openId } : { ok: false, error: r.error, uncertain: !!r.uncertain };
@@ -145,7 +149,7 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
       const parts = [
         esc(shDate()) + ' ｜ ' + esc(meetingHead(input)) + (supplement ? '补' : '') + ' ｜ 交给 ',
         '<cite type="user" user-id="' + esc(openId) + '"/>',
-        out.fallbackToAaron ? esc('（代办对象：' + input.person + '）') : '',
+        out.fallbackToSelf ? esc('（代办对象：' + input.person + '）') : '',
         ' ｜ ' + input.items.map((it, i) => esc((i + 1) + '. ' + lineOf(it) + '（截止 ' + it.due + '）')).join('；'),
         taskUrl ? ' ｜ <a href="' + esc(taskUrl) + '">任务</a>' : ' ｜ 任务未建成',
       ];
@@ -211,4 +215,4 @@ async function route(req, res, { authed, dataDir, log = () => {}, execImpl } = {
   }
 }
 
-module.exports = { run, route, sentState, AARON_OPEN_ID, DOC_TITLE, __test: { normalize, perform, ensureDoc, readDoc, messageText } };
+module.exports = { run, route, sentState, DOC_TITLE, __test: { normalize, perform, ensureDoc, readDoc, messageText } };

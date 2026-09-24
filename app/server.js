@@ -1488,7 +1488,7 @@ async function calendarMatch(sess) {
         confidence: (chosen === best.event_id || (ratio >= 0.5 && !ambiguous)) ? 'high' : 'low', chosenByUser: chosen === best.event_id,
         overlapMin: Math.round((c ? c.overlap : 0)/60e3), candidates };
       // 参会人：能读到就带上
-      // 快捷命令 +list-attendees 对群日历返回空；原生 event.attendees list 能读到（2026-09-16 实测：Cary Luo / Aaron Wang / Abel Mei …）
+      // 快捷命令 +list-attendees 对群日历返回空；原生 event.attendees list 能读到（2026-09-16 实测）
       const aj = parse(await run(['calendar','event.attendees','list','--as','user','--params', JSON.stringify({ calendar_id: event.calendarId || 'primary', event_id: event.eventId, page_size: 100 })]));
       const list = aj && aj.ok ? ((aj.data && aj.data.items) || (Array.isArray(aj.data) ? aj.data : [])) : [];
       const people = list.filter(x => x.type !== 'resource').slice(0, 60);

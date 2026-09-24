@@ -40,7 +40,7 @@ function sourceGrounded(source, ctx) {
   const raw = String(source || ''); if (!raw.trim()) return false;
   if (DATE_RE.test(raw) || DECISION_RE.test(raw) || TIMESTAMP_RE.test(raw)) return true;
   const flat = strip(raw), low = flat.toLowerCase();
-  // 人名：全名或其中一段（Hannah Yin → Hannah / Yin）都算，和 rebuildNameTable 拆名的口径一致；≥3 字母 / 2 个汉字，免得「Li」这种碎片乱撞
+  // 人名：全名或其中一段（Zhang San → Zhang / San）都算，和 rebuildNameTable 拆名的口径一致；≥3 字母 / 2 个汉字，免得「Li」这种碎片乱撞
   for (const n of (ctx && ctx.names) || []) for (const part of [String(n || ''), ...String(n || '').split(/\s+/)]) { const k = strip(part).toLowerCase(); if (k && (/^[a-z]+$/.test(k) ? k.length >= 3 : k.length >= 2) && low.includes(k)) return true; }
   for (const t of briefTerms(ctx && ctx.brief)) if (low.includes(t.toLowerCase())) return true;
   return false;

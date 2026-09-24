@@ -10,6 +10,7 @@ function fakeExec(calls, opts = {}) {
     calls.push(args);
     const sub = args[0] + ' ' + args[1];
     if (sub === 'contact +search-user') { const q = args[args.indexOf('--queries') + 1]; return cb(null, JSON.stringify({ ok: true, data: { users: q === 'Abel Mei' ? [{ open_id: 'ou_abel', localized_name: 'Abel Mei', matched_query: 'Abel Mei' }] : [] } }), ''); }
+    if (sub === 'contact +get-user') return cb(null, JSON.stringify({ ok: true, data: { user: { open_id: 'ou_self' } } }), '');
     if (sub === 'task +create') { if (opts.taskFail) return cb(Error('boom'), '', '飞书拒绝'); return cb(null, JSON.stringify({ ok: true, data: { task: { guid: 'g-1', url: 'https://example.test/task/g-1' } } }), ''); }
     if (sub === 'im +messages-send') { if (opts.msgFail) return cb(Error('boom'), '', '对方不在通讯录'); return cb(null, JSON.stringify({ ok: true, data: { message_id: 'om_1' } }), ''); }
     if (sub === 'docs +create') { if (opts.docFail) return cb(Error('boom'), '', '没权限'); return cb(null, JSON.stringify({ ok: true, data: { document: { document_id: 'doxcnHANDOFF0001', url: 'https://example.test/docx/doxcnHANDOFF0001' } } }), ''); }
@@ -114,13 +115,14 @@ test('私聊失败不影响任务和文档：结果逐项写清，收据仍是 s
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('通讯录解析不到：任务建给 Aaron 本人并写「代办对象」，私聊和 @ 都退到 Aaron', async () => {
+test('通讯录解析不到：任务建给当前登录用户本人并写「代办对象」，私聊和 @ 都退给本人', async () => {
   const dir = tmp(), calls = [];
   const r = await PH.run({ dataDir: dir, body: batch({ person: '不存在的人' }), execImpl: fakeExec(calls) });
-  assert.equal(r.fallbackToAaron, true); assert.equal(r.assignee.openId, PH.AARON_OPEN_ID);
-  assert.equal(arg(calls[1], '--assignee'), PH.AARON_OPEN_ID); assert.match(arg(calls[1], '--description'), /代办对象：不存在的人/);
-  assert.equal(arg(calls[2], '--user-id'), PH.AARON_OPEN_ID); assert.match(arg(calls[2], '--markdown'), /本想交给 不存在的人/);
-  assert.match(arg(calls[4], '--content'), new RegExp('user-id="' + PH.AARON_OPEN_ID + '"'));
+  assert.equal(r.fallbackToSelf, true); assert.equal(r.assignee.openId, 'ou_self'); assert.equal(r.assignee.name, '你本人');
+  assert.equal(calls[1][0] + ' ' + calls[1][1], 'contact +get-user');
+  assert.equal(arg(calls[2], '--assignee'), 'ou_self'); assert.match(arg(calls[2], '--description'), /代办对象：不存在的人/);
+  assert.equal(arg(calls[3], '--user-id'), 'ou_self'); assert.match(arg(calls[3], '--markdown'), /本想交给 不存在的人/);
+  assert.match(arg(calls[5], '--content'), new RegExp('user-id="ou_self"'));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
