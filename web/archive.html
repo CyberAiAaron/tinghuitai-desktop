@@ -30,7 +30,7 @@ button.k.play{cursor:pointer;background:none;border:0;padding:0;font:inherit;col
 button.k.play:hover,time.play:hover{text-decoration:underline}
 time.play{cursor:pointer}
 
-.bf-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:14px;margin-bottom:14px;align-items:start}
+.bf-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.35fr);gap:14px;margin-bottom:14px;align-items:start}
 /* 平板竖屏（768）上下堆叠、平板横屏（1024）起左右并列；嵌在主界面的浮层里时页面比窗口窄 8vw，断点按内容宽算 */
 @media(max-width:900px){.bf-grid{grid-template-columns:1fr}}
 .bf-body{padding:14px;font-size:14px;line-height:1.65}
@@ -68,6 +68,8 @@ time.play{cursor:pointer}
 .bf-open{color:var(--muted);font-size:13px;margin-top:8px}
 .bf-t{border:0;background:var(--panel-2);color:var(--muted);font:11px var(--mono);border-radius:6px;padding:1px 6px;margin-left:6px;cursor:pointer}
 .bf-item{border-bottom:1px solid #f0f0f2;padding:8px 0}.bf-item:last-child{border-bottom:0}
+.bf-ins{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-bottom:1px solid #f0f0f2;padding:8px 0;font-size:13.5px;line-height:1.5}.bf-ins:last-child{border-bottom:0}.bf-ins>div{min-width:0;flex:1}.bf-ins .bf-t{flex:none;white-space:nowrap;padding:3px 8px}
+.bf-detail>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px}.bf-detail>summary::-webkit-details-marker{display:none}.bf-detail>summary::before{content:'▸';color:var(--faint)}.bf-detail[open]>summary::before{content:'▾'}
 .bf-q{color:var(--text)}.bf-src{color:var(--faint);font-size:12px;margin-top:3px}
 .bf-tag{display:inline-block;font:11px var(--mono);border-radius:6px;padding:0 6px;margin-right:6px;background:var(--panel-2);color:var(--muted)}
 .bf-tag.ok{background:#e6f4ea;color:#1e7e34}.bf-tag.bad{background:#fdecea;color:#b3261e}
@@ -176,10 +178,10 @@ tr.bf-draft-row .bf-draft{border-top:0;margin-top:0;padding-top:0}
 <div id="ask-box" class="bf-ask" hidden></div>
 <div class="bf-grid" id="bf-grid" hidden>
   <section class="pane bf-sum"><h2><span id="bf-sum-h">智能总结</span><span style="flex:1"></span><button type="button" class="btn sm" id="bf-view">展开完整</button></h2><div class="bf-body" id="bf-sum"></div></section>
-  <aside class="pane bf-rev"><h2><span id="bf-rev-h">点评与指导</span></h2><div class="bf-body" id="bf-rev"></div></aside>
+  <aside class="pane bf-rev"><h2><span id="bf-rev-h">洞察与行动</span></h2><div class="bf-body" id="bf-rev"></div></aside>
 </div>
 <div class="pane" id="legacy-box" hidden style="margin-bottom:14px"><h2>智能总结（旧版）<span style="flex:1"></span><button type="button" class="btn sm" id="bf-build">整理成新版</button></h2><div class="bf-body md" id="summary"></div></div>
 <details class="pane bf-tr" id="aux-box" hidden><summary><h2>录音与认人</h2></summary><div class="player-box" id="player-box" hidden></div><section id="spk-box" class="spk-box" hidden></section></details>
 <details class="pane bf-tr" id="tr-box"><summary><h2>逐字稿 <span class="count" id="c-tr"></span></h2></summary><div class="scroll tr" id="transcript"></div></details>
 </div>
-<script src="archive.js?v=19"></script></body></html>
+<script src="archive.js?v=20"></script></body></html>
