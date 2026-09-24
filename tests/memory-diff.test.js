@@ -51,7 +51,7 @@ test('记忆差异：接受写回目标节末尾、带来源、改 Last updated�
   assert.ok(/Last updated: \d{4}-\d{2}-\d{2}/.test(s1) && !s1.includes('Last updated: 2026-09-01'));
   assert.strictEqual(r1.written.length, 1);
   assert.ok(fs.existsSync(path.join(proj, 'pending', 'memory-updates', 'm1.md')), '还有一条没决定，镜像仍在 pending');
-  const before = fs.readFileSync(stateFile, 'utf8');
+  const before = fs.readFileSync(stateFile, "utf8");
   md.decide({ dataDir: dir, sid: 'm1', uid: doc.items[1].uid, action: 'reject', confirmed: true, projectionDir: proj });
   assert.strictEqual(fs.readFileSync(stateFile, 'utf8'), before, '拒绝不改状态文件');
   const rej = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'memory-updates', 'rejected.json'), 'utf8'));
@@ -69,6 +69,25 @@ test('记忆差异：接受写回目标节末尾、带来源、改 Last updated�
   fs.writeFileSync(path.join(dir, 'state', 'memory-updates', 'm3.json'), JSON.stringify({ ...doc, id: 'm3', items: [] }));
   const st = require('../app/memory-diff');
   assert.strictEqual(st.summary(st.read(dir, 'm3')).total, 0);
+  T.mirror(proj, st.read(dir, 'm3'));
+  assert.ok(fs.existsSync(path.join(proj, 'pending', 'memory-updates', 'applied', 'm3.md')), '空差异镜像进 applied');
+  assert.ok(!fs.existsSync(path.join(proj, 'pending', 'memory-updates', 'm3.md')), '空差异不留在 pending');
+  // Codex 二审：全部接受时有一条节不存在 → 整批不落盘，状态文件和决定记录都不变
+  const snapM4 = fs.readFileSync(stateFile, "utf8");
+  const mixed = { ...doc, id: 'm4', items: [{ ...doc.items[0], uid: 'u-111111111111', fp: '111111111111', decision: null }, { ...doc.items[0], uid: 'u-222222222222', fp: '222222222222', section: '## 99. 不存在', decision: null }] };
+  fs.writeFileSync(path.join(dir, 'state', 'memory-updates', 'm4.json'), JSON.stringify(mixed));
+  assert.throws(() => md.decide({ dataDir: dir, sid: 'm4', action: 'accept', all: true, confirmed: true, projectionDir: proj }), /找不到节/);
+  assert.strictEqual(fs.readFileSync(stateFile, "utf8"), snapM4, "整批失败状态文件不变");
+  assert.ok(md.read(dir, 'm4').items.every(it => !it.decision), '整批失败决定记录不落盘');
+  // 节是模型猜的：不进全部接受；单条接受写回并在行里标出
+  const g = { ...doc, id: 'm5', items: [{ ...doc.items[0], uid: 'u-333333333333', fp: '333333333333', sectionGuessed: true, decision: null }] };
+  fs.writeFileSync(path.join(dir, 'state', 'memory-updates', 'm5.json'), JSON.stringify(g));
+  assert.throws(() => md.decide({ dataDir: dir, sid: 'm5', action: 'accept', all: true, confirmed: true, projectionDir: proj }), /模型推断/);
+  md.decide({ dataDir: dir, sid: 'm5', uid: 'u-333333333333', action: 'accept', confirmed: true, projectionDir: proj });
+  assert.ok(fs.readFileSync(stateFile, 'utf8').includes('节由模型推断'));
+  // Last updated 行缺失：补到标题下
+  const r = T.insertLine('# 标题\n\n## 2. 已定的事\n- a\n', { section: '## 2. 已定的事', field: 'f', before: 'b', level: 'decided' }, 'after text', { id: 'x', title: 't', date: '2026-09-24' });
+  assert.ok(/^# 标题\nLast updated: \d{4}-\d{2}-\d{2}\n/.test(r.out), '缺 Last updated 时补一行');
 });
 
 test('记忆差异：提示词要求 level 分级、节列表、pending，不含 confirmed', () => {

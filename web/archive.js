@@ -510,7 +510,7 @@ function paintUpdates(){
   if(!items.length)h+='<p class="bf-note">'+T('这场会没有改变项目状态的内容。','This meeting changed nothing in project state.')+'</p>';
   h+=items.map(it=>{
     const d=it.decision,lv=UPD_LEVEL[it.level]||it.level,ty=UPD_TYPE[it.type]||it.type;
-    const head='<div class="upd-h"><span class="td-tag">'+esc(ty)+'</span> <b>'+esc(it.field)+'</b> <span class="bf-sug">'+esc(lv)+' · '+esc(it.confidence)+' · '+esc(it.section.replace(/^##\s*/,''))+'</span></div>';
+    const head='<div class="upd-h"><span class="td-tag">'+esc(ty)+'</span> <b>'+esc(it.field)+'</b> <span class="bf-sug">'+esc(lv)+' · '+esc(it.confidence)+' · '+esc(it.section.replace(/^##\s*/,''))+'</span>'+(it.sectionGuessed?' <span class="bf-tag bad">节由模型推断</span>':'')+'</div>';
     const body='<div class="upd-b"><div><span class="bf-sug">'+T('原','Before')+'</span> '+esc(it.before)+'</div><div><span class="bf-sug">'+T('改为','After')+'</span> '+esc(d&&d.action==='edit'?d.text:it.after)+'</div>'+(it.evidence?'<div class="bf-sug">'+T('会上原话','Said')+'：'+esc(it.evidence)+'</div>':'')+'</div>';
     let act;
     if(d)act='<div class="upd-a bf-sug">'+(d.action==='reject'?T('已拒绝','Rejected'):d.action==='edit'?T('已按改后写入','Written (edited)'):T('已写入项目状态','Written'))+'</div>';

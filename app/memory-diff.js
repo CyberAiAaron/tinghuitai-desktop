@@ -169,8 +169,8 @@ async function run({ dataDir, session, ask, stateFile, projectionDir, log = () =
 function read(dataDir, sid) { return readJSON(fileOf(dataDir, String(sid))); }
 
 // 写回 project-state.md：找到目标 `## ` 节，在该节末尾（下一个 `## ` 之前）追加一行，带来源。原子写。
-function applyToState(stateFile, item, text, meeting) {
-  const src = fs.readFileSync(stateFile, 'utf8');
+// 在内存里的状态文本上插一行；Codex 二审：不直接写文件，让 decide 把多条合成一次写入
+function insertLine(src, item, text, meeting) {
   const lines = src.split('\n');
   // Codex 一审：写回时节必须精确存在，找不到就拒绝，不再兜底改写到别的节
   const start = lines.findIndex(l => l.trim() === item.section);
@@ -179,12 +179,20 @@ function applyToState(stateFile, item, text, meeting) {
   for (let k = start + 1; k < lines.length; k++) if (/^## /.test(lines[k])) { end = k; break; }
   // 节尾的空行留在新行后面
   let ins = end; while (ins > start + 1 && lines[ins - 1].trim() === '') ins--;
-  const line = `- 〔会议更新 ${meeting.date}〕**${item.field}**：${text}（原：${item.before}）来源：会议 ${meeting.id}「${meeting.title}」，${LEVEL_LABEL[item.level] || item.level}，Aaron 已确认 ${new Date().toISOString().slice(0, 10)}`;
+  const today = new Date().toISOString().slice(0, 10);
+  const line = `- 〔会议更新 ${meeting.date}〕**${item.field}**：${text}（原：${item.before}）来源：会议 ${meeting.id}「${meeting.title}」，${LEVEL_LABEL[item.level] || item.level}${item.sectionGuessed ? '，节由模型推断' : ''}，Aaron 已确认 ${today}`;
   lines.splice(ins, 0, line);
   let out = lines.join('\n');
-  out = out.replace(/Last updated: \d{4}-\d{2}-\d{2}/, 'Last updated: ' + new Date().toISOString().slice(0, 10));
-  writeAtomic(stateFile, out, 0o644);
-  return line;
+  // Codex 二审：Last updated 行缺失或格式不同时不能静默不改，补到标题下一行
+  if (/Last updated: \d{4}-\d{2}-\d{2}/.test(out)) out = out.replace(/Last updated: \d{4}-\d{2}-\d{2}/, 'Last updated: ' + today);
+  else { const ls = out.split('\n'); const h = ls.findIndex(l => /^# /.test(l)); ls.splice(h < 0 ? 0 : h + 1, 0, 'Last updated: ' + today); out = ls.join('\n'); }
+  return { out, line };
+}
+
+function applyToState(stateFile, item, text, meeting) {
+  const r = insertLine(fs.readFileSync(stateFile, 'utf8'), item, text, meeting);
+  writeAtomic(stateFile, r.out, 0o644);
+  return r.line;
 }
 
 // 一条决定：accept / edit / reject；all=true 时对所有未决条目做 accept
@@ -196,20 +204,35 @@ function decide({ dataDir, sid, uid, action, text = '', all = false, confirmed =
   const targets = all ? doc.items.filter(it => !it.decision) : doc.items.filter(it => it.uid === uid);
   if (!targets.length) { const e = Error(all ? '没有待确认的条目' : '找不到这条'); e.code = 404; throw e; }
   const meeting = { id: doc.id, title: doc.title, date: doc.date };
+  // Codex 二审：节是模型猜的条目不进「全部接受」，只能单条看清节名后再点
+  if (all && action !== 'reject') {
+    const guessed = targets.filter(it => it.sectionGuessed);
+    if (guessed.length) { const e = Error(`有 ${guessed.length} 条的节是模型推断的，不进全部接受，请逐条看`); e.code = 400; throw e; }
+  }
   const written = [];
+  // Codex 二审：先在内存里把所有行插好，任一条失败整批不落盘；状态文件只写一次，再写决定记录
+  let stateText = action === 'reject' ? null : fs.readFileSync(doc.stateFile, 'utf8');
+  const rejects = [];
   for (const it of targets) {
     if (it.decision) continue;
     const t = action === 'edit' ? clean(text, 300) : it.after;
     if (action === 'edit' && t.length < 4) throw new Error('改后的内容太短');
     if (action === 'reject') {
-      const rf = path.join(dirOf(dataDir), 'rejected.json'); const rej = readJSON(rf, {}); rej[it.fp] = { at: new Date().toISOString(), sid, after: it.after }; writeAtomic(rf, JSON.stringify(rej, null, 1));
+      rejects.push(it);
       it.decision = { action, at: Date.now(), confirmed: true };
     } else {
-      const line = applyToState(doc.stateFile, it, t, meeting);
-      it.decision = { action, text: t, at: Date.now(), line, confirmed: true };
-      written.push(line);
+      const r = insertLine(stateText, it, t, meeting);
+      stateText = r.out;
+      it.decision = { action, text: t, at: Date.now(), line: r.line, confirmed: true };
+      written.push(r.line);
     }
   }
+  if (rejects.length) {
+    const rf = path.join(dirOf(dataDir), 'rejected.json'); const rej = readJSON(rf, {});
+    for (const it of rejects) rej[it.fp] = { at: new Date().toISOString(), sid, after: it.after };
+    writeAtomic(rf, JSON.stringify(rej, null, 1));
+  }
+  if (written.length) writeAtomic(doc.stateFile, stateText, 0o644);
   writeAtomic(fileOf(dataDir, sid), JSON.stringify(doc, null, 1));
   mirror(projectionDir, doc, log);
   log(`memory-diff: ${sid} ${action}${all ? '(all)' : ''} 写回 ${written.length} 行`);
@@ -221,4 +244,4 @@ function summary(doc) {
   return { total: doc.items.length, pending, done: doc.items.length - pending };
 }
 
-module.exports = { run, read, decide, summary, TYPES, LEVELS, TYPE_LABEL, LEVEL_LABEL, MAX_ITEMS, __test: { parse, normalize, sections, applyToState, renderMd, fingerprint, systemPrompt, userPrompt } };
+module.exports = { run, read, decide, summary, TYPES, LEVELS, TYPE_LABEL, LEVEL_LABEL, MAX_ITEMS, __test: { parse, normalize, sections, applyToState, insertLine, mirror, renderMd, fingerprint, systemPrompt, userPrompt } };
