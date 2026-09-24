@@ -11,7 +11,7 @@
 1. 下载 [Tinghuitai.dmg](https://github.com/CyberAiAaron/tinghuitai-desktop/raw/main/Tinghuitai.dmg)，双击打开。
 2. 把「听会台」拖进「应用程序」，再从应用程序里双击打开。
 3. 第一次 macOS 会拦一下：打开「系统设置 → 隐私与安全性」，在最下面点「仍要打开」。
-4. 转写已经配好，直接开会；会后纪要要在设置页填一个大模型 Key（或用本机的 Codex / Claude Code）。
+4. 转写已经配好，直接开会。会后纪要：本机装过且已登录 Claude Code 或 Codex 会自动检测使用，不用手动选；都没有就去设置页填一个大模型 Key。
 
 ## 最短安装路径
 
