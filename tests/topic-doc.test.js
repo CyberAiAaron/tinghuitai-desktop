@@ -162,3 +162,18 @@ test('topic-doc: 服务层不带 confirmed:true 一律拒绝写回', async () =>
   await assert.rejects(() => api.apply('meeting-1', [id], { confirmed: 'yes' }), /确认/);
   assert.strictEqual(wrote, 0);
 });
+
+test('topic-doc: 默认飞书适配带齐主题文档要用的读写能力', () => {
+  const lark = require('../app/tools/lark');
+  for (const fn of ['docFetchMarkdown', 'docValidateAppend']) assert.strictEqual(typeof lark[fn], 'function', fn);
+});
+
+test('topic-doc: 模型第一次回坏 JSON，带着错误重试后成功', async () => {
+  const seen = [];
+  const replies = [{ text: '不是 JSON' }, model([{ section: '未决问题', text: 'ISP 功耗目标还没有结论', evidence: ['s1'] }])];
+  const api = topicDoc.create({ dataDir: tempDir(), topics: TOPICS, ask: async q => { seen.push(q.user); return replies.shift(); } });
+  const diff = await api.computeDiff(enhanced(), '# 基线');
+  assert.strictEqual(seen.length, 2);
+  assert.match(seen[1], /上一次输出不合格/);
+  assert.strictEqual(diff.sections.flatMap(g => g.items).length, 1);
+});

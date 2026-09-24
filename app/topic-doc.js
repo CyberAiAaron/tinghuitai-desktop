@@ -177,9 +177,17 @@ function create(options = {}) {
       docMarkdown = fetched.markdown;
     }
     const prompts = promptFor(enhanced, docMarkdown, topic);
-    const response = await ask({ kind: 'post', json: true, tools: false, dataDir, log, ...prompts });
-    if (!response || !response.text) throw bad('主题差异生成失败：' + String(response && response.errorCode || '模型无响应'), 502);
-    const sections = validateDiff(extractJson(response.text), enhanced, meetingId, topic);
+    // 真实模型偶尔回坏 JSON 或编出不存在的证据段（09-25 实测 3 次败 2 次）：最多试 3 次，把上次的错带回去
+    let sections = null, lastError = null;
+    for (let attempt = 0; attempt < 3 && !sections; attempt++) {
+      const req = { kind: 'post', json: true, tools: false, maxTokens: 4000, dataDir, log, ...prompts };   // 四节差异要 2–3 千字，接口默认 800 token 会截断
+      if (lastError) req.user = String(req.user || '') + '\n\n上一次输出不合格：' + lastError.message + '。只输出合法 JSON，evidence 只能用上面出现过的段编号。';
+      const response = await ask(req);
+      if (!response || !response.text) throw bad('主题差异生成失败：' + String(response && response.errorCode || '模型无响应'), 502);
+      try { sections = validateDiff(extractJson(response.text), enhanced, meetingId, topic); }
+      catch (error) { if (error.code !== 502) throw error; lastError = error; log('主题差异第 ' + (attempt + 1) + ' 次不合格：' + error.message); }
+    }
+    if (!sections) throw lastError;
     const record = {
       meetingId,
       meetingTitle: String(enhanced.title || '').trim().slice(0, 200),
