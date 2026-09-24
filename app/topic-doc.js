@@ -173,7 +173,7 @@ function create(options = {}) {
     const docToken = topics[topic] && topics[topic].doc;
     if (!String(docMarkdown || '').trim() && docToken) {
       const fetched = typeof lark.docFetchMarkdown === 'function' ? await lark.docFetchMarkdown(docToken, larkOptions) : { ok: false, error: '缺读文档能力' };
-      if (!fetched || !fetched.ok) throw bad('读不到主题文档正文：' + String(fetched && fetched.error || ''), 502);
+      if (!fetched || !fetched.ok || !String(fetched.markdown || '').trim()) throw bad('读不到主题文档正文：' + String(fetched && fetched.error || '正文为空'), 502);
       docMarkdown = fetched.markdown;
     }
     const prompts = promptFor(enhanced, docMarkdown, topic);

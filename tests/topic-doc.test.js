@@ -146,6 +146,10 @@ test('topic-doc: 没给正文时读飞书那份当基线；读不到就不生成
   assert.match(prompt, /已有内容 ISP 结论/);
   const broken = topicDoc.create({ dataDir: tempDir(), topics: TOPICS, lark: { docFetchMarkdown: async () => ({ ok: false, error: 'x' }) }, ask: async () => model([]) });
   await assert.rejects(() => broken.computeDiff(enhanced()), /读不到主题文档正文/);
+  for (const r of [{ ok: true }, { ok: true, markdown: '  ' }]) {
+    const empty = topicDoc.create({ dataDir: tempDir(), topics: TOPICS, lark: { docFetchMarkdown: async () => r }, ask: async () => { throw new Error('不该调模型'); } });
+    await assert.rejects(() => empty.computeDiff(enhanced()), /正文为空/);
+  }
 });
 
 test('topic-doc: 服务层不带 confirmed:true 一律拒绝写回', async () => {
