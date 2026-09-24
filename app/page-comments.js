@@ -99,6 +99,8 @@ function create({ dataDir, log = () => {}, mailboxDir, pageBase = 'http://127.0.
 
   function deliver(c) {
     const root = mailbox();
+    // 信箱只在装了本机 Claude 执行体的机器上有（Aaron 自己那台）；试用用户机器上没有就只落库，不凭空建目录、不 kickstart
+    if (!mailboxDir && !process.env.THT_MAILBOX_DIR && !fs.existsSync(root)) return { file: '', direct: false, skipped: true };
     const live = path.join(root, 'to_livemate');
     const direct = fs.existsSync(live);
     const box = direct ? live : path.join(root, 'to_ark');
@@ -149,7 +151,7 @@ function create({ dataDir, log = () => {}, mailboxDir, pageBase = 'http://127.0.
       const c = { id: 'c-' + crypto.randomBytes(6).toString('hex'), meetingId: mid, anchor: cleanAnchor(j.anchor), comment, url: String(j.url || '').slice(0, 500),
         at: (typeof j.at === 'string' && j.at.length < 40 ? j.at : '') || isoLocal(new Date()), state: 'received', note: '', history: [] };
       let d;
-      try { d = deliver(c); c.letter = d.file; c.delivery = d.direct ? 'livemate' : 'ark'; }
+      try { d = deliver(c); c.letter = d.file; c.delivery = d.skipped ? 'local' : d.direct ? 'livemate' : 'ark'; }
       catch (e) { log('page-comment 写信失败 ' + e.message); c.state = 'failed'; c.note = '没能唤醒 Claude：' + String(e.message || e).slice(0, 120); }
       c.history.push({ at: c.at, state: c.state, by: 'page' });
       doc.comments.push(c); writeDoc(doc);
