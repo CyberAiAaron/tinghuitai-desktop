@@ -629,7 +629,9 @@ class Session {
       const file = nameFix.readAliasFile(NAME_ALIAS_FILE);
       const aliases = { ...file.aliases };
       try { const mem = require('./memory'); const known = new Set(names.map(n => nameFix.normName(n)).flatMap(n => [n, ...n.split(' ')]));
-        for (const r of mem.lexAll(mem.open(DATA))) if (r.state === 'active' && known.has(r.right) && !(r.wrong in aliases)) aliases[r.wrong] = r.right; } catch (e) {}
+        for (const r of mem.lexAll(mem.open(DATA))) if (r.state === 'active' && known.has(r.right) && !(r.wrong in aliases)) aliases[r.wrong] = r.right;
+        // M3：回看页人手改名留下的别名规则卡，目标不在名单里也收（人亲口改的），目标补进名单让 buildTable 认
+        for (const r of mem.aliasRules(mem.open(DATA))) if (!(r.wrong in aliases)) { aliases[r.wrong] = r.right; if (!names.includes(r.right)) names.push(r.right); } } catch (e) {}
       this.nameTable = names.length || Object.keys(aliases).length ? nameFix.buildTable(names, { aliases, ignore: file.ignore }) : null;
     } catch (e) { this.nameTable = null; log('纠名表没建起来（忽略） ' + e.message); }
   }

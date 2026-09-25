@@ -132,6 +132,7 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   const value=String(text||'').trim().slice(0,40)||q.options[choice];
   const names={};
   for(const f of q.affects||[]){const m=/^speaker:S?(\w{1,12})$/i.exec(f);if(m&&value)names[m[1]]=value;}
+  aliasFromRename(id,e.names,names);
   const session=patchEnhanced(p.enhanced,{answers:{[qid]:{choice,text:String(text||'').slice(0,200),at:Date.now()}},...(Object.keys(names).length?{names}:{})});
   return{question:q,value,session};}
  // 议题的决定状态（已一致 / 待讨论 / 有分歧 / 搁置）：模型先给一版，他点一下改掉的存进 brief.decisions。
@@ -143,8 +144,11 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   if(!DECISIONS.includes(decision))throw Error('状态不对');
   const session=patchEnhanced(p.enhanced,{decisions:{[String(num)]:decision}});
   return{n:num,decision,session};}
+ // M3：同一个说话人原来有名字、被人手改成另一个名字 → 全局别名规则卡（app/memory.js putAliasRule）。失败不影响改名本身。
+ function aliasFromRename(id,oldNames,patch){try{const mem=require('./memory');const db=mem.open(process.env.THT_DATA_DIR||path.dirname(path.dirname(dir)));for(const [k,v] of Object.entries(patch||{})){const o=(oldNames||{})[k]||(oldNames||{})['S'+k];if(o&&v&&String(o).trim()!==String(v).trim())mem.putAliasRule(db,o,v,id);}}catch(e){}}
  // 认人（会后一屏）把名字写进归档结果的 names。空串 = 清掉这个名字，认错了要能改回来。
  function setNames(id,patch){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))return null;
+  try{aliasFromRename(id,read(p.enhanced).names,patch);}catch(e){}
   return patchEnhanced(p.enhanced,{names:patch||{}});}
  const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,patchResult:(id,patch)=>{const p=paths(id);if(!p||!fs.existsSync(p.enhanced)){const e=Error('这场会还没整理完');e.code=404;throw e;}return patchEnhanced(p.enhanced,patch);},result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{stopped=true;clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
 };

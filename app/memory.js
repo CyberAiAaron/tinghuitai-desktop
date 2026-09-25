@@ -244,6 +244,24 @@ function putLex(db, wrong, right, meetingId) {
     return { ok: true, created: true, wrong: v.w, right: v.r };
   });
 }
+// M3（09-25）：回看页把人名 A 改成 B（本场已有的名字被人手改掉）= 一条用户纠正的别名。
+// 落两处：规则卡（kind=rule，topic=alias，全局生效，human_edited=1，底栏「它记住的」看得到、能撤）+ 词表（热词和纠名表都读它）。
+// 只收「原来有名字、改成另一个名字」这一种；从「未认人 / S2」认出名字是本场映射，不当全局别名。
+const ALIAS_PLACEHOLDER = /^(S?\d{1,3}|说话人\s*\d+|Speaker\s*\d+|未认人|未知|对方|我|me|them)$/i;
+function putAliasRule(db, wrong, right, meetingId) {
+  const w = String(wrong || '').trim(), r = String(right || '').trim();
+  if (!w || !r || w === r || ALIAS_PLACEHOLDER.test(w) || ALIAS_PLACEHOLDER.test(r)) return { ok: false, why: 'not_alias' };
+  const lex = putLex(db, w, r, meetingId);
+  if (!lex.ok) return lex;
+  const old = db.prepare("SELECT id FROM cards WHERE kind='rule' AND topic='alias' AND aliases=? AND state='active'").all(w);
+  for (const o of old) updateCard(db, o.id, { state: 'revoked' }, '同一个错名改到了新写法');
+  const card = putCard(db, { kind: 'rule', topic: 'alias', text: w + ' → ' + r, aliases: w, owner: r, meeting_id: meetingId,
+    human_edited: true, change_reason: 'source=user-correction; scope=global' });
+  return { ok: true, wrong: w, right: r, cardId: card && card.id };
+}
+function aliasRules(db) {
+  try { return db.prepare("SELECT aliases AS wrong, owner AS right FROM cards WHERE kind='rule' AND topic='alias' AND state='active'").all().filter(x => x.wrong && x.right).map(x => ({ wrong: x.wrong, right: x.right })); } catch (e) { return []; }
+}
 // 注入热词：取正确写法，按最近命中和置信度排序。limit 由调用方按 ASR 能力给。
 function lexHotwords(db, limit = 15) {
   ensureLexicon(db);
@@ -282,3 +300,5 @@ module.exports.lexAll = lexAll;
 module.exports.lexScore = lexScore;
 // D9 单测要能直接驱动「加列失败」这条路（真把库锁住太脆），所以把判别函数导出来。
 module.exports.addColumn = addColumn;
+module.exports.putAliasRule = putAliasRule;
+module.exports.aliasRules = aliasRules;
