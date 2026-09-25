@@ -78,6 +78,30 @@ function topicTable(b) {
 const isHardConflict = s => !/非硬冲突|不构成硬冲突|不是硬冲突/.test(String(s || ''));
 const isUnstable = i => i.unstable === true || (typeof i.stability === 'number' && i.stability < 0.5);
 
+// 说话人编号不上界面（Aaron 09-22 定，认人 09-24 删）：视图里出现的 S2 / 说话人 2 换成这场 names 里的真名，
+// 没有名字就写「未认人」；负责人一栏只剩编号时直接留空。只认本场转写里真出现过的编号，免得误伤 Galaxy S24 这类型号。
+function speakerNamer(r) {
+  const names = (r && r.names) || {}, keys = new Set();
+  for (const row of (r && r.transcript) || []) { const k = String(row.speaker ?? row.spk ?? row.who ?? ''); if (/^\d{1,3}$/.test(k)) keys.add(k); }
+  for (const k of Object.keys(names)) { const m = /^S?(\d{1,3})$/.exec(k); if (m) keys.add(m[1]); }
+  if (!keys.size) return { text: t => t, owner: t => t };
+  const who = k => oneLine(names[k] || names['S' + k]) || '未认人';
+  const re = new RegExp('(?:说话人\\s*|Speaker\\s*|S)(' + [...keys].join('|') + ')(?!\\d)', 'g');
+  const text = t => String(t == null ? '' : t).replace(re, (m, k) => who(k));
+  return { text, owner: t => { const v = text(t); return v === '未认人' ? '' : v; } };
+}
+function nameView(view, r) {
+  const n = speakerNamer(r);
+  view.changes.forEach(c => { c.text = n.text(c.text); });
+  view.insights.forEach(i => { i.action = n.text(i.action); });
+  if (view.next) view.next.text = n.text(view.next.text);
+  const m = view.minutes;
+  m.conclusions = m.conclusions.map(n.text);
+  m.todos = m.todos.map(t => ({ ...t, text: n.text(t.text), owner: n.owner(t.owner) }));
+  m.topicTable = m.topicTable.map(x => ({ ...x, conclusion: n.text(x.conclusion), open: n.text(x.open), next: n.text(x.next) }));
+  return view;
+}
+
 function buildView(r) {
   const b = (r && r.brief) || {};
   const ib = b.insightsBrief || {};
@@ -112,7 +136,7 @@ function buildView(r) {
   const participants = att.length ? att : (Array.isArray(r.participants) ? r.participants.filter(Boolean) : []);
   const minConcl = (conclusions.length ? conclusions : ps.sections.map(s => s.conclusion).filter(Boolean)).slice(0, 5);
   const minutes = { topic: ps.topic || oneLine(ib.purpose || ''), sections: ps.sections.filter(x => x.conclusion).slice(0, 8), topicTable: topicTable(b), conclusions: minConcl, todos: todos.slice(0, 8), participants };
-  return { changes, insightsMd, insights, next, minutes };
+  return nameView({ changes, insightsMd, insights, next, minutes }, r);
 }
 
 // 把 overrides 按路径盖到视图上。insights 用 n 找（位置会随排序变），别的按下标。

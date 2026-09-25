@@ -190,3 +190,13 @@ test('v2 部分没成：卡上有「补发没成的」，只收部分没成的�
   assert.match(js, /retry\?c\.node\.sent&&c\.node\.sent\.partial:!c\.node\.sent/);
   assert.match(js, /\.\.\.\(retry\?\{retryFailed:true,retryConfirmed:true\}:\{\}\)/);
 });
+
+test('会后页 v2：说话人编号不上界面——有名换名、没名写「未认人」、负责人只剩编号就留空；没在转写里出现的 S24 不动', () => {
+  const v2 = require('../app/archive-v2');
+  const r = { names: { 1: 'Cary Luo' }, transcript: [{ speaker: '1', text: 'a' }, { speaker: '3', text: 'b' }],
+    brief: { overview: { conclusions: ['S1 同意，Galaxy S24 作参照'], todos: [{ what: 'S3 准备 CDCP 材料', owner: 'S3' }, { what: '说话人 1 跟进', owner: 'S1' }] } } };
+  const view = v2.buildView(r);
+  assert.equal(view.minutes.conclusions[0], 'Cary Luo 同意，Galaxy S24 作参照');
+  assert.deepEqual(view.minutes.todos, [{ text: '未认人 准备 CDCP 材料', owner: '' }, { text: 'Cary Luo 跟进', owner: 'Cary Luo' }]);
+  assert.equal(view.next.text, '未认人 准备 CDCP 材料');
+});

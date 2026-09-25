@@ -13,7 +13,7 @@ const T={zh:{
  s1more:'怎么拿？',
  v1:'打开火山语音控制台，开通「大模型流式语音识别」。', v2:'进应用详情，复制 App Key 和 Access Key 两项。',
  v3:'填到上面两个框里。', v_note:'填的是语音应用的凭证，不是方舟模型 Key，也不是云账号 AK/SK。火山官方列了 20 小时免费试用额度，能不能领、有效期以你的控制台为准。',
- s2:'实时翻译与 AI 分析（可选）', detecting:'检测中…', notfound:'没找到', found:'找到 ', ready:'已就绪',
+ s2:'实时翻译与 AI 分析（可选）', detecting:'检测中…', notfound:'没找到', found:'找到 {n} 个', ready:'已就绪',
  s2more:'接入自己的模型 API',
  d1:'打开 DeepSeek 注册页（platform.deepseek.com），手机号注册。', d2:'查看服务商的价格和余额，按需充值。',
  d3:'在 API Keys 页点「创建」，把 sk- 开头那串复制下来，粘到下面。',
@@ -22,7 +22,7 @@ const T={zh:{
  s3btn:'复制引导词', copied:'已复制。粘到你的 AI 对话框里发出去。', copyfail:'复制不了，请手动全选下面这段。',
  save:'保存并进入', savetest:'测试 AI 连接', enter:'进入听会台',
  ph_new:'粘贴控制台给的那串', ph_saved:'已保存；要换才填',
- foot:'先试录 30 秒：确认自己和对方都有字幕，再结束并看会议档案。「保存并测试」会发一个短请求，可能产生少量费用。',
+ foot:'先试录 30 秒：确认自己和对方都有字幕，再结束并看会议档案。「测试 AI 连接」会发一个短请求，可能产生少量费用。',
  nocli:'可以接入自己的模型 API，也可以先跳过。仅转写不需要模型；实时翻译、要点、核查和纪要需要模型。',
  trycli:'点一下试试，通了就不用管模型这件事。', trying:'正在试一次，大概十几秒…',
  saving:'正在保存…', testing:'正在测试模型…', saved:'已保存在这台电脑。下一步：进入听会台，试录 30 秒。',
@@ -41,7 +41,7 @@ const T={zh:{
  s1more:'How do I get these?',
  v1:'Open the Volcano speech console and enable streaming speech recognition.', v2:'Open the app details and copy App Key and Access Key.',
  v3:'Paste them into the two boxes above.', v_note:'These are the speech app credentials, not an Ark model key and not a cloud account AK/SK. Volcano lists a 20-hour free trial; whether you can claim it depends on your console.',
- s2:'Live translation & AI analysis (optional)', detecting:'checking…', notfound:'none found', found:'found ', ready:'ready',
+ s2:'Live translation & AI analysis (optional)', detecting:'checking…', notfound:'none found', found:'{n} found', ready:'ready',
  s2more:'Connect your model API',
  d1:'Sign up at platform.deepseek.com.', d2:'Check pricing and your balance; add credit if needed.',
  d3:'On the API Keys page click Create, copy the sk- string, paste it below.',
@@ -144,7 +144,7 @@ function paintCli(){
   if(!tag) return;
   if(cli.err){ tag.textContent=t('notfound'); msg.textContent=t('readfail'); return; }
   if(!cli.found.length){ tag.textContent=t('notfound'); msg.textContent=t('nocli'); msg.className='msg';  return; }
-  tag.textContent=cli.provider?t('ready'):t('found')+cli.found.length;
+  tag.textContent=cli.provider?t('ready'):t('found').replace('{n}',cli.found.length);
   tag.className='tag'+(cli.provider?' ok':'');
   acts.innerHTML='';
   for(const kind of cli.found){

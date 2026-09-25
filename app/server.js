@@ -1859,6 +1859,8 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const gone=new Set(meetingTrash.deletedIds().map(String));
     res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({v:1,sessions:rows.filter(r=>!gone.has(String(r.id))),deletedIds:[...gone]}));}
   if(req.method==='GET'&&p.endsWith('/meeting-status')){if(!authed){res.writeHead(401);return res.end('unauthorized');}res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});return res.end(JSON.stringify({jobs:meetingPipeline.list()}));}
+  // 直接敲 http://127.0.0.1:端口/ 的人落到首页，不看 404
+  if (req.method === 'GET' && p === '/') { res.writeHead(302, { Location: '/tinghuitai/index.html' }); return res.end(); }
   if (req.method === 'GET' && (p === '/tinghuitai' || p.startsWith('/tinghuitai/'))) { return serveStatic(req, res, p); }
   // 会后回听：把这场的原始 PCM 当成 WAV 发出去，支持 Range 才能拖动和点条目跳转。
   // 按最新格式整理一场老会议：给它补上收敛结果。
