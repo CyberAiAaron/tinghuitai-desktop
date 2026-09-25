@@ -252,7 +252,7 @@ function memoryMeta(dataDir) {
 
 // ============================ 团队名单 ============================
 // 只认两种写法——Markdown 表格的第一格、加粗的 **名字**。抽不准也没关系，它只是候选按钮，
-// 旁边一直有自填框。（从 app/speakers.js 搬过来：认人和处理台读的必须是同一份名单、同一套解析。）
+// 旁边一直有自填框。
 function parseNames(text) {
   const out = [], ok = /^[A-Z][A-Za-z.'-]{1,20}(?: [A-Z][A-Za-z.'-]{1,20}){0,2}$/;
   const take = raw => { const n = String(raw || '').replace(/\*\*/g, '').replace(/[（(].*?[)）]/g, '').trim();

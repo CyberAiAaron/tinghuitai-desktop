@@ -2280,53 +2280,6 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       return reply(200, { ok:true, value: r.value, memory: written });
     } catch (e) { return reply(400, { ok:false, error: e.message }); }
   }
-  // ===== 会后一屏认人：清单 / 确认，都在这两个口 =====
-  // 以前认人混在「需要你定一下」里，由模型决定问不问，所以经常不问、或只问一个人。
-  // 现在清单是数出来的：没名字的排前面，每人带 2–3 段能点开听的原话和候选人名。
-  if (p.endsWith('/meeting-speakers') || p.endsWith('/speaker-confirm')) {
-    if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
-    const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
-    const speakers = require('./speakers');
-    // 同一场会的两份存档：归档结果（enhanced）和 pending 原始记录。哪份在就读哪份，names 取并集。
-    const ctxOf = sid => {
-      const enhanced = meetingPipeline.result(sid);
-      const file = pendingFileFor(sid), pend = file ? journal.read(file) : null;
-      if (!enhanced && !pend) return null;
-      const names = { ...((pend && pend.names) || {}), ...((enhanced && enhanced.names) || {}) };
-      const ev = ((pend && pend.calendar) || {}).event || {};
-      const attendees = [...(ev.attendees || []), ...((readTitles()[String(sid)] || {}).participants || [])];
-      return { session: { ...(enhanced || pend), names }, file, hasEnhanced: !!enhanced, attendees };
-    };
-    const listOf = ctx => speakers.list(ctx.session, { attendees: ctx.attendees, team: contextPack.roster(loadEnv()).names });
-    if (req.method === 'GET' && p.endsWith('/meeting-speakers')) {
-      const sid = String(u.searchParams.get('id') || ''); if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok:false, error:'会议编号不对' });
-      const ctx = ctxOf(sid); if (!ctx) return reply(404, { ok:false, error:'找不到这场会议' });
-      return reply(200, { ok:true, speakers: listOf(ctx) });
-    }
-    if (req.method !== 'POST' || !p.endsWith('/speaker-confirm')) { res.writeHead(405); return res.end('method not allowed'); }
-    const parts = []; let size = 0; for await (const c of req) { size += c.length; if (size > 8000) return reply(413, { ok:false, error:'太长' }); parts.push(c); }
-    let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok:false, error:'格式不对' }); }
-    const sid = String(j.id || ''); if (!/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok:false, error:'会议编号不对' });
-    let patch; try { patch = speakers.clean(j.names); } catch (e) { return reply(400, { ok:false, error: e.message }); }
-    try {
-      const out = await withMeetingLock(sid, async () => {
-        const ctx = ctxOf(sid); if (!ctx) { const e = Error('找不到这场会议'); e.code = 404; throw e; }
-        if (ctx.hasEnhanced) meetingPipeline.setNames(sid, patch);
-        if (ctx.file) {   // pending 那份也要跟上，否则没归档的会刷新后名字又没了
-          const cur = journal.read(ctx.file) || {}; const names = { ...(cur.names || {}) };
-          for (const [k, v] of Object.entries(patch)) { if (v) names[k] = v; else delete names[k]; }
-          cur.names = names; journal.write(ctx.file, cur);
-        }
-        const after = ctxOf(sid);
-        return { names: after.session.names, speakers: listOf(after), session: meetingPipeline.result(sid) };
-      });
-      // 名字换了，会议记忆里那几条「S2 说…」也该换成人名；工作台待办按这场的映射显示。
-      let memory = 0; try { if (out.session) memory = await briefToMemory(out.session); } catch (e) { log('认人：写会议记忆失败 ' + e.message); }
-      let hub = false; try { hub = !!(workHub.hub.applySpeakerNames && workHub.hub.applySpeakerNames(sid, out.names)); } catch (e) { log('认人：工作台更新失败 ' + e.message); }
-      log('speaker-confirm ' + sid + ' ' + Object.keys(patch).join(',') + (hub ? ' hub' : ''));
-      return reply(200, { ok:true, names: out.names, speakers: out.speakers, memory, hub });
-    } catch (e) { return reply(e.code === 404 ? 404 : 400, { ok:false, error: e.message }); }
-  }
   // ===== 会后处理台（REQ-009）：待办卡 / 一句话思考 / 风险提示 =====
   // 三个口：读整份、对一张卡做一个动作、读今天的「最重要的三件事」。
   // 外发只有 do:'send' 这一条路——读和生成都不会碰 lark-cli。
@@ -2637,18 +2590,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       return res.end(req.method === 'HEAD' ? undefined : JSON.stringify(swept ? { ok: false, reason: 'retention', days, error: '录音已按 ' + days + ' 天保留期清理，文字记录仍在' } : { ok: false, reason: 'missing', error: 'no audio' }));
     }
     const RATE = 16000, BITS = 16, CH = 1, BYTE_RATE = RATE * CH * BITS / 8;
-    // 认人要听的是某个人的一句话，不是整场。带 start/dur（秒）就只切那一段，按帧对齐，读盘也只读这一段。
-    const qs = u.searchParams.get('start'), qd = u.searchParams.get('dur');
-    let clip = null;
-    if (qs !== null || qd !== null) {
-      const a = Number(qs), b = Number(qd);
-      if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b <= 0 || b > 60) { res.writeHead(400); return res.end('bad start/dur'); }
-      const off = Math.floor(a * BYTE_RATE / 2) * 2;
-      if (off >= st.size) { res.writeHead(416, { 'Content-Range': 'bytes */' + st.size }); return res.end(); }
-      clip = { off, len: Math.min(Math.floor(b * BYTE_RATE / 2) * 2, st.size - off) };
-      if (clip.len <= 0) { res.writeHead(416, { 'Content-Range': 'bytes */' + st.size }); return res.end(); }
-    }
-    const dataLen = clip ? clip.len : st.size, total = 44 + dataLen;
+    const dataLen = st.size, total = 44 + dataLen;
     const header = Buffer.alloc(44);
     header.write('RIFF', 0); header.writeUInt32LE(36 + dataLen, 4); header.write('WAVE', 8);
     header.write('fmt ', 12); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20);
@@ -2676,8 +2618,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     // 请求可能只要头部的一截、只要音频的一截，或者横跨两者
     if (start < 44) res.write(header.slice(start, Math.min(end + 1, 44)));
     if (end >= 44) {
-      const base = clip ? clip.off : 0;   // 切片模式下，虚拟文件的第 0 个音频字节落在真实文件的 clip.off
-      const rs = fs.createReadStream(file, { start: base + Math.max(0, start - 44), end: base + end - 44 });
+      const rs = fs.createReadStream(file, { start: Math.max(0, start - 44), end: end - 44 });
       rs.on('error', () => { try { res.end(); } catch (e) {} });
       rs.pipe(res);
     } else res.end();

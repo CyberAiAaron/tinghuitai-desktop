@@ -12,11 +12,11 @@
   const hhmm=t=>{const d=new Date(Number(t)||Date.now());return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');};
   let view=null,title='',start=0,open=new Set(),busy=new Set(),err=new Map();
 
-  // ---- 右上角「⋯」：认人 / 下载 / 分享 / 逐字稿 / 旧版全量视图 ----
+  // ---- 右上角「⋯」：录音 / 下载 / 分享 / 逐字稿 / 旧版全量视图 ----
   const menu=document.getElementById('v2-menu'),more=document.getElementById('v2-more');
   const show=(sel,openDetails)=>{const el=$(sel);if(!el)return;el.classList.add('v2-show');el.hidden=false;if(openDetails&&el.tagName==='DETAILS')el.open=true;el.scrollIntoView({behavior:'smooth',block:'start'});};
   const ITEMS=[
-    ['认人',()=>show('#aux-box',true)],
+    ['录音',()=>show('#aux-box',true)],
     ['下载 / 分享',()=>{const b=$('#download');if(b)b.click();}],
     ['逐字稿',()=>show('#tr-box',true)],
     ['旧版全量视图',()=>{document.body.classList.toggle('v2-full');paintMenu();}],

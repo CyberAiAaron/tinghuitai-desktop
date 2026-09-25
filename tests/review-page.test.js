@@ -133,11 +133,6 @@ test('原话表在渲染总结之前就备好：直接以「完整」状态打�
   assert.equal((archiveJs.match(/segText=new Map\(\)/g)||[]).length,2);   // 一处声明、一处每场重建
 });
 
-test('窄屏不横向滚动：认人区那几行原话允许收缩',()=>{
-  assert.match(archiveHtml,/\.spk-samples\{[^}]*min-width:0/);
-  assert.match(archiveHtml,/\.spk-clip \.q\{min-width:0/);
-});
-
 test('中英文都有：新加的文案两种语言各一份，没有只写中文的漏网',()=>{
   const table=archiveJs.slice(archiveJs.indexOf('const L={'),archiveJs.indexOf('const t=k=>L[k]'));
   const rows=[...table.matchAll(/(\w+):\[('[^']*'|"[^"]*"),\s*('[^']*'|"[^"]*")\]/g)];
