@@ -1050,7 +1050,8 @@ class Session {
       }, 3000);
       if (memTimer.unref) memTimer.unref();
       if(this.transcript.length){workHub.hub.ingestSession(sess);workHub.hub.save();}
-      if(this.transcript.length||(this.audioPath&&fs.existsSync(this.audioPath)&&fs.statSync(this.audioPath).size>3200))meetingPipeline.enqueue(sess);
+      // 归档入队失败（例如同一场已在归档：本场正在归档）不等于没存上——pending 已经写好了；以前这里一抛，saved=false、日志不标 complete，旧 id 就能被重连复活
+      try{if(this.transcript.length||(this.audioPath&&fs.existsSync(this.audioPath)&&fs.statSync(this.audioPath).size>3200))meetingPipeline.enqueue(sess);}catch(e){log('归档入队没成（已存 pending，不影响收尾）'+e.message+' '+this.id);}
       saved=true;this.broadcast({type:'ended',at:Date.now()});
     } catch(e){log('finalize save error '+e.message);this.broadcast({type:'error',message:'场次保存未完成，请保留浏览器录音备份。'});}
     this.checkpoint(saved,{force:true});this.journalClosed=true;
@@ -2743,7 +2744,7 @@ wss.on('connection', (ws, req) => {
       if (msg.type === 'start') {
         role = 'speaker'; ws.__thtRole = 'speaker'; rate = Number(msg.rate)||16000; const sid = msg.sessionId || null;   // R1/R2：收尾前要能数出「这场还有几个在线的说话人连接」
         if((sid&&!/^[a-zA-Z0-9_-]{1,100}$/.test(sid))||rate<8000||rate>192000){ws.close(4400,'invalid session');return;}
-        if(sid&&(SESSIONS.get(sid)?.finalized||SESSIONS.get(sid)?.finalizing||journal.read(path.join(DATA,'state','live-sessions',sid+'.json'))?.complete)){ws.close(4409,'session is ending');return;}
+        if(sid&&(SESSIONS.get(sid)?.finalized||SESSIONS.get(sid)?.finalizing||journal.read(path.join(DATA,'state','live-sessions',sid+'.json'))?.complete||(!SESSIONS.has(sid)&&fs.existsSync(path.join(PENDING_DIR,'sess-'+sid+'.json'))))){ws.close(4409,'session is ending');return;}   // 09-24 双记录（muex6gxj13t1 / muex89wyoux4）：收尾时归档入队抛错 → 日志没标 complete、场次已移出内存，旧标签页 84 秒后拿旧 id 重连把收过尾的会「复活」成第二场。已落 pending 的 id 一律不再续
         if (sid && SESSIONS.has(sid)) {
           session = SESSIONS.get(sid); session.cancelGrace();
           if (msg.uiLang) session.uiLang = (msg.uiLang === 'en') ? 'en' : 'zh';
