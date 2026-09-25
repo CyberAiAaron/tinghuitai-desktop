@@ -218,3 +218,13 @@ test('负责人是「我」：不查通讯录，直接发给当前登录飞书�
   assert.ok(!calls.some(a => a[0] + ' ' + a[1] === 'contact +search-user'));
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('试用版发送链路：负责人「我」成功发送，所有 lark-cli 参数里没有任何写死的名字或 open_id', async () => {
+  const dir = tmp(), calls = [];
+  const r = await PH.run({ dataDir: dir, body: batch({ person: '我' }), execImpl: fakeExec(calls) });
+  assert.equal(r.status, 'sent');
+  const all = JSON.stringify(calls);
+  assert.doesNotMatch(all, /Aaron|ou_00c28e8e/);
+  assert.equal(arg(calls.find(a => a[1] === '+create' && a[0] === 'task'), '--assignee'), 'ou_self');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
