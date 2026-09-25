@@ -1215,28 +1215,6 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const id = open || (e.target.closest('.pc') && e.target.closest('.pc').dataset.pc);
     if (id) openArchivePanel(id);          // 整张卡都可点，直达那场会的回看页（09-22 Aaron 定）
   });
-  // 纪要就地看、一键复制。标清是自动整理版还是你确认过的版本。
-  function showShareNote(text, confirmed){
-    let d = $('#share-dlg');
-    if (!d) {
-      d = document.createElement('dialog'); d.id = 'share-dlg';
-      d.innerHTML = '<h2 id="sn-title"></h2><p class="hint" id="sn-hint"></p><pre id="sn-body"></pre>'
-        + '<div class="row"><button class="btn" id="sn-close">关闭</button><button class="btn primary" id="sn-copy">复制</button></div>';
-      document.body.append(d);
-      d.querySelector('#sn-close').onclick = () => d.close();
-      d.querySelector('#sn-copy').onclick = async () => {
-        try { await navigator.clipboard.writeText($('#sn-body').textContent); $('#sn-copy').textContent = ui==='en'?'Copied':'已复制'; }
-        catch(e){ $('#sn-copy').textContent = ui==='en'?'Copy failed':'复制失败'; }
-      };
-    }
-    $('#sn-title').textContent = ui==='en' ? 'Meeting note' : '会议纪要';
-    $('#sn-hint').textContent = confirmed
-      ? (ui==='en'?'You have been through this one — this is the confirmed version.':'这一场你过过一遍，这是确认过的版本。')
-      : (ui==='en'?'Auto-sorted version. Going through it can change the wording, owners and dates.':'自动整理版。过一遍之后，措辞、负责人和日期可能会变。');
-    $('#sn-body').textContent = text || '';
-    $('#sn-copy').textContent = ui==='en'?'Copy':'复制';
-    d.showModal();
-  }
 
   // ===== 就绪状态：不拦人，只让人随时看得见「现在用什么转写、纪要能不能出」 =====
   // 判据只看两件事：有没有一条转写路子、有没有一个写纪要的模型。
@@ -1633,20 +1611,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   el.tr.addEventListener('click', e => { const s = e.target.closest('.spk'); if (!s || !s.dataset.spk) return; const id = s.dataset.spk; $('#spk-label').textContent = spkName(id) + (T('spk_all')||'（全场生效）'); $('#spk-name').value = ((cur&&cur.names&&cur.names[id])||state.names[id]||''); $('#dlg-spk').dataset.id = id; $('#dlg-spk').showModal(); setTimeout(()=>$('#spk-name').focus(),50); });
   $('#spk-cancel').onclick = () => $('#dlg-spk').close();
   $('#spk-save').onclick = () => { const id = $('#dlg-spk').dataset.id, nm = $('#spk-name').value.trim(); if (cur) { cur.names = cur.names||{}; if (nm) cur.names[id] = nm; else delete cur.names[id]; } if (nm) state.names[id] = nm; persist(); $('#dlg-spk').close(); render(); sendNames(); };
-  // 主题标题/参会人来自 Mac 的 /meeting-list（会后流水线生成），合并进本机 state 后持久化；Mac 不在线时用已缓存的。
-  async function syncMeetingList(){
-    if (!cfg.relayToken && !/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return false;
-    try {
-      const r = await fetch(relayBase()+'/meeting-list?token='+encodeURIComponent(cfg.relayToken||''), {cache:'no-store', signal: AbortSignal.timeout(5000)});
-      if (!r.ok) return false;
-      const d = await r.json(); const byId = new Map((d.sessions||[]).map(x=>[String(x.id), x])); let changed = false;
-      for (const s of state.sessions) { const m = byId.get(String(s.id)); if (!m) continue;
-        if (m.topicTitle && m.topicTitle !== s.topicTitle) { s.topicTitle = m.topicTitle; changed = true; }
-        if (Array.isArray(m.participants) && JSON.stringify(m.participants) !== JSON.stringify(s.participants||[])) { s.participants = m.participants; changed = true; } }
-      if (changed) persist();
-      return changed;
-    } catch(e) { return false; }
-  }
+
   // ===== 会中实时结构化：把要点归到几个大标题下（1 / 1a / 1b），原卡片与点击改删不变 =====
   // 只按要点文本分组，不改任何数据；分组失败或没算完时照常平铺显示。
   let groupingBusy = false;
@@ -2172,9 +2137,6 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     if (cfg.micLabel && /聚合|aggregate|听会台线上会/i.test(cfg.micLabel)) return 'asr-sys';
     return 'asr';
   }
-  const MODE_LABEL_ZH = {asr:'线下会', 'asr-sys':'线上会', ime:'输入法听写', browser:'浏览器识别', caption:'字幕', 'asr-tab':'线上会','asr-room':'线上+线下'};
-  const MODE_LABEL_EN = {asr:'In person', 'asr-sys':'Online call', ime:'IME dictation', browser:'Browser ASR', caption:'Captions', 'asr-room':'Online + room','asr-tab':'Tab audio'};
-  const modeLabel = m => (ui === 'en' ? MODE_LABEL_EN[m] : MODE_LABEL_ZH[m]) || MODE_LABEL_ZH[m] || m;
   function updateModeChip(){
     const b = document.querySelector('#mode-chip'); if (!b) return;
     const m=running&&startedMode?startedMode:resolveMode();
@@ -3339,8 +3301,6 @@ highlights：要点/决定，一句话一条（若与「项目核心记忆」里
   // 导出与面板共用同一可见看法集合：旧数据里「无法核实」类条目面板不显示，导出也不带（0.6.14）
   const visibleViews=()=>((cur&&cur.factchecks)||[]).filter(x=>!viewJunk(x));
   // ===== 分享 / 导出 =====
-  const fullText = () => cur ? `【听会台】${cur.title||''}｜${new Date(cur.start).toLocaleString()}｜${fmt(Math.round(((cur.end||Date.now())-cur.start)/1000))}\n\n` + (cur.summary?`收尾总结：\n${cur.summary}\n\n`:'') + (cur.highlights.length||cur.todos.length?`会中提醒（要点 ${cur.highlights.length} · 待办 ${cur.todos.length}）：\n${[...cur.highlights.map(x=>'· '+x.text), ...cur.todos.map(x=>'☐ '+x.text+(x.owner?' → '+x.owner:''))].join('\n')}\n\n`:'') + (visibleViews().length?`看法（${visibleViews().length} 条）：\n${visibleViews().map(x=>`? ${x.claim}  [${kindLabel(kindOf(x),false,x)}]${x.note?' '+x.note:''}`).join('\n')}\n\n`:'') + `转写全文：\n` + cur.transcript.map(x=>`[${hms(x.at)}]${x.spk?' '+spkName(x.spk)+':':''} ${x.text}`).join('\n') : '';
-  const vLabel = v => v==='true'?'大概率对':v==='false'?'可能有误':'拿不准';
   const dtStr = () => `${new Date(cur.start).toLocaleString('zh-CN')}　·　${fmt(Math.round(((cur.end||Date.now())-cur.start)/1000))}　·　${cur.transcript.length} 句`;
   function mdText(localized=true){
     if(!cur)return '';const en=localized&&ui==='en',t=localized?tt:x=>x||'',cell=x=>String(x||'').replace(/\|/g,'/').replace(/\n/g,'<br>');const L=[`# ${cur.title||(en?'Meeting minutes':'会议纪要')}`,'',dtStr(),''];

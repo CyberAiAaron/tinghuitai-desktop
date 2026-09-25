@@ -1,8 +1,6 @@
   // 导出与面板共用同一可见看法集合：旧数据里「无法核实」类条目面板不显示，导出也不带（0.6.14）
   const visibleViews=()=>((cur&&cur.factchecks)||[]).filter(x=>!viewJunk(x));
   // ===== 分享 / 导出 =====
-  const fullText = () => cur ? `【听会台】${cur.title||''}｜${new Date(cur.start).toLocaleString()}｜${fmt(Math.round(((cur.end||Date.now())-cur.start)/1000))}\n\n` + (cur.summary?`收尾总结：\n${cur.summary}\n\n`:'') + (cur.highlights.length||cur.todos.length?`会中提醒（要点 ${cur.highlights.length} · 待办 ${cur.todos.length}）：\n${[...cur.highlights.map(x=>'· '+x.text), ...cur.todos.map(x=>'☐ '+x.text+(x.owner?' → '+x.owner:''))].join('\n')}\n\n`:'') + (visibleViews().length?`看法（${visibleViews().length} 条）：\n${visibleViews().map(x=>`? ${x.claim}  [${kindLabel(kindOf(x),false,x)}]${x.note?' '+x.note:''}`).join('\n')}\n\n`:'') + `转写全文：\n` + cur.transcript.map(x=>`[${hms(x.at)}]${x.spk?' '+spkName(x.spk)+':':''} ${x.text}`).join('\n') : '';
-  const vLabel = v => v==='true'?'大概率对':v==='false'?'可能有误':'拿不准';
   const dtStr = () => `${new Date(cur.start).toLocaleString('zh-CN')}　·　${fmt(Math.round(((cur.end||Date.now())-cur.start)/1000))}　·　${cur.transcript.length} 句`;
   function mdText(localized=true){
     if(!cur)return '';const en=localized&&ui==='en',t=localized?tt:x=>x||'',cell=x=>String(x||'').replace(/\|/g,'/').replace(/\n/g,'<br>');const L=[`# ${cur.title||(en?'Meeting minutes':'会议纪要')}`,'',dtStr(),''];

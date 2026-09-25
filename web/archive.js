@@ -131,7 +131,6 @@ function nmTxt(text,map){let t=String(text==null?'':text);Object.keys(map).forEa
 function nm(text,map){let t=esc(text);Object.keys(map).forEach(k=>{if(!map[k]||!/^\w{1,12}$/.test(k))return;t=t.replace(new RegExp('(?:说话人\\s*|Speaker\\s*|S)'+k+'(?!\\d)','g'),()=>esc(map[k]));});return t;}
 // 时间胶囊 = 回到原句的入口。段落 id（seg）在就精确落到那一句；只有时间就按时间找最近的一句；
 // 两样都没有的条目不做成可点的样式，免得点了没反应。
-const tbtn=(sec,seg)=>(sec||seg)?'<button type="button" class="bf-t" data-sec="'+Number(sec||0)+'"'+(seg?' data-seg="'+esc(seg)+'"':'')+'>'+(sec?mmss(sec):t('srcLine'))+'</button>':'';
 function mdLite(src){ // 旧会议只有 Markdown 长文时的兜底渲染
   const out=[];let ul=false,tb=false;const inl=t=>esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'$1').replace(/\*([^*]+)\*/g,'$1');
   const close=()=>{if(ul){out.push('</ul>');ul=false;}if(tb){out.push('</table>');tb=false;}};

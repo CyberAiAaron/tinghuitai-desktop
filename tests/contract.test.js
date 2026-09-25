@@ -108,7 +108,7 @@ test('no function is defined and then never called', ()=>{
   const defined=[...scripts.matchAll(/^\s{0,4}(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map(m=>m[1]);
   // 明确知道的历史遗留：新旧两套界面里都没人调用，是被后来的做法取代的旧代码。
   // 留在这儿是为了不悄悄删掉能力（要删要接，等 Aaron 拍板），但不许再增加新的。
-  const KNOWN_DEAD=new Set(['showShareNote','syncMeetingList']);
+  const KNOWN_DEAD=new Set([]);   // 09-25 清理：showShareNote / syncMeetingList 已按 Aaron「死代码删一删」删除；不许再往这里加
   const orphans=defined.filter(n=>{
     if (KNOWN_DEAD.has(n)) return false;
     // 定义那一处不算；出现在别处（调用、传引用、挂事件）就算有人用

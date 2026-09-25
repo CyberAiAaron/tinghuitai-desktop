@@ -122,7 +122,6 @@ test('页面契约：议题带状态徽标可点改，要点按段落 id 跳原�
   assert.match(archiveJs,/function jumpTo\(sec,seg\)/);
   assert.match(archiveJs,/#transcript p\[data-seg\]/);
   assert.match(archiveJs,/hit\.style\.background=''.*\},2000\)/);
-  assert.match(archiveJs,/const tbtn=\(sec,seg\)=>\(sec\|\|seg\)\?/);   // 两样都没有就不做成可点的
   assert.match(archiveJs,/' data-seg="'\+esc\(seg\)\+'"'/);
 });
 
