@@ -74,8 +74,7 @@ function render(s){
   mountPlayer();
   mountMemoryLink();
   mountHead(s);
-  // 原话表要在 renderBrief 之前备好：议题要点下面那行原话按 seg 取，晚一步就取不到，
-  // 直接以「完整」状态打开的那一次会少掉原话，得再点一次开关才补上。
+  // 原话表要在 renderBrief 之前备好：议题要点下面那行原话按 seg 取，晚一步就取不到。
   segText=new Map();(s.transcript||[]).forEach(row=>{const id=row.id!=null?String(row.id):'';if(id)segText.set(id,row.text||'');});
   $('#src-chip').hidden=false;$('#src-chip').textContent=source==='mac'?'来源：Mac 归档'+(s.archiveNote?'（'+s.archiveNote+'）':''):'来源：本机记录（Mac 未同步）';
   renderBrief(s);
@@ -92,19 +91,15 @@ const COLORS=['#202124','#c8102e','#1f5fbf','#1e7e34','#b26a00','#6a3fb5','#0083
 const mmss=sec=>{sec=Math.max(0,Math.round(sec||0));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),x=sec%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0');};
 // 界面文案：[中文, English]。这一屏原来全是中文，界面切到 en 时只有一半跟着换。
 const L={sum:['智能总结','Summary'],rev:['洞察与行动','Insights & actions'],ins:['洞察','Insights'],acts:['行动','Actions'],addTodo:['加为待办','Add to-do'],more:['展开依据','Show reasoning'],revItems:['这场没有需要你注意的偏离或冲突。','No deviations or conflicts to flag.'],
-  topics:['议题','Topics'],keyc:['核心结论','Key conclusions'],todos:['待办','Action items'],
-  quick:['一屏速览','At a glance'],concl:['结论：','Conclusion: '],noKeyc:['这场没有形成核心结论。','No key conclusions.'],
-  colWhat:['事项','Item'],colWho:['负责人','Owner'],colDue:['期限','Due'],sugg:['建议','suggested'],
+  topics:['议题','Topics'],keyc:['核心结论','Key conclusions'],
+  noKeyc:['这场没有形成核心结论。','No key conclusions.'],
+  colWhat:['事项','Item'],colWho:['负责人','Owner'],colDue:['期限','Due'],
   sayPh:['一句话改待办：「第 2 条派给 Cary，周五前」「加一条：整理手板结果」「第 3 条不要了」','Change to-dos in one line: "#2 assign to Cary, by Friday" "add: collect mockup results" "#3 drop"'],
   sayGo:['执行','Apply'],sayBusy:['正在改…','Applying…'],sayCancel:['取消','Cancel'],sayStop:['已取消','Cancelled'],
   sayHint:['「派给谁」只填好草稿，真建任务还要你点「派发」。','"Assign to" only fills in the draft; nothing is sent until you click Assign.'],
   byModel:['模型理解的','interpreted by the model'],
-  detail:['议题展开','Topics in detail'],showFull:['展开完整','Show full'],showBrief:['只看结论','Conclusions only'],
-  open:['未决：','Open: '],noConc:['未形成结论','No conclusion reached'],srcLine:['原句','Source'],
-  facts:['补充背景','Background'],align:['和项目目标的关系','Against project goals'],
-  noCtx:['未接项目背景，以下只依据会内内容。','No project context attached; this is based on the meeting alone.'],
+  srcLine:['原句','Source'],
   revFail:['点评这次没生成出来：','Review did not come through: '],revNone:['点评尚未生成。','Review not generated yet.'],
-  inferred:['会内推断','inferred from the meeting'],by:['依据：','Source: '],
   askLeft:['需要你定一下 · 还剩 {n} 题','Your call · {n} left'],
   askDone:['需要你定的 {n} 题都已确定','All {n} questions answered'],
   done:['✓ 已确定','✓ Answered'],edit:['改','Edit'],extra:['补充：','Note: '],
@@ -176,7 +171,6 @@ function renderBrief(s){
       +rows.map((r,i)=>'<tr data-topic="'+r.n+'"><td><span class="bf-n" style="background:'+COLORS[i%COLORS.length]+'">'+r.n+'</span> <b>'+cell(r.title)+'</b></td><td>'+cell(r.conclusion)+'</td><td>'+badge(r.n,r.status)+'</td><td>'+cell(r.open)+'</td><td>'+cell(r.next)+'</td></tr>').join('')
       +'</tbody></table></div><div class="bf-bar">'+bar+'</div></section>':'')
     +'<section class="fs" id="bf-brain"><h3 class="fs-h"><span class="fs-n">3</span>'+esc(T('项目状态更新','Project state updates'))+' <span class="bf-sug" id="bf-upd-n"></span></h3><div id="bf-updates"></div></section>';
-  $('#bf-view').hidden=true; // 速览 / 完整开关跟着详细议题一起退场
   $('#bf-sum').querySelectorAll('[data-dec]').forEach(el=>el.onclick=()=>{decEditing.add(el.dataset.dec);render(record);});
   $('#bf-sum').querySelectorAll('[data-dec-set]').forEach(el=>el.onclick=()=>{const [n,v]=el.dataset.decSet.split('|');saveDecision(Number(n),v);});
   paintActions();
