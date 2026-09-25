@@ -65,3 +65,18 @@ test('会后联网核查没跑通：checked 一律改成核不了，不留常识
   const r = require('child_process').spawnSync('python3', ['-c', `import sys,json,importlib.util as u;s=u.spec_from_file_location('mp','app/meeting-pipeline.py');mp=u.module_from_spec(s);s.loader.exec_module(mp);mp.web_verify=lambda *a,**k:None;rv={'checked':[{'claim':'A','result':'已核实','note':'常识'}]};mp.web_verify_checked(rv);print(json.dumps(rv['checked'][0],ensure_ascii=False))`], { cwd: require('path').join(__dirname, '..'), encoding: 'utf8', env: { ...process.env, THT_DATA_DIR: require('os').tmpdir() } });
   const j = JSON.parse(r.stdout.trim()); assert.equal(j.result, '核不了'); assert.deepEqual(j.sources, []);
 });
+test('项目背景：文件缺失时 userPrompt 与旧格式一致；有文件时放在待核查前、截断 4000 字', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vctx-'));
+  assert.equal(v.loadContext(dir), '');
+  assert.equal(v.loadContext(''), '');
+  assert.equal(v.userPrompt(['a', 'b'], v.loadContext(dir)), '【待核查】\n1. a\n2. b');
+  fs.writeFileSync(path.join(dir, 'verify-context.md'), '阔屏 = 华为 Pura X Max 外屏\n' + 'x'.repeat(5000));
+  const ctx = v.loadContext(dir);
+  assert.equal(ctx.length, 4000);
+  assert.ok(v.userPrompt(['a'], ctx).startsWith('【项目背景】\n阔屏 = 华为 Pura X Max 外屏'));
+  assert.ok(v.userPrompt(['a'], ctx).endsWith('【待核查】\n1. a'));
+});
+test('提示词：公开部分拆出来核、追原始出处、数字来源进 sources', () => {
+  const s = v.systemPrompt();
+  for (const k of ['先拆再核', '只有整条都是项目内部决定', '追原始出处', '未找到原始出处', '列进 sources']) assert.ok(s.includes(k), k);
+});
