@@ -228,3 +228,20 @@ test('试用版发送链路：负责人「我」成功发送，所有 lark-cli �
   assert.equal(arg(calls.find(a => a[1] === '+create' && a[0] === 'task'), '--assignee'), 'ou_self');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('已有部分发送成功的记录后改成找不到的人：422，不留新收据、原条目仍是 partial（不误标已发）；再改回真名补发成功', async () => {
+  const dir = tmp();
+  const r1 = await PH.run({ dataDir: dir, body: batch(), execImpl: fakeExec([], { msgFail: true }) });
+  assert.equal(r1.partial, true);
+  const rdir = path.join(dir, 'state', 'send-receipts', 'person-handoff');
+  const before = fs.readdirSync(rdir).filter(f => f.endsWith('.json')).sort();
+  const calls = [];
+  await assert.rejects(PH.run({ dataDir: dir, body: batch({ person: '不存在的人', retryFailed: true, retryConfirmed: true }), execImpl: fakeExec(calls) }), e => e.code === 422 && e.notFound);
+  assert.deepEqual(calls.map(a => a[0] + ' ' + a[1]), ['contact +search-user'], '422 时一条外发都不跑');
+  assert.deepEqual(fs.readdirSync(rdir).filter(f => f.endsWith('.json')).sort(), before, '找不到人那次的收据被清掉');
+  const st = PH.sentState(dir, 'm-1', 'v2-next'); assert.equal(st.partial, true); assert.equal(st.person, 'Abel Mei');
+  const r3 = await PH.run({ dataDir: dir, body: batch({ retryFailed: true, retryConfirmed: true }), execImpl: fakeExec([]) });
+  assert.equal(r3.status, 'sent'); assert.equal(r3.partial, false);
+  assert.equal(PH.sentState(dir, 'm-1', 'v2-next').partial, false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
