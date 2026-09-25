@@ -189,12 +189,6 @@ function insertLine(src, item, text, meeting) {
   return { out, line };
 }
 
-function applyToState(stateFile, item, text, meeting) {
-  const r = insertLine(fs.readFileSync(stateFile, 'utf8'), item, text, meeting);
-  writeAtomic(stateFile, r.out, 0o644);
-  return r.line;
-}
-
 // 一条决定：accept / edit / reject；all=true 时对所有未决条目做 accept
 function decide({ dataDir, sid, uid, action, text = '', all = false, confirmed = false, projectionDir, log = () => {} }) {
   // Codex 一审：确认不只在路由层查，写回函数自己也要拿到 confirmed === true
@@ -244,4 +238,4 @@ function summary(doc) {
   return { total: doc.items.length, pending, done: doc.items.length - pending };
 }
 
-module.exports = { run, read, decide, summary, TYPES, LEVELS, TYPE_LABEL, LEVEL_LABEL, MAX_ITEMS, __test: { parse, normalize, sections, applyToState, insertLine, mirror, renderMd, fingerprint, systemPrompt, userPrompt } };
+module.exports = { run, read, decide, summary, TYPES, LEVELS, TYPE_LABEL, LEVEL_LABEL, MAX_ITEMS, __test: { parse, normalize, sections, insertLine, mirror, renderMd, fingerprint, systemPrompt, userPrompt } };

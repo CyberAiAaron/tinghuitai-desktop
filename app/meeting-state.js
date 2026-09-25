@@ -4,8 +4,7 @@
 // 归档失败和可用产物混在一个计数里）。现在契约下沉到这里，前端只负责显示。
 //
 // 核心：一场会有五个产物，各自独立。总体状态只是「最有用的那一层」的概括。
-
-const PRODUCT_STATES = ['not_started', 'pending', 'ok', 'retryable', 'unavailable'];
+// 每个产物的状态取值：not_started / pending / ok / retryable / unavailable。
 
 // 每个产物看什么
 function productsOf(sess, job, memCount, memState) {
@@ -81,4 +80,4 @@ function describe(sess, job, memCount, recording, lang, memState) {
   return { state: overall, label: (LABEL[lang === 'en' ? 'en' : 'zh'])[overall] || overall, products, updatedAt: new Date().toISOString() };
 }
 
-module.exports = { describe, productsOf, overallOf, PRODUCT_STATES, LABEL };
+module.exports = { describe, productsOf, overallOf, LABEL };
