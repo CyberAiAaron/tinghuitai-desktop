@@ -109,18 +109,6 @@ const TABLE = {
     render: p => '团队名单文件原文：\n' + (p.roster || '（没有配置团队名单文件）'),
   },
   'actions.research': { title: '处理台 · 预研究一页', parts: [], why: '不联网、只基于本场内容，带项目资料会让它写成项目综述。', render: () => '' },
-  'actions.position': {
-    title: '处理台 · 这场会在整条线的哪一步',
-    parts: [{ key: 'focus-files', cap: 12000, perFile: 6000 }],
-    why: '要说清位置就得知道项目现在在推什么，重点文件够了。',
-    render: p => (p['focus-files'] ? '项目现状：\n' + p['focus-files'] + '\n\n' : ''),
-  },
-  'actions.risks': {
-    title: '处理台 · 风险提示（和事实源硬冲突）',
-    parts: [{ key: 'fact-files', cap: 0, perFile: 6000 }],
-    why: '只报「会上说的」和「事实源里写死的」互相矛盾，所以必须带事实源原文；没配事实源整块不出。',
-    render: p => '事实源：\n' + p['fact-files'],
-  },
   'actions.focus': {
     title: '处理台 · 项目现在最重要的三件事（每天一次，全项目共用）',
     parts: [{ key: 'focus-files', cap: 0, perFile: 6000 }],

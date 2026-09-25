@@ -26,7 +26,6 @@ const toolLoop = require('./tool-loop');
 const KINDS = ['meeting', 'research', 'delegate', 'self'];
 const STATES = ['open', 'dismissed', 'sent', 'claimed'];
 const MAX_RESEARCH = 3;          // 每场最多跑 3 条预研究（Aaron 09-20 定）
-const MAX_RISKS = 3;             // 风险提示每场最多 3 条，每条一行
 // 团队名单 / 项目文件 / 事实源每份截多少字，写在 app/context-pack.js 的表里，不在这里。
 
 const keyOf = sessionId => crypto.createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 16);
@@ -188,7 +187,7 @@ async function generate({ dir, sessionId, enhanced, env = {}, dataDir, attendees
   const file = fileOf(dir, sessionId), old = readJSON(file);
   const cards = sourceCards(enhanced);
   const warnings = [];
-  const out = { sessionId: String(sessionId), generatedAt: now(), briefAt: String(((enhanced && enhanced.brief) || {}).at || ''), status: 'done', classifiedBy: 'rules', cards: [], thinking: {}, risks: [], warnings };
+  const out = { sessionId: String(sessionId), generatedAt: now(), briefAt: String(((enhanced && enhanced.brief) || {}).at || ''), status: 'done', classifiedBy: 'rules', cards: [], warnings };
 
   if (!cards.length) { out.cards = []; writeAtomic(file, out); return out; }
 
@@ -303,42 +302,8 @@ async function generate({ dir, sessionId, enhanced, env = {}, dataDir, attendees
       c.researchSkipped = '每场只自动跑 3 条预研究，这条没跑';
   }
 
-  // ⑤ 一句话思考的第一句：这场会在整条线上的位置。可能带项目文件，走本机命令行。
-  const posPack = contextPack.build(env, { purpose: 'actions.position', dataDir });
-  const pos = await askJSON(env, {
-    system: '用一句话（不超过 60 字）说清这场会在整条项目线上处在什么位置：它推进了什么、卡在哪一步。'
-      + '只说位置，不给建议。输出 {"position":"..."}',
-    user: posPack.text
-      + '本场结论：' + JSON.stringify((((enhanced || {}).brief || {}).overview || {}).conclusions || [])
-      + '\n本场议题：' + JSON.stringify(((((enhanced || {}).brief || {}).overview || {}).topics || []).map(t => t.title)),
-    maxTokens: 400, dataDir, log, noFallback: true, pack: posPack, purpose: 'actions.position', sessionId,
-  });
-  if (pos.ok && pos.data && typeof pos.data.position === 'string') out.thinking.position = clip(pos.data.position, 160);
-  else warnings.push('「这场会在哪一步」这次没生成出来（' + (pos.error || '未知') + '）');
-
-  // ⑥ 风险提示：只有本场说法和事实源硬冲突才出。没配事实源就整块不出。
-  out.risks = await buildRisks({ env, enhanced, dataDir, log, warnings, sessionId });
-
   writeAtomic(file, { ...out, cards: mergeStates(out.cards, old) });
   return readJSON(file);
-}
-
-async function buildRisks({ env, enhanced, dataDir, log, warnings, sessionId = '' }) {
-  const pack = contextPack.build(env, { purpose: 'actions.risks', dataDir });
-  if (!pack.configured) return [];
-  if (!pack.chars) { warnings.push('配了事实源文件但一份也读不到，风险提示这次没跑'); return []; }
-  const ov = ((enhanced || {}).brief || {}).overview || {};
-  const r = await askJSON(env, {
-    system: '你在核对一场会的说法和已确认的事实源有没有硬冲突。只报硬冲突：会上说的和事实源里写死的互相矛盾。'
-      + '措辞不同、只是没提到、还在讨论中的，都不算冲突，宁可一条都不报。每条一行，不超过 40 字，'
-      + 'evidence 必须是事实源里的原话。最多 3 条。输出 {"risks":[{"text":"...","evidence":"...","link":"..."}]}',
-    user: pack.text + '\n\n本场结论：' + JSON.stringify(ov.conclusions || []) + '\n本场待办：' + JSON.stringify((ov.todos || []).map(t => t.what)),
-    maxTokens: 1200, dataDir, log, noFallback: true, pack, purpose: 'actions.risks', sessionId,
-  });
-  if (!r.ok) { warnings.push('风险提示这次没跑出来（' + (r.error || '未知') + '）'); return []; }
-  const raw = Array.isArray(r.data.risks) ? r.data.risks : [];
-  return raw.map(x => ({ text: clip(x && x.text, 120), evidence: clip(x && x.evidence, 300), link: clip(x && x.link, 400) }))
-    .filter(x => x.text).slice(0, MAX_RISKS);
 }
 
 // ===== 项目现在最重要的三件事：每天算一次，全项目共用 =====
@@ -539,7 +504,7 @@ function sentDigest(dir, { limit = 5, max = 8 } = {}) {
 
 module.exports = {
   resolveIds,
-  KINDS, STATES, MAX_RESEARCH, MAX_RISKS,
+  KINDS, STATES, MAX_RESEARCH,
   keyOf, fileOf, read, ensure, ensureBackground, generate, apply, markSent, projectFocus, sentDigest,
   classifyByRules, enforceExclusive, sourceCards, mergeStates, sanitizeDraft, twoSlots, norm, todayLocal,
   cardId, ownerIsOther,   // app/todo-say.js 加卡、判「派给别人」用同一套口径

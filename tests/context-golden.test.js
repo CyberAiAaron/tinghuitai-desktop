@@ -259,8 +259,6 @@ test('金样 · actions.*（处理台分类 / 日历草稿 / 预研究 / 这场�
     if (/事项分类/.test(s)) return j({ items: JSON.parse(opts.user).map(c => ({ i: c.i, kind: actions.classifyByRules(c), reason: '模型判的' })) });
     if (/拟日历草稿/.test(s)) return j({ drafts: [{ i: 0, title: '资料包评审会', agenda: ['入口'], attendees: ['Shawn Liu'], note: '定入口' }] });
     if (/预研究一页/.test(s)) return j({ items: [{ i: 1, scope: '覆盖 A/B', sources: ['公开资料'], expected: '一张对照表' }] });
-    if (/整条项目线上处在什么位置/.test(s)) return j({ position: '这场把资料收敛到一个入口' });
-    if (/有没有硬冲突/.test(s)) return j({ risks: [] });
     if (/读这些项目文件/.test(s)) return j({ items: ['把 D1 定下来'] });
     return j({});
   };
@@ -271,8 +269,6 @@ test('金样 · actions.*（处理台分类 / 日历草稿 / 预研究 / 这场�
     golden('actions.classify', byKey(/事项分类/));
     golden('actions.calendar', byKey(/拟日历草稿/));
     golden('actions.research', byKey(/预研究一页/));
-    golden('actions.position', byKey(/整条项目线上处在什么位置/));
-    golden('actions.risks', byKey(/有没有硬冲突/));
     seen.length = 0;
     await actions.projectFocus({ dataDir: h.dir, env, at: new Date('2026-09-22T02:00:00.000Z') });
     golden('actions.focus', seen.find(x => /读这些项目文件/.test(x.system)));

@@ -181,7 +181,7 @@ function renderBrief(s){
   $('#bf-sum').querySelectorAll('[data-dec-set]').forEach(el=>el.onclick=()=>{const [n,v]=el.dataset.decSet.split('|');saveDecision(Number(n),v);});
   paintActions();
   // REQ-009：点评里删掉了三块——逐句挑错、夸「哪些说对了」都不是重点（Aaron 09-20「很鸡肋」），
-  // 「建议」那一区搬去了待办卡。和事实源硬冲突的那几条，现在以风险提示的形式出现在待办卡下面。
+  // 「建议」那一区搬去了待办卡。（风险提示与一句话思考 09-25 按 Aaron 批准删除。）
   // Aaron 09-24：洞察 + 行动并排在智能总结旁，取代「点评与指导」。洞察 = 冲突 / 偏离 / 一句话立场 / 补充背景，每条最多一个动作；行动 = 待办表 + 一句话改待办。
   const r=b.review||{};
   const dev=(r.alignment||[]).filter(a=>a.status&&a.status!=='推进');
@@ -196,7 +196,7 @@ function renderBrief(s){
   $('#bf-rev').innerHTML=
     '<section class="fs" id="bf-ins"><h3 class="fs-h">'+esc(t('ins'))+'</h3>'
       +(b.review||ins.length?'':'<p class="bf-note">'+(b.reviewWarning?esc(t('revFail'))+esc(b.reviewWarning):esc(t('revNone')))+'</p>')
-      +'<div id="bf-risks"></div><div id="bf-rev-items">'+(revItems.join('')||(b.review?'<p class="bf-note">'+esc(t('revItems'))+'</p>':''))+'</div><div id="bf-think"></div></section>'
+      +'<div id="bf-rev-items">'+(revItems.join('')||(b.review?'<p class="bf-note">'+esc(t('revItems'))+'</p>':''))+'</div></section>'
     +'<section class="fs" id="bf-todo"><h3 class="fs-h">'+esc(t('acts'))+' <span class="bf-sug" id="bf-todo-n"></span></h3><div id="bf-cards"></div><div id="bf-say"></div></section>';
   $('#bf-rev').querySelectorAll('[data-say]').forEach(el=>el.onclick=()=>{sayDraft=el.dataset.say;saySend(el.dataset.say);});
   // 问「S2 是谁」的题不在这里出现了：认人只有上面那一个入口（#spk-box），两处都问会互相顶。
@@ -221,7 +221,7 @@ function renderBrief(s){
 const T=(zh,en)=>uiLang==='en'?en:zh;
 const KIND_LABEL=k=>({meeting:T('我要组织的会','Meeting to set up'),research:T('让我做的研究','Research for me'),
   delegate:T('派给别人','Delegate'),self:T('我自己做',"I'll do it")}[k]||k);
-let actData=null,actStatus='',actTimer=null,actOpen=new Set(),actNote=new Map(),actFocus=null;
+let actData=null,actStatus='',actTimer=null,actOpen=new Set(),actNote=new Map();
 const actUncertain=new Set();   // 第 9 条：上次「发」没弄清发没发出去的卡；再点先问一句，带 retryConfirmed 才让服务端重发
 const actTok=()=>encodeURIComponent(settings.relayToken||'');
 
@@ -238,16 +238,9 @@ async function loadActions(){
   paintActions();
 }
 function stopActPoll(){if(actTimer){clearInterval(actTimer);actTimer=null;}}
-// 「项目现在最重要的三件事」每天全项目共用一份，不每场重算——每场重算它会漂，漂了就没人信。
-async function loadFocus(){
-  if(source!=='mac')return;
-  try{const r=await fetch('/asr-relay/project-focus?token='+actTok(),{cache:'no-store',signal:AbortSignal.timeout(20000)});
-      actFocus=await r.json();}catch(e){actFocus=null;}
-  paintActions();
-}
 function paintActions(){
   const box=document.getElementById('bf-cards');if(!box)return;
-  const think=document.getElementById('bf-think'),risks=document.getElementById('bf-risks'),cnt=document.getElementById('bf-todo-n');
+  const cnt=document.getElementById('bf-todo-n');
   if(!actData){
     if(cnt)cnt.textContent='';
     box.innerHTML=actStatus==='running'
@@ -255,7 +248,6 @@ function paintActions(){
       : (actStatus==='unavailable'||actStatus==='error'
         ? '<p class="bf-note">'+esc(actNote.get('*')||T('这场会还没整理出待办。','No to-dos from this meeting yet.'))+'</p>'
         : '');
-    if(think)think.innerHTML='';if(risks)risks.innerHTML='';
     paintSay();return;
   }
   const cards=actData.cards||[],live=cards.filter(c=>c.state!=='dismissed'),hidden=cards.filter(c=>c.state==='dismissed');
@@ -263,8 +255,6 @@ function paintActions(){
   box.innerHTML=(actData.classifiedBy==='rules'&&live.length?'<p class="bf-note">'+T('这批分类是按关键词判的（模型这次没回应），类型可能要你自己调。','Typed by keyword rules this time (the model did not answer).')+'</p>':'')
     +(live.length?'<div class="td-wrap"><table class="bf-table td-table"><thead><tr><th>#</th><th>'+esc(t('colWhat'))+'</th><th>'+esc(t('colWho'))+'</th><th>'+esc(t('colDue'))+'</th><th></th></tr></thead><tbody>'+live.map((c,i)=>actRow(c,i+1)).join('')+'</tbody></table></div>':'<p class="bf-note">'+T('这场没有要处理的事。','Nothing to process from this meeting.')+'</p>')
     +hidden.map(c=>'<div class="bf-undo" data-undo="'+esc(c.id)+'"><span>'+(c.doneAt?T('已做完','Done'):T('已收起','Dismissed'))+'「'+esc(c.text.slice(0,40))+'」</span><button type="button">'+T('撤销','Undo')+'</button></div>').join('');
-  if(think)think.innerHTML=thinkHtml();
-  if(risks)risks.innerHTML=risksHtml();
   paintSay();
   wireActions(box);
   wireHandoff(box,cid=>{const c=(actData.cards||[]).find(x=>x.id===cid)||{};return {meetingId:sessionIdOf(),meetingTitle:(record&&record.title)||'',kind:'todo',text:c.text||'',context:c.reason||'',due:c.due||(c.draft&&c.draft.due)||''};},paintActions);
@@ -316,21 +306,6 @@ async function saySend(text){
     sayLog=esc(e.message||e);sayBad=true;
   }
   clearTimeout(timer);sayBusy=false;sayAbort=null;paintActions();
-}
-function thinkHtml(){
-  const lines=[];
-  if(actData&&actData.thinking&&actData.thinking.position)lines.push(esc(actData.thinking.position));
-  if(actFocus&&actFocus.configured&&(actFocus.items||[]).length)
-    lines.push(T('项目现在最重要的三件事：','Top three for the project right now: ')+esc(actFocus.items.join('；')));
-  if(!lines.length)return '';
-  return '<div class="bf-h">'+T('一句话思考','In one line')+'</div>'+lines.map(x=>'<div class="bf-think">'+x+'</div>').join('');
-}
-// 没有硬冲突时整块不渲染——这里不出现任何「本场没有风险」的空状态，那只是噪音。
-function risksHtml(){
-  const rs=(actData&&actData.risks)||[];if(!rs.length)return '';
-  return '<div class="bf-h">'+T('风险提示','Conflicts')+'</div>'+rs.map(r=>'<div class="bf-risk">'+esc(r.text)
-    +(r.evidence?'<div class="bf-src">'+T('依据：','Source: ')+esc(r.evidence.slice(0,160))+'</div>':'')
-    +(r.link?'<div class="bf-src"><a href="'+esc(r.link)+'" target="_blank" rel="noopener">'+T('看依据','Open source')+' ↗</a></div>':'')+'</div>').join('');
 }
 function mainAction(c,open){
   if(c.state==='sent'){
@@ -635,7 +610,7 @@ function jumpFromHash(){const m=/(?:^|[#&])t=(\d+(?:\.\d+)?)/.exec(location.hash
 window.addEventListener('hashchange',jumpFromHash);
 (async()=>{
   if(!id){$('#title').textContent='缺少会议编号';return;}
-  try{const s=await fromMac();source='mac';await probeAudio();render(s);loadActions();loadFocus();loadUpdates();jumpFromHash();}
+  try{const s=await fromMac();source='mac';await probeAudio();render(s);loadActions();loadUpdates();jumpFromHash();}
   catch(e){const s=fromLocal();if(s){source='local';hasAudio=false;render(s);jumpFromHash();}else{$('#title').textContent=e.message==='401'?'请回到 Meeting LiveMate，在设置里连接 Mac 后重试。':'这场会议在 Mac 和本机都没找到（Mac 在线吗？）';}}
 })();
 
