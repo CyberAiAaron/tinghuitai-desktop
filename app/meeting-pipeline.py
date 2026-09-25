@@ -259,6 +259,7 @@ MODEL_NOTE = {'text': '', 'why': ''}
 
 # 分块总结里有几块失败、用原文占位顶上了。整份不废，但要让人知道这份总结不完整（审查 R8）。
 CHUNK_NOTE = {'failed': 0}
+SUMMARY_NOTE = {'mode': ''}   # M2：这一场总结是 single（全文一趟）还是 chunked（分块）；测试和日志看它
 
 def chain_length():
     """降级链上有几家。兜底超时要按它算：链上 3 家时 `timeout*2+60` 会在第三家还没答完就把桥杀掉。
@@ -344,6 +345,36 @@ def ask_model(system, user, *, kind='post', timeout=300, session_id='', purpose=
 CTX_SLOT = '\x00CONTEXT\x00'
 NOTE_SLOT = '\x00CONTEXT_NOTE\x00'
 
+# M2（09-25）：放得下就一次给全文，放不下才分块。按所选模型的上下文算：上下文 − 系统提示 − 记忆资料 − 输出预留。
+# 上下文 token 数：settings LLM_CONTEXT_TOKENS 优先；否则按模型名认几个已知档；认不出按 32k 保守算。
+# 字 ↔ token 按 1.5 字/token 折算（中文偏保守；比 llm.js 估账用的 2 字/token 更紧，宁可多分一块也不撑爆）。
+CHARS_PER_TOKEN = 1.5
+OUTPUT_RESERVE_TOKENS = 3000 + 2000      # max_tokens=3000 + 余量（思考 / 格式）
+MEMORY_RESERVE_CHARS = 3000 + 4000 + 2000  # context-pack post-summary 两份上限 + 本场 memoryBlock 预留
+def post_model_name():
+    chain = cfg('LLM_CHAIN', None)
+    if isinstance(chain, list) and chain:
+        m = (chain[0] or {}).get('models') or {}
+        return str(m.get('post') or m.get('live') or '')
+    return str(cfg('LLM_MODEL_POST', '') or cfg('LLM_MODEL', '') or '')
+
+def model_context_tokens(model=None):
+    try:
+        n = int(cfg('LLM_CONTEXT_TOKENS', 0) or 0)
+        if n > 0: return n
+    except Exception: pass
+    m = (model if model is not None else post_model_name()).lower()
+    if re.search(r'opus|fable|sonnet|haiku', m): return 200000
+    if re.search(r'gpt-5|gpt-4\.1|o3|o4', m): return 128000
+    if re.search(r'qwen|kimi|moonshot', m): return 128000
+    return 32000
+
+def summary_budget_chars(system_prompt, memory_block='', model=None):
+    """全文最多多少字还能单趟放下。"""
+    tokens = model_context_tokens(model) - OUTPUT_RESERVE_TOKENS
+    used_chars = len(system_prompt or '') + MEMORY_RESERVE_CHARS + len(str(memory_block or ''))
+    return max(0, int(tokens * CHARS_PER_TOKEN) - used_chars)
+
 def summarize(session, on_phase=None, context_purpose='post-summary'):
     source=json.loads(json.dumps(session));apply_word_fixes(source)
     # 纯语气词的行不进总结输入（归档的原文不受影响）；与 server.js 的 fillerASR 同一集合。
@@ -361,6 +392,7 @@ def summarize(session, on_phase=None, context_purpose='post-summary'):
     # 这个用途填进来（给哪几份、各截多少字，见 app/context-pack.js 的表）。
     # context_purpose=None 表示这一次一个字本机资料都不带（分享包走的就是这条）。
     ctx_block = CTX_SLOT if context_purpose else ''
+    SUMMARY_NOTE['mode'] = ''
     CHUNK_NOTE['failed'] = 0               # 这一场有几块没整理出来（process() 据此标 partial 并自动补跑）
     deadline = time.time() + 1800          # 整场总结的总预算，30 分钟封顶
     # 熔断（原来的 cli_dead）：这一趟里降级链前 N 家已经失败过，后面每一块就别再等它们一遍——
@@ -384,6 +416,11 @@ def summarize(session, on_phase=None, context_purpose='post-summary'):
         out = r.get('text')
         if not out: raise RuntimeError('总结为空')
         return out
+    head = '本人笔记（不是会议原话）：\n'+session.get('notes','')+'\n\n会议资料：\n'
+    if len(head) + len(text) <= summary_budget_chars(prompt, session.get('memoryBlock')):
+        SUMMARY_NOTE['mode'] = 'single'
+        return call(head + text, final=True)   # 放得下：终审直接读全文，不经分块摘要（Codex：摘要会丢细节）
+    SUMMARY_NOTE['mode'] = 'chunked'
     chunks = [text[i:i+16000] for i in range(0,len(text),16000)]
     rounds = 0
     while len(chunks) > 1:
