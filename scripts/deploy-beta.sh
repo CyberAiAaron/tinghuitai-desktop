@@ -22,6 +22,8 @@ HEADNOW=$(git rev-parse HEAD); LAST=$(cat "$DATA/state/last-deployed-commit" 2>/
 if [ "$HEADNOW" = "$LAST" ]; then echo "和上次装的是同一个提交，保留原来的回退快照"; else ( cd "$PROG" && node scripts/snapshot-prev.js ) || { echo "回退快照失败，停"; exit 1; }; fi
 cp "$DATA/settings.json" "$DATA/settings.json.before-deploy-$(date +%Y%m%d-%H%M%S)"
 for d in app web scripts tests; do rsync -a --delete --exclude '__pycache__' "$d/" "$PROG/$d/"; done
+# 根目录的版本文件也要带上：/health 的 version 读 program/version.json，不同步就一直报旧版本（0.6.20 实测）
+rsync -a version.json package.json "$PROG/" || { echo "同步 version.json/package.json 失败，停"; exit 1; }
 # 要和这次重启一起做的数据切换（例如换工作台库）放在 THT_PRE_RESTART 指的脚本里：文件已同步、进程还没重启时跑，失败就停在这里不重启
 [ -z "${THT_PRE_RESTART:-}" ] || bash "$THT_PRE_RESTART" || { echo "重启前步骤失败，停：文件已同步到安装目录但没重启，手动 launchctl kickstart -k gui/$(id -u)/$LABEL 即可上新代码"; exit 1; }
 BEFORE=$(health | field pid)
@@ -31,4 +33,7 @@ for i in $(seq 1 30); do sleep 1; NOW=$(health | field pid); [ -n "$NOW" ] && [ 
 DIFF=0; for d in app web scripts; do diff -rq -x '__pycache__' "$d" "$PROG/$d" > /dev/null || DIFF=1; done
 echo "已装 $(git log --oneline -1 | cut -c1-70) · pid $BEFORE → $NOW · 文件比对 $([ $DIFF = 0 ] && echo 一致 || echo 不一致)"
 health | python3 -c "import sys,json; j=json.load(sys.stdin); print({k:j.get(k) for k in ['version','activeSessions','llmChain','llmDegraded','tools']})"
+WANT=$(field version < version.json); GOT=$(health | field version)
+[ -n "$WANT" ] && [ "$GOT" = "$WANT" ] || { echo "失败：/health 报版本 ${GOT:-读不到}，version.json 是 ${WANT:-读不到}。装上去的不是这一版"; exit 1; }
+echo "版本核对一致：$GOT"
 [ $DIFF = 0 ] && echo "$HEADNOW" > "$DATA/state/last-deployed-commit"
