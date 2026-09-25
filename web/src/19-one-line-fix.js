@@ -61,7 +61,7 @@
   async function handoffItem(task, said, itemText){
     try {
       const r = await fetch(relayBase()+'/handoff?token='+encodeURIComponent(cfg.relayToken||''), {method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ title: task.slice(0,200), detail: '会议里的这一条：' + itemText + (said && said !== task ? '\n\nAaron 的原话：' + said : ''), sessionId: cur && cur.id, meetingTitle: (cur && (cur.topicTitle||cur.title)) || '' }),
+        body: JSON.stringify({ title: task.slice(0,200), detail: '会议里的这一条：' + itemText + (said && said !== task ? '\n\n本人原话：' + said : ''), sessionId: cur && cur.id, meetingTitle: (cur && (cur.topicTitle||cur.title)) || '' }),
         signal: AbortSignal.timeout(20000)});
       return await r.json();
     } catch (e) { return { ok:false, error: e.message }; }

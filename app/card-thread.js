@@ -72,7 +72,7 @@ function buildSystem({ card, sess, history, confirmed, slack }) {
   parts.push('【这张卡】' + (card.kind ? '(' + card.kind + ') ' : '') + String(card.text || '').slice(0, 800) + (card.owner ? '　负责人：' + card.owner : '') + (card.how ? '\n建议：' + String(card.how).slice(0, 400) : '') + (card.source ? '\n来源：' + String(card.source).slice(0, 200) : ''));
   const tr = fmtTranscript(sess && sess.transcript);
   if (tr) parts.push('【最近转写】\n' + tr);
-  if (history && history.length) parts.push('【线程历史】\n' + history.slice(-HISTORY_MAX).map(m => (m.role === 'user' ? 'Aaron' : '你') + '：' + String(m.text || '').slice(0, 600)).join('\n'));
+  if (history && history.length) parts.push('【线程历史】\n' + history.slice(-HISTORY_MAX).map(m => (m.role === 'user' ? '用户' : '你') + '：' + String(m.text || '').slice(0, 600)).join('\n'));
   if (confirmed) {
     const names = String(confirmed).split(',').map(a => ACTION_CN[a] || a).join(' / ');
     parts.push('【本轮状态】用户刚确认了你上一轮的提问（' + names + '）：现在就执行这一件，然后报结果。别的写操作仍要先问。');

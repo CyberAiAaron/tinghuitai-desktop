@@ -29,7 +29,7 @@
   const edh=(path,cls,inner,tag)=>'<'+(tag||'span')+' class="'+esc(cls||'')+'" data-path="'+esc(path)+'">'+inner+'</'+(tag||'span')+'>';
   const ed=(path,cls,text,tag)=>edh(path,cls,esc(text),tag);
   function card(x,path){
-    const sid=x.sourceId,who=x.owner||'Aaron Wang';
+    const sid=x.sourceId,who=x.owner||'我';
     const sent=x.sent;
     return '<div class="v2-card" data-sid="'+esc(sid)+'"><div class="txt">'
       +'<div class="to">给 '+edh(path+'.owner','','<b>'+esc(who)+'</b>')+(x.topic&&x.topic!=='默认'?' · '+esc(x.topic):'')+'</div>'
@@ -119,8 +119,8 @@
   // retry：只收这个人「部分没成」的那几张（服务端 retryFailed 只补失败的渠道）；普通发：只收还没发的
   function batchOf(sid,retry){
     const me=cards().find(c=>c.sid===sid);if(!me)return null;
-    const who=me.owner||'Aaron Wang';
-    const items=cards().filter(c=>(c.owner||'Aaron Wang')===who&&(retry?c.node.sent&&c.node.sent.partial:!c.node.sent)&&!busy.has(c.sid));
+    const who=me.owner||'我';
+    const items=cards().filter(c=>(c.owner||'我')===who&&(retry?c.node.sent&&c.node.sent.partial:!c.node.sent)&&!busy.has(c.sid));
     return {person:who,items:items.length?items:[me]};
   }
   function meetingDate(){try{const d=new Date(start||Date.now());const p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}catch(e){return '';}}

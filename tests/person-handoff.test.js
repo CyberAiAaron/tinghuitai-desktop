@@ -199,3 +199,12 @@ test('route：非 POST 一律 405，未鉴权 401，缺 confirmed 被拒', async
   const c = res(); await PH.route(mk('POST'), c, { authed: true, dataDir: require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'ph-')), execImpl: () => { throw new Error('不该执行'); } });
   assert.ok(c.code >= 400 && c.code < 500, '缺 confirmed/字段 → 4xx，未执行外发：' + c.code);
 });
+
+test('负责人是「我」：不查通讯录，直接发给当前登录飞书用户本人（包里不写死任何人）', async () => {
+  const dir = tmp(), calls = [];
+  const r = await PH.run({ dataDir: dir, body: batch({ person: '我' }), execImpl: fakeExec(calls) });
+  assert.equal(r.status, 'sent'); assert.equal(r.assignee.openId, 'ou_self'); assert.equal(r.assignee.name, '你本人'); assert.ok(!r.fallbackToSelf);
+  assert.equal(calls[0][0] + ' ' + calls[0][1], 'contact +get-user');
+  assert.ok(!calls.some(a => a[0] + ' ' + a[1] === 'contact +search-user'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});

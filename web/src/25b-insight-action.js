@@ -34,7 +34,7 @@
   el.ck.addEventListener('click', async e=>{
     const b=e.target.closest('button.live-act'); if(!b||b.disabled) return;
     e.stopPropagation(); e.preventDefault();
-    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only Aaron can run this.':'旁听只能看，动作要 Aaron 本人点。'); return; }
+    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only the owner can run this.':'旁听只能看，动作要本人点。'); return; }
     const it=insightCardOf(b); if(!it||!it.action) return;
     const d=b.dataset.do||it.action.do, text=String(it.action.text||'').trim(); if(!text) return;
     const at=Date.now();
@@ -50,7 +50,7 @@
     if(b.classList.contains('insight-cancel')){ e.stopPropagation(); const it=insightCardOf(b); if(!it) return; try{ await insightPost({id:cur.id,cardId:it.id,do:'cancel'}); }catch(err){} return; }
     if(!b.classList.contains('insight-act')) return;
     e.stopPropagation();
-    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only Aaron can run this.':'旁听只能看，动作要 Aaron 本人点。'); return; }
+    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only the owner can run this.':'旁听只能看，动作要本人点。'); return; }
     const it=insightCardOf(b); if(!it) return;
     const d=b.dataset.do||''; let args={};
     // offer 态的「照会上说的新建」：沿用上次填的负责人 / 截止（服务端存在 actionState.args），只加 createIfMissing，不再弹两句

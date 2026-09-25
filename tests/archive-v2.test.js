@@ -200,3 +200,10 @@ test('会后页 v2：说话人编号不上界面——有名换名、没名写�
   assert.deepEqual(view.minutes.todos, [{ text: '未认人 准备 CDCP 材料', owner: '' }, { text: 'Cary Luo 跟进', owner: 'Cary Luo' }]);
   assert.equal(view.next.text, '未认人 准备 CDCP 材料');
 });
+
+test('没有个人 owners.json（试用版新用户）：判不出的负责人显示「我」，不出现任何写死的名字', () => {
+  const { execFileSync } = require('child_process');
+  const out = execFileSync(process.execPath, ['-e', "const o=require('./app/owners');process.stdout.write(JSON.stringify(o.classify('定价怎么定')))"], { cwd: root, env: { PATH: process.env.PATH, THT_OWNERS_FILE: '/nonexistent/owners.json' } }).toString();
+  assert.deepEqual(JSON.parse(out), { topic: '默认', owner: '我' });
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'web/archive-v2.js'), 'utf8'), /Aaron Wang/);
+});

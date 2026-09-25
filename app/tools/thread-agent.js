@@ -48,7 +48,7 @@ function readToolsFor({ mcp = false, slack = true } = {}) {
 }
 
 const CHEAT_SHEET = [
-  '工具只有 Bash 里的 lark-cli（已用 Aaron 本人身份登录，都加 --as user，输出是 JSON）。用法速查：',
+  '工具只有 Bash 里的 lark-cli（已用当前用户本人身份登录，都加 --as user，输出是 JSON）。用法速查：',
   '  找人 open_id：lark-cli contact +search-user --query "Cary Luo" --as user',
   '  看忙闲：lark-cli calendar +freebusy --start 2026-09-24 --end 2026-09-24 --user-id ou_a,ou_b --as user　　看日程：lark-cli calendar +agenda --start <日期> --end <日期> --as user',
   '  建日程：lark-cli calendar +create --summary "…" --start "2026-09-24T14:00+08:00" --end "2026-09-24T15:00+08:00" --attendee-ids ou_a,ou_b --as user',

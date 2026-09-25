@@ -67,7 +67,7 @@ function sentState(dataDir, meetingId, sourceId) { const e = readIndex(dataDir, 
 async function ensureDoc(dataDir, cli) {
   const have = readDoc(dataDir);
   if (have) return { ok: true, token: have.token, url: have.url || '', created: false };
-  const xml = '<p>Aaron 在听会台回看页上点「发」后自动追加的行动清单：每行一个人、这场会交给他的全部事项和任务链接。被 @ 到的人看这一行就够。</p>';
+  const xml = '<p>在听会台回看页上点「发」后自动追加的行动清单：每行一个人、这场会交给他的全部事项和任务链接。被 @ 到的人看这一行就够。</p>';
   const r = await cli.docCreate({ title: DOC_TITLE, content: xml });
   if (!r.ok) return r;
   writeDoc(dataDir, { token: r.token, url: r.url, title: DOC_TITLE });
@@ -104,8 +104,13 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
 
   // 0. 找人。找不到不猜（发错人是真外发），任务建给当前登录用户本人并注明代办对象；私聊和 @ 都退给本人。
   let openId = '', name = input.person;
+  const isSelf = /^(我|本人|me|myself)$/i.test(String(input.person || '').trim());
   if (isOpenId(input.person)) openId = input.person;
-  else {
+  else if (isSelf) {
+    try { openId = String((await cli.selfOpenId()) || ''); } catch (e) { openId = ''; }
+    if (!openId) { const e = Error('拿不到当前登录的飞书用户，先在设置里登录飞书再发'); e.code = 422; e.results = out; e.definite = true; throw e; }
+    name = '你本人';
+  } else {
     try {
       const r = await cli.resolveIds([input.person]);
       if (r.ok && r.ids.length === 1) { openId = r.ids[0]; name = (r.users[0] && r.users[0].name) || input.person; }

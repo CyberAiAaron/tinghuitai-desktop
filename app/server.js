@@ -2012,8 +2012,8 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
       if (req.method === 'GET') { const t = cardThread.threadsOf(sid); return t ? reply(200, { ok: true, threads: t, ...cardThread.status() }) : reply(404, { ok: false, error: '找不到这场会' }); }
       if (req.method !== 'POST' || !cardId) { res.writeHead(405); return res.end('method'); }
       // 写（起 agent、可能替 Aaron 建日历 / 发消息）只认本机或主口令：观众（role=view）和手机副口令（PHONE_TOKENS）只能读（Codex 94dd3aa4）
-      if (u.searchParams.get('role') === 'view') return reply(403, { ok: false, error: '旁听角色只能看，不能替 Aaron 发起操作' });
-      if (!(isLocalReq(req) || tokenOk({ RELAY_TOKEN: env0.RELAY_TOKEN }, u.searchParams.get('token')))) return reply(403, { ok: false, error: '这个口令只能看，不能替 Aaron 发起操作' });
+      if (u.searchParams.get('role') === 'view') return reply(403, { ok: false, error: '旁听角色只能看，不能替本人发起操作' });
+      if (!(isLocalReq(req) || tokenOk({ RELAY_TOKEN: env0.RELAY_TOKEN }, u.searchParams.get('token')))) return reply(403, { ok: false, error: '这个口令只能看，不能替本人发起操作' });
       const parts = []; let size = 0;
       for await (const c of req) { parts.push(c); size += c.length; if (size > 16000) return reply(413, { ok: false, error: '请求太长' }); }
       let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
@@ -2033,8 +2033,8 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     if (!authed) { res.writeHead(401); return res.end('unauthorized'); }
     const reply = (code, j) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(j)); };
     if (req.method !== 'POST') { res.writeHead(405); return res.end('method'); }
-    if (u.searchParams.get('role') === 'view') return reply(403, { ok: false, error: '旁听角色只能看，不能替 Aaron 发起操作' });
-    if (!(isLocalReq(req) || tokenOk({ RELAY_TOKEN: env0.RELAY_TOKEN }, u.searchParams.get('token')))) return reply(403, { ok: false, error: '这个口令只能看，不能替 Aaron 发起操作' });
+    if (u.searchParams.get('role') === 'view') return reply(403, { ok: false, error: '旁听角色只能看，不能替本人发起操作' });
+    if (!(isLocalReq(req) || tokenOk({ RELAY_TOKEN: env0.RELAY_TOKEN }, u.searchParams.get('token')))) return reply(403, { ok: false, error: '这个口令只能看，不能替本人发起操作' });
     const parts = []; let size = 0;
     for await (const c of req) { parts.push(c); size += c.length; if (size > 8000) return reply(413, { ok: false, error: '请求太长' }); }
     let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
@@ -2188,7 +2188,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const toLive = path.join(mailbox, 'to_livemate'), toArk = path.join(mailbox, 'to_ark');
     const direct = fs.existsSync(toLive);
     const target = direct ? toLive : toArk;
-    if (!fs.existsSync(target)) return reply(200, { ok: false, error: '这台机器没有接主 Claude 的信箱，这个动作只在 Aaron 的机器上可用' });
+    if (!fs.existsSync(target)) return reply(200, { ok: false, error: '这台机器没有接主 Claude 的信箱，这个动作只在接了主 Claude 信箱的机器上可用' });
     const parts = []; let size = 0;
     for await (const c of req) { parts.push(c); size += c.length; if (size > 40000) return reply(413, { ok: false, error: '请求太长' }); }
     let j; try { j = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); } catch (e) { return reply(400, { ok: false, error: '格式不对' }); }
