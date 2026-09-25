@@ -34,12 +34,12 @@ function parse(raw) {
   return j && Array.isArray(j.results) ? j.results : [];
 }
 
-// 没来源 → 核不了；来源只收 http(s) url，日期缺就留空但仍算来源（有 url 才算）。按 claims 顺序对回去，模型漏掉的补「核不了」。
+// 没来源 → 核不了；来源只收 http(s) url，url 和日期（YYYY-MM 起）都要有才算来源（Codex 审 09-25）。按 claims 顺序对回去，模型漏掉的补「核不了」。
 function normalize(results, claims) {
   const clip = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
   return claims.map((claim, i) => {
     const r = results.find(x => x && clip(x.claim, 200) === clip(claim, 200)) || results[i] || {};
-    const sources = (Array.isArray(r.sources) ? r.sources : []).filter(x => x && /^https?:\/\//.test(String(x.url || '')))
+    const sources = (Array.isArray(r.sources) ? r.sources : []).filter(x => x && /^https?:\/\//.test(String(x.url || '')) && /^\d{4}-\d{2}/.test(String(x.date || '')))
       .slice(0, 3).map(x => ({ url: clip(x.url, 300), date: clip(x.date, 20), title: clip(x.title, 80) }));
     let verdict = VERDICTS.includes(r.verdict) ? r.verdict : '核不了';
     if (!sources.length) verdict = '核不了';

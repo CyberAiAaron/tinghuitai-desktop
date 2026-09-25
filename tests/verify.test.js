@@ -50,3 +50,8 @@ test('会中接线：think / 分诊出卡后排进 queueVerify；会后管线调
   const py = fs.readFileSync(path.join(__dirname, '../app/meeting-pipeline.py'), 'utf8');
   assert.match(py, /CODE_ROOT \/ 'verify\.js'/); assert.match(py, /web_verify_checked\(extra\['review'\]/);
 });
+
+test('normalize：来源缺日期不算来源，结论降为核不了', () => {
+  const out = v.normalize([{ claim: 'A', verdict: '已核实', sources: [{ url: 'https://x.com/a', date: '' }] }], ['A']);
+  assert.equal(out[0].verdict, '核不了'); assert.equal(out[0].sources.length, 0);
+});

@@ -17,7 +17,8 @@ test('已落 pending 的场次 id 不能被重连复活（4409）；新 id 照�
     const open = async sid => { const ws = new WS('ws://127.0.0.1:' + port + '/?token=' + TOKEN); await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
       return new Promise(res => { ws.once('close', code => res({ code })); ws.on('message', m => { const j = JSON.parse(m.toString()); if (j.type === 'snapshot') res({ snap: j, ws }); }); ws.send(JSON.stringify({ type: 'start', sessionId: sid, rate: 16000, source: 'mac' })); }); };
     const a = await open('old1'); assert.equal(a.code, 4409, '收过尾的旧 id 必须拒');
-    const b = await open('new1'); assert.ok(b.snap && b.snap.session && b.snap.session.id === 'new1'); b.ws.close();
+    const b = await open('new1'); assert.ok(b.snap && b.snap.session && b.snap.session.id === 'new1'); b.ws.close(); await pause(300);
+    const c = await open('new1'); assert.ok(c.snap && c.snap.session && c.snap.session.id === 'new1', '未落 pending 的会中场次断线重连必须放行'); c.ws.close();
   } finally { child.kill('SIGKILL'); }
 });
 test('收尾时归档入队抛错不再让 saved=false', () => {
