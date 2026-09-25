@@ -358,12 +358,25 @@ def post_model_name():
         return str(m.get('post') or m.get('live') or '')
     return str(cfg('LLM_MODEL_POST', '') or cfg('LLM_MODEL', '') or '')
 
+def post_model_names():
+    chain = cfg('LLM_CHAIN', None)
+    if isinstance(chain, list) and chain:
+        out = []
+        for p in chain:
+            m = (p or {}).get('models') or {}
+            out += [str(x) for x in (m.get('post'), m.get('postFallback')) if x] or [str((p or {}).get('model') or m.get('live') or '')]
+        return out or ['']
+    return [post_model_name()]
+
 def model_context_tokens(model=None):
     try:
         n = int(cfg('LLM_CONTEXT_TOKENS', 0) or 0)
         if n > 0: return n
     except Exception: pass
-    m = (model if model is not None else post_model_name()).lower()
+    if model is None:
+        # 链上任何一家都可能真正接手（额度 / 降级），按最小的那家算，宁可多分一块（Codex 审 0621 r9）
+        return min(model_context_tokens(n) for n in post_model_names())
+    m = str(model).lower()
     if re.search(r'opus|fable|sonnet|haiku', m): return 200000
     if re.search(r'gpt-5|gpt-4\.1|o3|o4', m): return 128000
     if re.search(r'qwen|kimi|moonshot', m): return 128000

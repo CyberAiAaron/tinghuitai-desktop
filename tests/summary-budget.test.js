@@ -34,3 +34,7 @@ test('LLM_CONTEXT_TOKENS 覆盖模型名', () => {
   const r = py(`print(json.dumps({'n':mp.model_context_tokens()}))`, { LLM_MODEL_POST: 'opus', LLM_CONTEXT_TOKENS: 50000 });
   assert.equal(r.n, 50000);
 });
+test('链上有小上下文的备用家时，按最小的那家算预算', () => {
+  const r = require('child_process').spawnSync('python3', ['-c', `import sys,json;sys.path.insert(0,'app');import importlib.util as u;s=u.spec_from_file_location('mp','app/meeting-pipeline.py');mp=u.module_from_spec(s);s.loader.exec_module(mp);mp.cfg=lambda k,d=None:[{'type':'cli','kind':'claude','models':{'post':'fable','postFallback':'opus'}},{'type':'openai','model':'vendor-x'}] if k=='LLM_CHAIN' else d;print(mp.model_context_tokens())`], { cwd: require('path').join(__dirname, '..'), encoding: 'utf8', env: { ...process.env, THT_DATA_DIR: require('os').tmpdir() } });
+  require('node:assert/strict').equal(r.stdout.trim(), '32000', r.stderr);
+});
