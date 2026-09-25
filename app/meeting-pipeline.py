@@ -728,7 +728,10 @@ def web_verify_checked(review, session_id=''):
     # checked 就是会后点评自己挑出的「待核查」清单（点评 prompt 只把需要核实的事实放进 checked），不再过 shouldVerify；web_verify 里仍截 5 条。
     checked = (review or {}).get('checked') or []
     res = web_verify([c.get('claim') for c in checked], session_id)
-    if not res: return
+    if not res:
+        # 联网没跑通（超时 / 没有 claude / 解析失败）：不留点评模型凭常识给的结论，一律核不了（Codex 审 0621 r10）
+        for c in checked[:5]: c.update(result='核不了', note='联网核查没跑通，未核实', sources=[], web=False)
+        return
     for c, v in zip(checked, res):
         c.update(result=v.get('verdict') if v.get('verdict') in ('已核实', '矛盾', '核不了') else '核不了',
                  note=_plain(v.get('note')) or c.get('note', ''), sources=v.get('sources') or [], web=True)

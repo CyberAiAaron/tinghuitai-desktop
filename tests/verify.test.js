@@ -61,3 +61,7 @@ test('联网核查只走 claude 命令行：链上只有接口类 / codex 时不
   const r = await llm.ask({ LLM_CHAIN: [{ type: 'openai', label: 'ds', baseUrl: 'http://127.0.0.1:9', model: 'x' }] }, { kind: 'verify', user: 'u', tools: 'web', fetchImpl: async () => { throw new Error('不该被调用'); } });
   assert.equal(r.text, null); assert.equal(r.errorCode, 'no_provider');
 });
+test('会后联网核查没跑通：checked 一律改成核不了，不留常识结论', () => {
+  const r = require('child_process').spawnSync('python3', ['-c', `import sys,json,importlib.util as u;s=u.spec_from_file_location('mp','app/meeting-pipeline.py');mp=u.module_from_spec(s);s.loader.exec_module(mp);mp.web_verify=lambda *a,**k:None;rv={'checked':[{'claim':'A','result':'已核实','note':'常识'}]};mp.web_verify_checked(rv);print(json.dumps(rv['checked'][0],ensure_ascii=False))`], { cwd: require('path').join(__dirname, '..'), encoding: 'utf8', env: { ...process.env, THT_DATA_DIR: require('os').tmpdir() } });
+  const j = JSON.parse(r.stdout.trim()); assert.equal(j.result, '核不了'); assert.deepEqual(j.sources, []);
+});
