@@ -82,7 +82,7 @@ test('Gate：间隔内多次命中合并成一次；分诊在跑时并入下一�
   g.deferWhileBusy(); assert.equal(g.takeDeferred(), true); assert.equal(g.takeDeferred(), false);
   assert.deepEqual([g.stats.calls, g.stats.hits, g.stats.failures, g.stats.triggers], [3, 3, 0, 2]);
   g.close(); clock += 1000; g.requestTrigger(); assert.equal(fired, 2, 'close 后不再触发');
-  const off = new G.Gate({ env: { ...ENV, JEV_GATE: 'off' }, fetchImpl: f, onTrigger: () => { throw Error('off 不该触发'); } });
+  const off = new G.Gate({ env: { ...ENV, JEV_GATE: 'off', LOCAL_GATE: 'off' }, fetchImpl: f, onTrigger: () => { throw Error('off 不该触发'); } });
   const before = calls; assert.equal(await off.onFinal(row(9, '决定了'), 0, []), null); assert.equal(calls, before, 'off 一次 fetch 都没有');
   assert.equal(off.enabled, false);
 });
@@ -112,7 +112,7 @@ function fakeJev() {
 }
 async function startServer({ gate, jevUrl, cli, dir, port, extra = {} }) {
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ RELAY_TOKEN: TOKEN, ARCHIVE_TARGET: 'local', MEMORY_PROJECTION_DIR: path.join(dir, 'mem'),
-    JEV_API_KEY: 'test-key-' + 'z'.repeat(16), JEV_GATE: gate, JEV_MIN_GAP_MS: '1500', JEV_THRESHOLD: '0.5',
+    JEV_API_KEY: 'test-key-' + 'z'.repeat(16), JEV_GATE: gate, ...(gate === 'off' ? { LOCAL_GATE: 'off' } : {}), JEV_MIN_GAP_MS: '1500', JEV_THRESHOLD: '0.5',
     LLM_CHAIN: [{ type: 'cli', kind: 'custom', name: '快家', bin: cli.bin, stdin: 'prompt' }], ...extra }));
   const child = spawn(process.execPath, [path.join(root, 'app/server.js')],
     { env: { ...process.env, THT_DATA_DIR: dir, THT_PORT: String(port), THT_NO_OPEN: '1', THT_TEST: '1', THT_LARK_CLI: '/usr/bin/false', THT_JEV_URL: jevUrl }, stdio: 'ignore' });

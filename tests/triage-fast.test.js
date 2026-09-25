@@ -93,7 +93,7 @@ test('⑤ PackDelta：首次 full，同 hash → 一行占位 + same，hash 变 
 
 test('⑥ 定时器：gate on 120 s 兜底、off 25 s；server.js 用它', () => {
   assert.equal(T.triageInterval(true), 120000); assert.equal(T.triageInterval(false), 25000);
-  assert.match(server, /setInterval\(\(\) => this\.runTriage\(\), triageFast\.triageInterval\(this\.jev\.enabled\)\)/);
+  assert.match(server, /setInterval\(\(\) => this\.runTriage\(\), triageFast\.triageInterval\(this\.jev\.active\)\)/);
   assert.doesNotMatch(server, /this\.jev\.enabled \? 60000 : 25000/, '旧的 60 s 三元该没了');
   // 兜底轮的提示词：门卫开着且不是门卫触发 → sweep
   assert.match(server, /liveInsight\.systemPrompt\(\{ enUI, sweep: gateOn && !gate \}\)/, '09-24 起 outputRules 并进 live-insight.systemPrompt，sweep 语义不变');

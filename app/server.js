@@ -304,9 +304,10 @@ class Session {
     this.rebuildNameTable();
     if (!(this.calendar && this.calendar.matchedAt)) setTimeout(() => { this.matchCalendar().catch(e => log('日历匹配失败（忽略） ' + e.message)); }, CALENDAR_MATCH_DELAY_MS);
     // 逐句门卫（app/jev-gate.js）：JEV_GATE=on 且有密钥时，命中立刻分诊、定时器退为 120 秒兜底只补漏（仍要 ≥60 新字）；off 时 25 秒全量，与门卫出现前一致。
-    this.jev = new jevGate.Gate({ env, dataDir: DATA, sessionId: this.id, log, onTrigger: () => this.runTriage({ gate: true }) });
+    this.jev = new jevGate.Gate({ env, dataDir: DATA, sessionId: this.id, log, onTrigger: () => this.runTriage({ gate: true }),
+      names: () => [...Object.values(require('./owners').table()), ...Object.values(this.names || {})].map(x => String(x || '').trim()).filter(x => x && x !== '我') });
     if (this.jev.requested && !this.jev.available) log('JEV_GATE=on 但没有 JEV_API_KEY，门卫不启用 ' + this.id);
-    this.triageTimer = setInterval(() => this.runTriage(), triageFast.triageInterval(this.jev.enabled));
+    this.triageTimer = setInterval(() => this.runTriage(), triageFast.triageInterval(this.jev.active));
     this.lastThinkIndex = 0; this.charsSinceThink = 0; this.thinking = false;
     if (String(env.THINK_PASS || 'on') !== 'off') this.thinkTimer = setInterval(() => this.runThink(), thinkPass.THINK_INTERVAL_MS);
     this.packDelta = new triageFast.PackDelta({ enabled: triageFast.PackDelta.enabledIn(env) });   // 批 5：TRIAGE_CONTEXT_DELTA='1' 才占位，默认每轮全量
@@ -882,7 +883,7 @@ class Session {
 
   // 门卫：在 push 之前调（prev = 当前 transcript 末两句，idx = 这句将要占的下标）。异步，永不阻塞转写。
   gateFinal(row) {
-    if (!this.jev || !this.jev.enabled) return;
+    if (!this.jev || !this.jev.active) return;
     const idx = this.transcript.length, prev = this.transcript.slice(-2).map(x => x.text);
     this.jev.onFinal(row, idx, prev).then(r => { if (!r) return; JEV_TOTALS.calls++; if (r.hit) JEV_TOTALS.hits++; if (r.error) JEV_TOTALS.failures++; }).catch(e => log('jev 异常 ' + (e && e.message)));
   }
@@ -907,7 +908,7 @@ class Session {
       const epochAtStart = this.editEpoch || 0;
       // 会中唯一一种卡（app/live-insight.js，Aaron 2026-09-24）：每次调用最多 1 条洞察 + 0–2 行要点日志；复述不再是卡。
       // 进模型的行 = 门卫命中句 ±5（app/triage-fast.js gateWindow）∪ 最近 60 秒 ∪ 没分诊过的增量。
-      const gateOn = !!(this.jev && this.jev.enabled);
+      const gateOn = !!(this.jev && this.jev.active);
       const gateIdx = (gate && gateOn)
         ? triageFast.gateWindow({ marks: this.jev.marks, lastTriageIndex: this.lastTriageIndex, endIndex })
         : [];

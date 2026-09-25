@@ -106,7 +106,7 @@ function stage(tag) {
 }
 function settingsFor(h, chain) {
   return {
-    RELAY_TOKEN: 't'.repeat(32), ARCHIVE_TARGET: 'local', LLM_CHAIN: chain,
+    RELAY_TOKEN: 't'.repeat(32), ARCHIVE_TARGET: 'local', LLM_CHAIN: chain, LOCAL_GATE: 'off',   // 金样锁的是 25 秒全量那条 prompt；本机规则门卫另有 tests/local-gate.test.js
     PROJECT_STATE_FILE: path.join(h.dir, 'mem', 'project-state.md'),
     PROJECT_CONTEXT_DIR: h.ctx, PROJECT_CONTEXT_FILES: ['kb_reorg/*.md', 'CLAUDE.md'],
     PROJECT_FOCUS_FILES: [path.join(h.dir, 'focus.md')],
