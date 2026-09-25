@@ -55,3 +55,9 @@ test('normalize：来源缺日期不算来源，结论降为核不了', () => {
   const out = v.normalize([{ claim: 'A', verdict: '已核实', sources: [{ url: 'https://x.com/a', date: '' }] }], ['A']);
   assert.equal(out[0].verdict, '核不了'); assert.equal(out[0].sources.length, 0);
 });
+
+test('联网核查只走 claude 命令行：链上只有接口类 / codex 时不调用，返回 no_provider', async () => {
+  const llm = require('../app/llm');
+  const r = await llm.ask({ LLM_CHAIN: [{ type: 'openai', label: 'ds', baseUrl: 'http://127.0.0.1:9', model: 'x' }] }, { kind: 'verify', user: 'u', tools: 'web', fetchImpl: async () => { throw new Error('不该被调用'); } });
+  assert.equal(r.text, null); assert.equal(r.errorCode, 'no_provider');
+});

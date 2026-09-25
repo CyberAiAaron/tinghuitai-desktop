@@ -136,7 +136,8 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
   noFallback = false, skip = 0, timeoutMs = 0, temperature, json = false, thinking, tools } = {}) {   // tools === false：命令行一个工具都不给（只有 claude 命令行认；接口那条路本来就没工具）
   // THINK.md 先过（app/think.js）：所有 kind 都拼，且只拼一次（Python 那条路已经拼过就原样走）。
   system = require('./think').prefix(system, dataDir);
-  const all = chainOf(env);
+  // tools === 'web'（联网核查）只给 claude 命令行：别家没有 WebSearch，让它答只会编来源（Codex 审 0621 r8）。没有 claude 就不答，调用方记「核不了」。
+  const all = tools === 'web' ? chainOf(env).filter(p => p.type === 'cli' && p.kind === 'claude') : chainOf(env);
   if (!all.length) return { text: null, errorCode: 'no_provider', degraded: false, truncated: false, truncatedChars: 0, attempts: [] };
   const skipped = noFallback ? 0 : Math.max(0, Number(skip) || 0);
   const chain = noFallback ? all.slice(0, 1) : all.slice(skipped), attempts = [];
