@@ -657,6 +657,31 @@ def make_review(session, brief, attendees=None, timeout=600):
         'checked': [{'claim': _plain(c.get('claim')), 'result': c.get('result') if c.get('result') in ('已核实', '矛盾', '核不了') else '核不了', 'note': _plain(c.get('note'))} for c in (rv.get('checked') or [])[:8] if _plain(c.get('claim'))],
         'owners': [{'todo': o.get('todo'), 'owner': _plain(o.get('owner'))} for o in (rv.get('owners') or []) if isinstance(o.get('todo'), int) and _plain(o.get('owner'))]}}
 
+def web_verify(claims, session_id='', timeout=400):
+    """M6：会后待核查走会中同一条路（node app/verify.js → app/llm.js，联网工具只在这一档放开）。
+    返回与 claims 等长的 [{'claim','verdict','note','sources':[{'url','date','title'}]}]；跑不通返回 None，调用方保留原结果。"""
+    claims = [c for c in claims if c][:5]
+    if not claims: return None
+    node = node_bin()
+    if not node: return None
+    try:
+        p = subprocess.run([node, str(CODE_ROOT / 'verify.js')], input=json.dumps({'claims': claims, 'sessionId': session_id}, ensure_ascii=False),
+                           text=True, capture_output=True, timeout=timeout, env={**os.environ, 'THT_DATA_DIR': str(ROOT)})
+        out = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
+    except Exception as e:
+        elog('联网核查失败：%r' % (e,)); return None
+    if not out.get('ok'): elog('联网核查没跑通：' + str(out.get('error') or '')[:200]); return None
+    return out.get('results') or None
+
+def web_verify_checked(review, session_id=''):
+    """把点评里 checked 的结论换成联网核查的结果（带来源 url + 日期；没来源 = 核不了）。失败不动原结果。"""
+    checked = (review or {}).get('checked') or []
+    res = web_verify([c.get('claim') for c in checked], session_id)
+    if not res: return
+    for c, v in zip(checked, res):
+        c.update(result=v.get('verdict') if v.get('verdict') in ('已核实', '矛盾', '核不了') else '核不了',
+                 note=_plain(v.get('note')) or c.get('note', ''), sources=v.get('sources') or [], web=True)
+
 def _seg_ids(session):
     """逐字稿每行的片段编号：会中会话叫 id，归档后的 enhanced 叫 seg。"""
     return [str(r.get('seg') or r.get('id') or '') for r in (session.get('transcript') or [])]
@@ -896,6 +921,8 @@ def build_brief(session, attendees=None, on_phase=None, quick=False):
         for o in extra['review'].pop('owners', []):
             if 0 <= o['todo'] < len(brief['overview']['todos']) and not brief['overview']['todos'][o['todo']]['owner']:
                 brief['overview']['todos'][o['todo']].update(owner=o['owner'], ownerSource='suggested')
+        if on_phase: on_phase('整理回看页 · 联网核查')
+        web_verify_checked(extra['review'], session.get('id', ''))
     except Exception as e:
         elog('点评这一步失败：%r' % (e,))
         brief['questions'] = []; brief['review'] = None; brief['reviewWarning'] = str(e)[:200]

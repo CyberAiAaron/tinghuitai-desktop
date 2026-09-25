@@ -57,7 +57,7 @@ function normalize(p, env) {
 function legacyChain(env) {
   const chain = [];
   if (env.LLM_PROVIDER === 'claude' || env.LLM_PROVIDER === 'codex')
-    chain.push({ type: 'cli', kind: env.LLM_PROVIDER, models: env.LLM_PROVIDER === 'claude' ? { live: env.LLM_MODEL_LIVE || 'sonnet', post: env.LLM_MODEL_POST || 'opus', think: env.LLM_MODEL_THINK || '' } : {} });
+    chain.push({ type: 'cli', kind: env.LLM_PROVIDER, models: env.LLM_PROVIDER === 'claude' ? { live: env.LLM_MODEL_LIVE || 'sonnet', post: env.LLM_MODEL_POST || 'opus', think: env.LLM_MODEL_THINK || '', postFallback: env.LLM_MODEL_POST_FALLBACK || '' } : {} });
   if (env.DEEPSEEK_API_KEY)
     chain.push({ type: 'openai', name: /deepseek/i.test(env.LLM_BASE_URL || '') ? 'DeepSeek' : (env.LLM_MODEL || 'AI'), baseUrl: env.LLM_BASE_URL, keyFrom: 'DEEPSEEK_API_KEY', models: { live: env.LLM_MODEL_QUICK || env.LLM_MODEL, post: env.LLM_MODEL } });
   return chain;
@@ -70,7 +70,8 @@ function chainOf(env) {
 function pickModel(p, kind) {
   const m = p.models || {};
   if (kind === 'live' || kind === 'quick' || kind === 'triage') return m[kind] || m.live || m.post || '';
-  if (kind === 'think') return m.think || m.post || m.live || '';   // 思考档（app/think-pass.js）：settings LLM_MODEL_THINK，没配退回慢思考档
+  if (kind === 'think') return m.think || m.post || m.live || '';
+  if (kind === 'verify') return m.verify || m.think || m.post || m.live || '';   // 联网核查（M6，app/verify.js）：默认同思考档   // 思考档（app/think-pass.js）：settings LLM_MODEL_THINK，没配退回慢思考档
   if (kind === 'insight-deep') return m['insight-deep'] || m.think || m.post || m.live || '';   // 会后深度洞察（Aaron 09-24 批准每场用最强档跑 5–10 分钟）：同思考档那个最强模型，没配退回慢思考档
   return m.post || m.live || '';
 }
@@ -141,18 +142,20 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
   const chain = noFallback ? all.slice(0, 1) : all.slice(skipped), attempts = [];
   if (!chain.length) return { text: null, errorCode: 'chain_exhausted', degraded: false, truncated: false, truncatedChars: 0, attempts, skipped };
   for (const p of chain) {
-    let model = pickModel(p, kind);
+    let model = pickModel(p, kind); const t0 = Date.now();
     let r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools, purpose: kind });
     // 思考档点名的强模型没额度 / 没权限（09-25 试用实测：Fable 额度用完，会中思考连败 7 次）→ 同一家退回慢思考档再试一次
-    const fallbackModel = p.models && (p.models.post || p.models.live);
-    if (!r.ok && (kind === 'think' || kind === 'insight-deep') && fallbackModel && model && model !== fallbackModel) {
-      log(p.label + ' 思考档 ' + model + ' 不可用（' + r.errorCode + '），改用 ' + fallbackModel);
+    // M6（09-25 Aaron 定）：慢思考档默认 Fable 5.1，额度用完退回 postFallback（默认 Opus 5.5）；思考 / 核查档同样优先退到 postFallback。
+    const fm = p.models || {};
+    const fallbackModel = kind === 'post' ? fm.postFallback : (fm.postFallback || fm.post || fm.live);
+    if (!r.ok && (kind === 'post' || kind === 'think' || kind === 'insight-deep' || kind === 'verify') && fallbackModel && model && model !== fallbackModel) {
+      log(p.label + ' ' + kind + ' 档 ' + model + ' 不可用（' + r.errorCode + '），改用 ' + fallbackModel);
       model = fallbackModel;
       r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools, purpose: kind });
     }
     // requestedModel = 配置里点名要的那个；model = 接口实际回的那个。两者会不一样
     // （09-22 实测：要 deepseek-chat，回 deepseek-flash），账本两个都记才查得清「那天跑的到底是谁」。
-    if (r.ok) return { text: r.text, provider: p.label, usageProvider: p.usageProvider, model: r.model || model, requestedModel: model || '', usage: r.usage,
+    if (r.ok) return { text: r.text, provider: p.label, usageProvider: p.usageProvider, model: r.model || model, requestedModel: model || '', usage: r.usage, ms: Date.now() - t0,
       truncated: !!r.truncated, truncatedChars: Number(r.truncatedChars) || 0,
       degraded: attempts.length > 0 || skipped > 0, degradedReason: attempts.length ? attempts[0].errorCode : (skipped > 0 ? 'skipped' : ''), attempts, skipped };
     attempts.push({ provider: p.label, errorCode: r.errorCode });
@@ -185,6 +188,7 @@ function noteUsage(dataDir, r, { system = '', user = '', tier = 'post', sessionI
     in: u ? u.in : Math.ceil((String(system).length + String(user).length) / 2), out: u ? u.out : Math.ceil(r.text.length / 2),
     est: !u, tier, purpose, ...ctx,
     ...(u && Number.isFinite(u.thinking) ? { thinking: u.thinking } : {}), ...(u && u.turns > 0 ? { turns: u.turns } : {}),
+    ...(Number.isFinite(r.ms) ? { ms: r.ms } : {}),   // 单次调用耗时（毫秒，含降级重试），M6 核查要看
     ...(r.truncated ? { truncated: true, truncatedChars: Number(r.truncatedChars) || 0 } : { truncated: false }) });
 }
 

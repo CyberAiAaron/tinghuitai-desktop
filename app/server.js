@@ -142,6 +142,7 @@ function viewGrounded(f, hay) { const ev = viewNorm(f && f.evidence); if (ev.len
 // 洞察（0.6.14）的服务端门槛在 app/insight-filter.js：claim ≤30 字、source 必须命中本场背景 / 名单 / 日期 / 决策编号 / 时间戳、why 必须说清省了哪一步。
 const { normalizeInsight } = require('./insight-filter');
 const thinkPass = require('./think-pass');
+const verifyPass = require('./verify');
 const memoryDiff = require('./memory-diff');   // Project Brain 差异（会后对照 project-state.md，Aaron 确认后写回）   // 思考档（0.6.18）：强模型定时想目的 / 争点 / 最佳方案，推到看法栏
 const feedbackWeight = require('./feedback-weight');   // 批 4（F5）：反馈按 type 计数，useless 多的那一类少给
 const sessionStats = require('./session-stats');       // 批 4（F5）：每场结束的四个数（Jev / Sonnet 调用、洞察、采纳），从 usage.jsonl 与场次算
@@ -707,13 +708,38 @@ class Session {
         if ((this.editEpoch || 0) !== epochAtStart) { log('think 结果作废：期间改过逐字稿 ' + this.id); return; }   // Codex 复审：改过逐字稿的旧结果不上屏
         const at = Math.round((Date.now() - this.startTs) / 1000);
         const items = thinkPass.normalize(thinkPass.parse(raw), existing).map(x => ({ ...x, at, id: 'i' + this.idTag + (this.itemSeq = (this.itemSeq || 0) + 1), sourceRefs: [] }));
-        if (items.length) { this.factchecks.push(...items); this.broadcast({ type: 'feedback', highlights: [], todos: [], factchecks: items }); added += items.length; }
+        if (items.length) { this.factchecks.push(...items); this.broadcast({ type: 'feedback', highlights: [], todos: [], factchecks: items }); added += items.length; this.queueVerify(items); }
       }
       if ((this.editEpoch || 0) === epochAtStart) { this.lastThinkIndex = endIndex; this.charsSinceThink = Math.max(0, this.charsSinceThink - charsAtStart); }   // Codex 四审：请求期间新到的字不清零
       if (added) this.checkpoint();
       log(`think${full ? '(full)' : ''} ${Date.now() - t0}ms v=${added} ${this.id}`);
     } catch (e) { log('think exc ' + e.message); }
     finally { this.thinking = false; }   // Codex 三审：作废 / 已结束的 return 路径也要放锁，否则这场后面思考档全停
+  }
+
+  // 联网核查（M6，app/verify.js）：只收 shouldVerify 认的条目（存疑 / 递答案 / conflict / 标了待核查），排队串行跑，一场最多 MAX_PER_MEETING 条。
+  // 结果挂在条目的 verify 字段上（verdict / note / sources[{url,date}] / ms / model），广播 type:'verify'，不另起一类卡。
+  queueVerify(items) {
+    if (String(this.env.VERIFY_LIVE || 'on') === 'off') return;
+    const todo = (items || []).filter(verifyPass.shouldVerify);
+    if (!todo.length) return;
+    this.verifyCount = this.verifyCount || 0;
+    const room = Math.max(0, verifyPass.MAX_PER_MEETING - this.verifyCount); if (!room) return;
+    const batch = todo.slice(0, room); this.verifyCount += batch.length;
+    const run = () => this.runVerify(batch);
+    this.verifyChain = (this.verifyChain || Promise.resolve()).then(run, run);
+  }
+  async runVerify(items) {
+    if (this.finalized) return;
+    try {
+      const claims = items.map(x => String(x.claim || '').trim());
+      const r = await verifyPass.run(this.env, claims, { dataDir: DATA, log, sessionId: this.id });
+      if (!r) { log('verify 没回应 ' + this.id); return; }
+      const out = [];
+      items.forEach((it, i) => { const v = r.results[i]; if (!v) return; it.verify = { verdict: v.verdict, note: v.note, sources: v.sources, ms: r.ms, model: r.model || '' }; out.push({ id: it.id, verify: it.verify }); });
+      if (out.length) { this.broadcast({ type: 'verify', items: out }); this.checkpoint(); }
+      log(`verify ${r.ms}ms n=${out.length} ${this.id}`);
+    } catch (e) { log('verify exc ' + e.message); }
   }
 
   async runDeepPass(recentText, segIds, epochAtStart) {
@@ -927,6 +953,7 @@ class Session {
         // 存储字段名不改：洞察进 factchecks（回看 / 归档 / 统计全兼容），要点日志进 highlights（log:true，会中折叠不占屏）；待办只经洞察的 action.do=todo 由本人点出来，不再自动抽
         const fb = { type: 'feedback', highlights: stamp(r.log.map(text => ({ text, log: true }))), todos: [], factchecks: stamp(r.insight ? [r.insight] : []) };
         this.highlights.push(...fb.highlights); this.factchecks.push(...fb.factchecks); this.broadcast(fb);
+        this.queueVerify(fb.factchecks);
         log(`triage${gate ? '(jev)' : ''} ${Date.now() - t0}ms i=${fb.factchecks.length}${r.insight ? '(' + r.insight.label + ')' : ''} log=${fb.highlights.length} ${this.id}`);
         try { const hit = this.pushGate ? this.pushGate.consider(fb) : []; if (hit.length) this.larkPush(hit); } catch (e) { log('push whitelist exc ' + e.message); } }
     } catch (e) { log('triage exc ' + e.message); }
