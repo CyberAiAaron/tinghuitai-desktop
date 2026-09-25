@@ -47,7 +47,7 @@ test('③ 输出上限 700 只走接口路；命令行不设 CLAUDE_CODE_MAX_OUT
   assert.doesNotMatch(cli, /CLAUDE_CODE_MAX_OUTPUT_TOKENS:/, '不许给命令行设硬输出上限（09-22 实测 haiku 上限 60：is_error「exceeded the 60 output token maximum」，整次报废）');
   assert.match(cli, /kind === 'claude' && [^\n]*\{ MAX_THINKING_TOKENS: String\(Math\.max\(0, Math\.floor\(Number\(thinking\)\)\)\) \}/, '只有 claude 命令行按 thinking 设 MAX_THINKING_TOKENS');
   const llm = fs.readFileSync(path.join(root, 'app/llm.js'), 'utf8');
-  assert.match(llm, /cliLlm\.askDetailed\(p\.kind, user, \{[^}]*thinking, tools \}\)/, 'llm.js 的 cli 适配器把 thinking（和 tools）传下去');
+  assert.match(llm, /cliLlm\.askDetailed\(p\.kind, user, \{[^}]*thinking, tools(, purpose)? \}\)/, 'llm.js 的 cli 适配器把 thinking（和 tools）传下去');
   assert.match(server, /thinking: triageFast\.liveThinking\(this\.env\)/, '分诊 trace 带 thinking');
   assert.match(server, /thinking: trace \? trace\.thinking : undefined/, 'askModel 把 trace.thinking 递给 llm.ask');
   // liveThinking 的解析：'0' 关；'' / 缺 / 非法 → 不干预；正整数原样

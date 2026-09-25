@@ -84,10 +84,10 @@ const jsonUnsupported = (status, d) => {
 };
 
 const ADAPTERS = {
-  async cli(p, { model, system, user, dataDir, log, timeoutMs, thinking, tools }) {
+  async cli(p, { model, system, user, dataDir, log, timeoutMs, thinking, tools, purpose }) {
     // 本机命令行没有这道墙（它自己按上下文窗口处理），所以这条路永远 truncated:false；maxTokens 也不传（原因见 cli-llm.js 头注）。
     // json 参数对命令行没意义（没有 response_format 这种开关），这条路直接忽略它。thinking（思考预算，0 = 关）只有 claude 命令行认。
-    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, custom: p.custom, timeoutMs: timeoutMs || CLI_TIMEOUT_MS, thinking, tools });
+    const r = await cliLlm.askDetailed(p.kind, user, { dataDir, log, model, system, custom: p.custom, timeoutMs: timeoutMs || CLI_TIMEOUT_MS, thinking, tools, purpose });
     if (r.ok) return { ok: true, text: r.text, model: r.model || model, usage: r.usage || null, truncated: false, truncatedChars: 0 };
     return { ok: false, errorCode: p.kind + ':' + (r.reason || 'unknown'), truncated: false, truncatedChars: 0 };
   },
@@ -142,13 +142,13 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
   if (!chain.length) return { text: null, errorCode: 'chain_exhausted', degraded: false, truncated: false, truncatedChars: 0, attempts, skipped };
   for (const p of chain) {
     let model = pickModel(p, kind);
-    let r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools });
+    let r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools, purpose: kind });
     // 思考档点名的强模型没额度 / 没权限（09-25 试用实测：Fable 额度用完，会中思考连败 7 次）→ 同一家退回慢思考档再试一次
     const fallbackModel = p.models && (p.models.post || p.models.live);
     if (!r.ok && (kind === 'think' || kind === 'insight-deep') && fallbackModel && model && model !== fallbackModel) {
       log(p.label + ' 思考档 ' + model + ' 不可用（' + r.errorCode + '），改用 ' + fallbackModel);
       model = fallbackModel;
-      r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools });
+      r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools, purpose: kind });
     }
     // requestedModel = 配置里点名要的那个；model = 接口实际回的那个。两者会不一样
     // （09-22 实测：要 deepseek-chat，回 deepseek-flash），账本两个都记才查得清「那天跑的到底是谁」。

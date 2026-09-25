@@ -92,9 +92,18 @@ function detect() {
 // 实测 2026-09-20：默认 60,971 token / 次，换成下面这套 1,222 token / 次，同一句 READY 回答一致。
 const MIN_SYSTEM = '你是会议记录分析助手。只输出被要求的内容，不解释、不寒暄。';
 
-function args(kind, { model = '', system = '', tools } = {}) {
-  if (kind === 'codex') return ['exec', '--sandbox', 'read-only', '--skip-git-repo-check',
-    '--ignore-user-config', '--ignore-rules', '--ephemeral', '-c', 'project_doc_max_bytes=0', '-'];
+// Codex 按用途给推理强度（M1，09-25）：会中要快、会后要稳、思考档要深。和 Claude 那条「live 关思考、think 给预算」同一个意思。
+// codex exec 没有 --effort，推理强度是 config 键 model_reasoning_effort（-c 覆盖），模型走 -m。
+const CODEX_EFFORT = { live: 'low', quick: 'low', triage: 'low', post: 'medium', think: 'high', verify: 'medium', 'insight-deep': 'high' };
+function args(kind, { model = '', system = '', tools, purpose = '' } = {}) {
+  if (kind === 'codex') {
+    const a = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check',
+      '--ignore-user-config', '--ignore-rules', '--ephemeral', '-c', 'project_doc_max_bytes=0'];
+    if (model) a.push('-m', model);
+    if (CODEX_EFFORT[purpose]) a.push('-c', 'model_reasoning_effort="' + CODEX_EFFORT[purpose] + '"');
+    a.push('-');
+    return a;
+  }
   const a = ['-p', '--output-format', 'json'];
   if (model) a.push('--model', model);
   a.push(
@@ -103,8 +112,9 @@ function args(kind, { model = '', system = '', tools } = {}) {
     '--disable-slash-commands',       // 不加载 skill
     // 工具表：默认只留 Read（工具描述是大头）；tools === false → 一个都不给（会中分诊用：09-24 回放实测模型会去 Read 文件，
     // 一次分诊 1,971 输出 token 里正文只有 271 字、耗时 35 s，全是多轮工具调用；分诊只要读 prompt 里的资料，不该翻盘）
-    ...(tools === false ? ['--tools', ''] : ['--tools', 'Read', '--allowedTools', 'Read']),
-    '--disallowedTools', 'Bash,Edit,Write,WebFetch,WebSearch',
+    // tools === 'web'：只给会中核查 / 思考档（M6，09-25 Aaron 定联网核查）：多给 WebSearch、WebFetch，其余照旧禁。
+    ...(tools === false ? ['--tools', ''] : tools === 'web' ? ['--tools', 'Read,WebSearch,WebFetch', '--allowedTools', 'Read,WebSearch,WebFetch'] : ['--tools', 'Read', '--allowedTools', 'Read']),
+    '--disallowedTools', tools === 'web' ? 'Bash,Edit,Write' : 'Bash,Edit,Write,WebFetch,WebSearch',
     '--system-prompt', system || MIN_SYSTEM,
   );
   return a;
@@ -117,7 +127,7 @@ function args(kind, { model = '', system = '', tools } = {}) {
 //   会中分诊那 2,000 多输出 token 里大半是思考（一次 4 条要点、正文 212 字，output_tokens 2,278），所以 max_tokens 砍不到它。
 // ⚠️ 没走 CLAUDE_CODE_MAX_OUTPUT_TOKENS 限输出：实测超限时 claude -p 直接 is_error「exceeded the N output token maximum」，
 //   整次调用报废而不是截断——比原来「截断 + 抢救」更糟，而且思考 token 也算在里面。输出上限只对接口那条路（app/llm.js openai）生效。
-function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null, thinking, tools } = {}) {
+function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}, model = '', system = '', custom = null, thinking, tools, purpose = '' } = {}) {
   const spec = kind === 'custom' ? custom : null;
   if (kind === 'custom' && !spec) return Promise.resolve({ ok: false, reason: 'not_configured' });
   let bin = spec ? spec.bin : findBin(kind);
@@ -129,7 +139,7 @@ function askDetailed(kind, prompt, { dataDir, timeoutMs = 180000, log = () => {}
     const finish = v => { if (!done) { done = true; resolve(v); } };
     let p;
     const home = kind === 'codex' ? codexHome(dataDir) : '';
-    try { p = spawn(bin, spec ? customArgs(spec, { prompt: full, model }) : args(kind, { model, system, tools }),
+    try { p = spawn(bin, spec ? customArgs(spec, { prompt: full, model }) : args(kind, { model, system, tools, purpose }),
       spec ? { cwd: dataDir || process.cwd(), env: customEnv() }
            : { cwd: dataDir || process.cwd(), env: { ...process.env, CLAUDECODE: '', ...(home ? { CODEX_HOME: home } : {}),
                ...(kind === 'claude' && Number.isFinite(Number(thinking)) && thinking !== undefined && thinking !== null && thinking !== '' ? { MAX_THINKING_TOKENS: String(Math.max(0, Math.floor(Number(thinking)))) } : {}) } }); }
@@ -256,4 +266,4 @@ async function autopick({ settings, cli = module.exports, log = () => {} }) {
   log('开箱自动选模型：本机没有已登录的 Claude Code / Codex');
   return { picked: '' };
 }
-module.exports = { autopick, detect, findBin, codexHome, ask, askDetailed, probe, mainModel, agentBin, args };
+module.exports = { CODEX_EFFORT, autopick, detect, findBin, codexHome, ask, askDetailed, probe, mainModel, agentBin, args };
