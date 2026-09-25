@@ -712,6 +712,7 @@ def web_verify(claims, session_id='', timeout=400):
 
 def web_verify_checked(review, session_id=''):
     """把点评里 checked 的结论换成联网核查的结果（带来源 url + 日期；没来源 = 核不了）。失败不动原结果。"""
+    # checked 就是会后点评自己挑出的「待核查」清单（点评 prompt 只把需要核实的事实放进 checked），不再过 shouldVerify；web_verify 里仍截 5 条。
     checked = (review or {}).get('checked') or []
     res = web_verify([c.get('claim') for c in checked], session_id)
     if not res: return

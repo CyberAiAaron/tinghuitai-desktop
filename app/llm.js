@@ -145,7 +145,7 @@ async function ask(env, { kind = 'post', system = '', user = '', maxTokens, data
     let model = pickModel(p, kind); const t0 = Date.now();
     let r = await ADAPTERS[p.type](p, { model, system, user, maxTokens, dataDir, log, fetchImpl, timeoutMs, temperature, json, thinking, tools, purpose: kind });
     // 思考档点名的强模型没额度 / 没权限（09-25 试用实测：Fable 额度用完，会中思考连败 7 次）→ 同一家退回慢思考档再试一次
-    // M6（09-25 Aaron 定）：慢思考档默认 Fable 5.1，额度用完退回 postFallback（默认 Opus 5.5）；思考 / 核查档同样优先退到 postFallback。
+    // M6（09-25 Aaron 定）：慢思考档默认 Fable 5.1，额度用完退回 postFallback（默认 Opus（CLI 别名 opus，本机实测解析为 claude-opus-5；5.5 在 CLI 不可用））；思考 / 核查档同样优先退到 postFallback。
     const fm = p.models || {};
     const fallbackModel = kind === 'post' ? fm.postFallback : (fm.postFallback || fm.post || fm.live);
     if (!r.ok && (kind === 'post' || kind === 'think' || kind === 'insight-deep' || kind === 'verify') && fallbackModel && model && model !== fallbackModel) {

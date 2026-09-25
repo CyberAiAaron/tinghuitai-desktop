@@ -26,19 +26,19 @@ test('思考档：模型档 think 没配时退回 post，配了就用配的', ()
   const llm = require('../app/llm');
   const pick = require('../app/llm').__pickModel || null;
   // 通过公开入口验证：legacyChain 推出的 models 里带 think
-  const env = { LLM_PROVIDER: 'claude', LLM_MODEL_POST: 'opus', LLM_MODEL_THINK: 'claude-fable-5-1' };
+  const env = { LLM_PROVIDER: 'claude', LLM_MODEL_POST: 'opus', LLM_MODEL_THINK: 'fable' };
   const p = llm.chainOf(env)[0];
-  assert.strictEqual(p.models.think, 'claude-fable-5-1');
-  assert.strictEqual(llm.pickModel(p, 'think'), 'claude-fable-5-1');
+  assert.strictEqual(p.models.think, 'fable');
+  assert.strictEqual(llm.pickModel(p, 'think'), 'fable');
   assert.strictEqual(llm.pickModel({ models: { post: 'opus' } }, 'think'), 'opus');
 });
 
 test('思考档强模型不可用时同一家退回慢思考档再试一次', async () => {
   const cli = require('../app/cli-llm'), llm = require('../app/llm');
   const orig = cli.askDetailed, seen = [];
-  cli.askDetailed = async (kind, prompt, o) => { seen.push(o.model); return o.model === 'claude-fable-5-1' ? { ok: false, reason: 'cli_is_error' } : { ok: true, text: 'ok' }; };
+  cli.askDetailed = async (kind, prompt, o) => { seen.push(o.model); return o.model === 'fable' ? { ok: false, reason: 'cli_is_error' } : { ok: true, text: 'ok' }; };
   try {
-    const r = await llm.ask({ LLM_PROVIDER: 'claude', LLM_MODEL_POST: 'opus', LLM_MODEL_THINK: 'claude-fable-5-1' }, { kind: 'think', user: 'x' });
-    assert.strictEqual(r.text, 'ok'); assert.deepStrictEqual(seen, ['claude-fable-5-1', 'opus']); assert.strictEqual(r.model, 'opus');
+    const r = await llm.ask({ LLM_PROVIDER: 'claude', LLM_MODEL_POST: 'opus', LLM_MODEL_THINK: 'fable' }, { kind: 'think', user: 'x' });
+    assert.strictEqual(r.text, 'ok'); assert.deepStrictEqual(seen, ['fable', 'opus']); assert.strictEqual(r.model, 'opus');
   } finally { cli.askDetailed = orig; }
 });

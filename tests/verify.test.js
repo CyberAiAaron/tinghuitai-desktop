@@ -18,7 +18,7 @@ test('normalize：没来源一律核不了；有 url 保留 url+date；模型漏
   assert.equal(out[2].verdict, '核不了');
 });
 test('run：kind=verify、tools=web、thinking 8000，只核传进来的条目', async () => {
-  let got; const ask = async (env, o) => { got = o; return { text: JSON.stringify({ results: [{ claim: 'A', verdict: '已核实', sources: [{ url: 'https://a.cn', date: '2026-01-02' }] }] }), ms: 1234, model: 'claude-opus-5-5' }; };
+  let got; const ask = async (env, o) => { got = o; return { text: JSON.stringify({ results: [{ claim: 'A', verdict: '已核实', sources: [{ url: 'https://a.cn', date: '2026-01-02' }] }] }), ms: 1234, model: 'opus' }; };
   const r = await v.run({}, ['A'], { ask });
   assert.equal(got.kind, 'verify'); assert.equal(got.tools, 'web'); assert.equal(got.thinking, 8000);
   assert.match(got.system, /来源 url/); assert.match(got.system, /核不了/);
@@ -27,19 +27,19 @@ test('run：kind=verify、tools=web、thinking 8000，只核传进来的条目',
 test('默认档：think=Opus 5.5，post=Fable 5.1，post 失败退 Opus 5.5', () => {
   const d = require('../app/config').defaults || null;
   const src = fs.readFileSync(path.join(__dirname, '../app/config.js'), 'utf8');
-  assert.match(src, /LLM_MODEL_POST:'claude-fable-5-1',LLM_MODEL_POST_FALLBACK:'claude-opus-5-5'/);
-  assert.match(src, /LLM_MODEL_THINK:'claude-opus-5-5'/);
-  const [p] = llm.chainOf({ LLM_PROVIDER: 'claude', LLM_MODEL_POST: 'claude-fable-5-1', LLM_MODEL_THINK: 'claude-opus-5-5', LLM_MODEL_POST_FALLBACK: 'claude-opus-5-5' });
-  assert.equal(llm.pickModel(p, 'post'), 'claude-fable-5-1'); assert.equal(llm.pickModel(p, 'think'), 'claude-opus-5-5'); assert.equal(llm.pickModel(p, 'verify'), 'claude-opus-5-5');
+  assert.match(src, /LLM_MODEL_POST:'fable',LLM_MODEL_POST_FALLBACK:'opus'/);
+  assert.match(src, /LLM_MODEL_THINK:'opus'/);
+  const [p] = llm.chainOf({ LLM_PROVIDER: 'claude', LLM_MODEL_POST: 'fable', LLM_MODEL_THINK: 'opus', LLM_MODEL_POST_FALLBACK: 'opus' });
+  assert.equal(llm.pickModel(p, 'post'), 'fable'); assert.equal(llm.pickModel(p, 'think'), 'opus'); assert.equal(llm.pickModel(p, 'verify'), 'opus');
   void d;
 });
 test('post 档首选失败（额度）→ 同一家退 postFallback，账本记 ms', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vf-')); const bin = path.join(dir, 'fake-claude');
-  // 假 claude：--model claude-fable-5-1 就失败，其他模型回 JSON
-  fs.writeFileSync(bin, '#!/bin/sh\nfor a in "$@"; do [ "$a" = claude-fable-5-1 ] && { echo quota >&2; exit 1; }; done\ncat >/dev/null\necho \'{"type":"result","result":"OK","is_error":false,"usage":{"input_tokens":3,"output_tokens":1},"modelUsage":{"claude-opus-5-5":{"outputTokens":1}}}\'\n'); fs.chmodSync(bin, 0o755);
-  const env = { LLM_CHAIN: [{ type: 'cli', kind: 'custom', name: 'fake', bin, args: ['--model', '{model}'], models: { post: 'claude-fable-5-1', postFallback: 'claude-opus-5-5' } }] };
+  // 假 claude：--model fable 就失败，其他模型回 JSON
+  fs.writeFileSync(bin, '#!/bin/sh\nfor a in "$@"; do [ "$a" = fable ] && { echo quota >&2; exit 1; }; done\ncat >/dev/null\necho \'{"type":"result","result":"OK","is_error":false,"usage":{"input_tokens":3,"output_tokens":1},"modelUsage":{"opus":{"outputTokens":1}}}\'\n'); fs.chmodSync(bin, 0o755);
+  const env = { LLM_CHAIN: [{ type: 'cli', kind: 'custom', name: 'fake', bin, args: ['--model', '{model}'], models: { post: 'fable', postFallback: 'opus' } }] };
   const r = await llm.ask(env, { kind: 'post', user: 'hi', dataDir: dir });
-  assert.ok(r.text, 'fallback 应该拿到正文'); assert.equal(r.requestedModel, 'claude-opus-5-5'); assert.ok(Number.isFinite(r.ms));
+  assert.ok(r.text, 'fallback 应该拿到正文'); assert.equal(r.requestedModel, 'opus'); assert.ok(Number.isFinite(r.ms));
   llm.noteUsage(dir, r, { user: 'hi', tier: 'post' });
   const row = JSON.parse(fs.readFileSync(path.join(dir, 'state', 'usage.jsonl'), 'utf8').trim().split('\n').pop());
   assert.ok(Number.isFinite(row.ms));

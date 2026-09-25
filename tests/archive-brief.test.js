@@ -93,7 +93,7 @@ test('深度档：_clean_insights_md 只剥掉包住全文的代码围栏，正�
 test('深度档：两次并行都成功 → 取字符更多的一版当正文；insights 恒为空数组，meta 字段齐全（model/provider/tier/runs/chosenRun/contextChars/search…）', () => {
   const shortMd = '这一条判断很短，没有多少信息量。';
   const longMd = '屏幕比例照 Mac 会和决策板 D2 的阔屏直板打架，这个冲突现在就该摊开说，不是等 CDCP。\n\n@Abel Mei：周五前把回滚方案定下来';
-  const r = py(`import threading\ncalls=[]\nlock=threading.Lock()\ndef fake(system,user,**k):\n    with lock: calls.append((k.get('kind'),k.get('purpose'),k.get('timeout'),(k.get('context') or {}).get('purpose'),k.get('max_tokens'),k.get('json_mode')))\n    if k.get('purpose')=='insights-terms': return {'text':'{"queries":[]}','context':{}}\n    text=${JSON.stringify(shortMd)} if k.get('purpose')=='insights-deep' else ${JSON.stringify(longMd)}\n    return {'text':text,'context':{'chars':65000,'hash':'abc'},'model':'claude-fable-5-1','provider':'Claude'}\nmp.ask_model=fake\nres=mp.make_insights_deep(json.loads(${JSON.stringify(JSON.stringify(INS_SESSION))}),json.loads(${JSON.stringify(JSON.stringify(INS_BRIEF))}),['Shawn Liu'])\nprint(json.dumps({'calls':sorted(calls),'res':res}))`);
+  const r = py(`import threading\ncalls=[]\nlock=threading.Lock()\ndef fake(system,user,**k):\n    with lock: calls.append((k.get('kind'),k.get('purpose'),k.get('timeout'),(k.get('context') or {}).get('purpose'),k.get('max_tokens'),k.get('json_mode')))\n    if k.get('purpose')=='insights-terms': return {'text':'{"queries":[]}','context':{}}\n    text=${JSON.stringify(shortMd)} if k.get('purpose')=='insights-deep' else ${JSON.stringify(longMd)}\n    return {'text':text,'context':{'chars':65000,'hash':'abc'},'model':'fable','provider':'Claude'}\nmp.ask_model=fake\nres=mp.make_insights_deep(json.loads(${JSON.stringify(JSON.stringify(INS_SESSION))}),json.loads(${JSON.stringify(JSON.stringify(INS_BRIEF))}),['Shawn Liu'])\nprint(json.dumps({'calls':sorted(calls),'res':res}))`);
   assert.deepEqual(r.calls, [
     ['insight-deep', 'insights-deep', 600, 'insights-deep', 8000, false],
     ['insight-deep', 'insights-deep-r2', 600, 'insights-deep', 8000, false],
@@ -103,7 +103,7 @@ test('深度档：两次并行都成功 → 取字符更多的一版当正文；
   assert.deepEqual(res.insights, [], 'insights 恒为空数组，正文全在 insights_md');
   assert.equal(res.insights_md, shortMd, '取更短的一版（Aaron 09-24 要短）');
   assert.equal(res.insightsMeta.tier, 'insight-deep'); assert.equal(res.insightsMeta.chosenRun, 1);
-  assert.equal(res.insightsMeta.runs, 2); assert.equal(res.insightsMeta.model, 'claude-fable-5-1'); assert.equal(res.insightsMeta.provider, 'Claude');
+  assert.equal(res.insightsMeta.runs, 2); assert.equal(res.insightsMeta.model, 'fable'); assert.equal(res.insightsMeta.provider, 'Claude');
   assert.equal(res.insightsMeta.contextChars, 65000); assert.equal(res.insightsMeta.contextHash, 'abc');
   assert.deepEqual(res.insightsMeta.runChars, { '1': [...shortMd].length, '2': [...longMd].length });
   assert.equal(res.insightsMeta.runSeconds.length, 2);
