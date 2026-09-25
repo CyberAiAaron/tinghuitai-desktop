@@ -119,6 +119,9 @@ test('通讯录解析不到：不发、不改发给本人，422 带可读原因�
   const dir = tmp(), calls = [];
   await assert.rejects(PH.run({ dataDir: dir, body: batch({ person: '不存在的人' }), execImpl: fakeExec(calls) }), e => e.code === 422 && e.notFound && /通讯录里没找到「不存在的人」，改个名字再发/.test(e.message));
   assert.deepEqual(calls.map(a => a[0] + ' ' + a[1]), ['contact +search-user'], '没找到人就一条外发都不跑');
+  const rdir = path.join(dir, 'state', 'send-receipts', 'person-handoff');
+  assert.deepEqual(fs.existsSync(rdir) ? fs.readdirSync(rdir).filter(f => f.endsWith('.json')) : [], [], '没找到人：收据清掉，不留 pending');
+  assert.equal(PH.sentState(dir, 'm-1', 'v2-next'), null, '条目不标已发');
   const r = await PH.run({ dataDir: dir, body: batch({ person: 'Abel Mei' }), execImpl: fakeExec([]) });
   assert.equal(r.status, 'sent');
   fs.rmSync(dir, { recursive: true, force: true });
