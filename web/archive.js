@@ -705,7 +705,7 @@ function wireHandoff(box,payloadOf,repaint){
       const r=await fetch('/asr-relay/person-handoff?token='+actTok(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payloadOf(id),person,confirmed:true,sourceId:id,...(hoPartial.get(id)?{retryFailed:true,retryConfirmed:true}:{})}),signal:AbortSignal.timeout(90000)});
       const j=await r.json().catch(()=>({}));if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
       const part=(k,l)=>j[k]&&j[k].ok?(j[k].url?'<a href="'+esc(j[k].url)+'" target="_blank" rel="noopener">'+l+' ✓</a>':l+' ✓'):l+' ✗'+(j[k]&&j[k].error?' '+esc(j[k].error):'');
-      hoPartial.set(id,!!j.partial);hoNote.set(id,(j.partial?T('只成了一部分，失败：','Partly sent, failed: ')+esc((j.failed||[]).join('、'))+'；':'')+(j.fallbackToSelf?T('没找到这个人，先建给你：','Person not found, sent to you: '):T('已交给 ','Handed to ')+esc((j.assignee&&j.assignee.name)||person)+'：')
+      hoPartial.set(id,!!j.partial);hoNote.set(id,(j.partial?T('只成了一部分，失败：','Partly sent, failed: ')+esc((j.failed||[]).join('、'))+'；':'')+T('已交给 ','Handed to ')+esc((j.assignee&&j.assignee.name)||person)+'：'
         +part('task',T('任务','Task'))+' · '+part('message',T('私聊','DM'))+' · '+part('doc',T('行动清单','Action list')));
       hoOpen.delete(id);
     }catch(e){hoNote.set(id,T('没发出去：','Failed: ')+esc(e.message||String(e)));}

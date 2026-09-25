@@ -132,6 +132,7 @@
       const r=await fetch('/asr-relay/person-handoff?token='+tok(),{method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({meetingId:mid,kind:'todo',person:b.person,items:b.items.map(c=>({text:c.text,sourceId:c.sid})),confirmed:true,...(retry?{retryFailed:true,retryConfirmed:true}:{}),meetingTitle:title,meetingDate:meetingDate()}),signal:AbortSignal.timeout(120000)});
       const j=await r.json().catch(()=>({}));
+      if(r.status===422&&j.notFound){sids.forEach(s=>err.set(s,'通讯录里没找到「'+b.person+'」，改个名字再发'));sids.forEach(s=>busy.delete(s));render();return;}
       if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
       const sent={at:j.at||Date.now(),partial:!!j.partial,person:(j.assignee&&j.assignee.name)||b.person,taskUrl:(j.task&&j.task.url)||''};
       b.items.forEach(c=>{c.node.sent=sent;});

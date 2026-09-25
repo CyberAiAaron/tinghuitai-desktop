@@ -100,9 +100,9 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
     docCreate: a => lark.docCreate(a, cliOpts),
     docAppend: a => lark.docAppend(a, cliOpts),
   };
-  const out = { person: input.person, items: input.items, supplement, assignee: null, fallbackToSelf: false, task: null, message: null, doc: null };
+  const out = { person: input.person, items: input.items, supplement, assignee: null, task: null, message: null, doc: null };
 
-  // 0. 找人。找不到不猜（发错人是真外发），任务建给当前登录用户本人并注明代办对象；私聊和 @ 都退给本人。
+  // 0. 找人。负责人是「我」→ 当前登录飞书用户；找不到 → 422「通讯录里没找到 X，改个名字再发」。
   let openId = '', name = input.person;
   const isSelf = /^(我|本人|me|myself)$/i.test(String(input.person || '').trim());
   if (isOpenId(input.person)) openId = input.person;
@@ -114,22 +114,21 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
     try {
       const r = await cli.resolveIds([input.person]);
       if (r.ok && r.ids.length === 1) { openId = r.ids[0]; name = (r.users[0] && r.users[0].name) || input.person; }
-      else out.resolveError = r.ok ? ('通讯录里没找到唯一匹配的「' + input.person + '」') : r.error;
-    } catch (e) { out.resolveError = String(e.message || e).slice(0, 200); }
+      else if (r.ok) { const e = Error('通讯录里没找到「' + input.person + '」，改个名字再发'); e.code = 422; e.definite = true; e.notFound = true; e.mine = true; e.results = out; throw e; }
+      else { const e = Error('查通讯录没成：' + String(r.error || '').slice(0, 160)); e.code = 502; e.definite = true; e.mine = true; e.results = out; throw e; }
+    } catch (e) {
+      if (e.mine) throw e;
+      const x = Error('查通讯录没成：' + String(e.message || e).slice(0, 160)); x.code = 502; x.definite = true; x.results = out; throw x;
+    }
   }
-  if (!openId) {
-    out.fallbackToSelf = true;
-    try { openId = String((await cli.selfOpenId()) || ''); } catch (e) { openId = ''; }
-    if (!openId) { const e = Error('通讯录里没找到「' + input.person + '」，也拿不到当前登录的飞书用户'); e.results = out; e.definite = true; throw e; }
-  }
-  out.assignee = { openId, name: out.fallbackToSelf ? '你本人' : name };
+  // 找不到人不猜、不再悄悄改发给本人（发错人是真外发，改发本人又让人以为已经发出去了）：直接 4xx 让用户改名字重发。
+  out.assignee = { openId, name };
 
   // a. 一条任务：标题 = 第一件（多件加「等 N 件」），描述列全部，截止取最早
   const n = input.items.length;
   const summary = lineOf(input.items[0]) + (n > 1 ? '（等 ' + n + ' 件）' : '');
   const due = input.items.map(it => it.due).sort()[0];
   const descLines = [
-    out.fallbackToSelf ? '代办对象：' + input.person + '（通讯录里没解析到，先建给你本人）' : '',
     '会议：' + meetingHead(input),
     ...input.items.map((it, i) => (i + 1) + '. ' + lineOf(it) + '（截止 ' + it.due + '）'),
   ].filter(Boolean);
@@ -140,7 +139,7 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
 
   // b. 一条私聊
   const taskUrl = out.task && out.task.ok && out.task.url ? out.task.url : '';
-  const md = (out.fallbackToSelf ? '（本想交给 ' + input.person + '，通讯录里没解析到，先发给你）\n' : '') + messageText(input, taskUrl, supplement);
+  const md = messageText(input, taskUrl, supplement);
   if (keep('message')) { out.message = prev.message; skipped.push('message'); } else try {
     const r = await cli.messageSend({ openId, markdown: md });
     out.message = r.ok ? { ok: true, messageId: r.messageId, to: openId } : { ok: false, error: r.error, uncertain: !!r.uncertain };
@@ -154,7 +153,6 @@ async function perform(input, prev, { dataDir, execImpl, log = () => {}, supplem
       const parts = [
         esc(shDate()) + ' ｜ ' + esc(meetingHead(input)) + (supplement ? '补' : '') + ' ｜ 交给 ',
         '<cite type="user" user-id="' + esc(openId) + '"/>',
-        out.fallbackToSelf ? esc('（代办对象：' + input.person + '）') : '',
         ' ｜ ' + input.items.map((it, i) => esc((i + 1) + '. ' + lineOf(it) + '（截止 ' + it.due + '）')).join('；'),
         taskUrl ? ' ｜ <a href="' + esc(taskUrl) + '">任务</a>' : ' ｜ 任务未建成',
       ];
@@ -215,8 +213,8 @@ async function route(req, res, { authed, dataDir, log = () => {}, execImpl } = {
     log('person-handoff ' + r.meetingId + ' → ' + r.person + ' ×' + ((r.items || []).length || '?') + (r.alreadySent ? '（已发过，未重发）' : r.supplement ? '（补发）' : ''));
     return reply(200, { ok: true, ...r });
   } catch (e) {
-    const code = e.code === 400 ? 400 : e.code === 409 ? 409 : 500;
-    return reply(code, { ok: false, error: e.message, ...(e.uncertain ? { uncertain: true } : {}), ...(e.results ? { results: e.results } : {}) });
+    const code = [400, 409, 422, 502].includes(e.code) ? e.code : 500;
+    return reply(code, { ok: false, error: e.message, ...(e.uncertain ? { uncertain: true } : {}), ...(e.notFound ? { notFound: true, person: j.person } : {}), ...(e.results ? { results: e.results } : {}) });
   }
 }
 

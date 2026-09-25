@@ -115,14 +115,21 @@ test('私聊失败不影响任务和文档：结果逐项写清，收据仍是 s
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('通讯录解析不到：任务建给当前登录用户本人并写「代办对象」，私聊和 @ 都退给本人', async () => {
+test('通讯录解析不到：不发、不改发给本人，422 带可读原因「通讯录里没找到 X，改个名字再发」；收据清掉可改名重发', async () => {
   const dir = tmp(), calls = [];
-  const r = await PH.run({ dataDir: dir, body: batch({ person: '不存在的人' }), execImpl: fakeExec(calls) });
-  assert.equal(r.fallbackToSelf, true); assert.equal(r.assignee.openId, 'ou_self'); assert.equal(r.assignee.name, '你本人');
-  assert.equal(calls[1][0] + ' ' + calls[1][1], 'contact +get-user');
-  assert.equal(arg(calls[2], '--assignee'), 'ou_self'); assert.match(arg(calls[2], '--description'), /代办对象：不存在的人/);
-  assert.equal(arg(calls[3], '--user-id'), 'ou_self'); assert.match(arg(calls[3], '--markdown'), /本想交给 不存在的人/);
-  assert.match(arg(calls[5], '--content'), new RegExp('user-id="ou_self"'));
+  await assert.rejects(PH.run({ dataDir: dir, body: batch({ person: '不存在的人' }), execImpl: fakeExec(calls) }), e => e.code === 422 && e.notFound && /通讯录里没找到「不存在的人」，改个名字再发/.test(e.message));
+  assert.deepEqual(calls.map(a => a[0] + ' ' + a[1]), ['contact +search-user'], '没找到人就一条外发都不跑');
+  const r = await PH.run({ dataDir: dir, body: batch({ person: 'Abel Mei' }), execImpl: fakeExec([]) });
+  assert.equal(r.status, 'sent');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('路由：找不到收件人回 422 + notFound，不是 500', async () => {
+  const dir = tmp(), calls = [];
+  const req = Readable.from([Buffer.from(JSON.stringify(batch({ person: '不存在的人' })))]); req.method = 'POST';
+  let code = 0, text = ''; const res = { writeHead: c => { code = c; }, end: t => { text = t; } };
+  await PH.route(req, res, { authed: true, dataDir: dir, execImpl: fakeExec(calls) });
+  assert.equal(code, 422); const j = JSON.parse(text); assert.equal(j.notFound, true); assert.match(j.error, /改个名字再发/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
