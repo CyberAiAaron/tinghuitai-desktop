@@ -77,8 +77,8 @@ function shareNote(session, decisions, condensed) {
   // 会议信息头：能从日历里对上就写，时间以日历为准、录音实际起止另注。参会人读不到就明说，不编。
   const ev = session.calendarEvent;
   if (ev && (ev.title || ev.start)) {
-    const hm = v => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString('zh-CN', { timeZone:'Asia/Shanghai', hour:'2-digit', minute:'2-digit' }); };
-    const day = ev.start ? new Date(ev.start).toLocaleDateString('zh-CN', { timeZone:'Asia/Shanghai', year:'numeric', month:'2-digit', day:'2-digit' }) : '';
+    const hm = v => { const d = new Date(v); return isNaN(d) ? '' : d.toLocaleString('zh-CN', { hour:'2-digit', minute:'2-digit' }); };
+    const day = ev.start ? new Date(ev.start).toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit' }) : '';
     const rec = (session.start && session.end) ? '；录音 ' + hm(session.start) + '–' + hm(session.end) : '';
     L.push('', '## 会议信息' + (ev.confidence === 'low' ? '（按时间猜的，待确认）' : ''));
     if (ev.title) L.push('- 日程：' + ev.title + (ev.confidence === 'low' && ev.candidates && ev.candidates.length > 1 ? '（同一时段还有：' + ev.candidates.slice(1).map(c => c.title).join('、') + '）' : ''));

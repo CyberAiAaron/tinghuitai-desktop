@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const llm = require('./llm');
+const localTime = require('./local-time');
 const defaultSendGate = require('./send-gate');
 const defaultLark = require('./tools/lark');
 // 主题 → 飞书文档与负责人：个人版放 <THT_DATA_DIR>/topics.json（含文档 token 与同事名字，不随包公开），包里是空表
@@ -122,8 +123,8 @@ function validateDiff(parsed, enhanced, meetingId, topic) {
 
 function meetingDate(enhanced) {
   const raw = Number(enhanced && (enhanced.start || enhanced.startedAt || enhanced.at));
-  if (!Number.isFinite(raw) || raw <= 0) return new Date().toISOString().slice(0, 10);
-  return new Date(raw + 8 * 3600e3).toISOString().slice(0, 10);
+  if (!Number.isFinite(raw) || raw <= 0) return localTime.localDay();
+  return localTime.localDay(raw);
 }
 
 function promptFor(enhanced, docMarkdown, topic) {

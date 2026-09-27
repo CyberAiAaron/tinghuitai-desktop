@@ -7,6 +7,7 @@
 const fs = require('fs'), path = require('path');
 const llm = require('./llm');
 const A = require('./actions');
+const localTime = require('./local-time');
 
 const OPS = ['add', 'edit', 'assign', 'remove', 'done'];
 const clip = (s, n) => String(s == null ? '' : s).trim().slice(0, n);
@@ -14,20 +15,20 @@ const now = () => new Date().toISOString();
 
 // ===== 期限：几种常见说法换成 YYYY-MM-DD（本机时区） =====
 const CN_NUM = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 };
-const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const iso = localTime.localDay;
 function parseDue(text, at = new Date()) {
   const s = String(text || '');
   let m;
   if ((m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s))) return iso(new Date(+m[1], +m[2] - 1, +m[3]));
   if ((m = /(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/.exec(s))) { const d = new Date(at.getFullYear(), +m[1] - 1, +m[2]); if (d < at && at - d > 90 * 86400e3) d.setFullYear(d.getFullYear() + 1); return iso(d); }
   if (/今天/.test(s)) return iso(at);
-  if (/明天/.test(s)) return iso(new Date(at.getTime() + 86400e3));
-  if (/后天/.test(s)) return iso(new Date(at.getTime() + 2 * 86400e3));
+  if (/明天/.test(s)) return localTime.localDayPlus(1, at);
+  if (/后天/.test(s)) return localTime.localDayPlus(2, at);
   if ((m = /(下+)?(?:周|星期)([一二三四五六日天])/.exec(s))) {
     const want = CN_NUM[m[2]], dow = at.getDay() || 7;             // 周日算 7
     let diff = want - dow; if (diff <= 0) diff += 7;                  // 「周五」= 接下来最近的周五
     if (m[1]) diff = (8 - dow) + (want - 1) + 7 * (m[1].length - 1);   // 「下周X」= 下一个周一起算的那周的周 X（周二说「下周一」= 6 天后）
-    return iso(new Date(at.getTime() + diff * 86400e3));
+    return localTime.localDayPlus(diff, at);
   }
   return '';
 }

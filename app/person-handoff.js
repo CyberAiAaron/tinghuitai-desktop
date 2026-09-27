@@ -12,6 +12,7 @@
 const fs = require('fs'), path = require('path');
 const lark = require('./tools/lark');
 const sendGate = require('./send-gate');
+const localTime = require('./local-time');
 
 const DOC_TITLE = '听会台行动清单';
 const SIGN = '— 由听会台代发';
@@ -21,8 +22,8 @@ const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g,
 const okId = v => /^[A-Za-z0-9_-]{1,80}$/.test(String(v || ''));
 const isOpenId = v => /^ou_[A-Za-z0-9]{1,64}$/.test(String(v || ''));
 const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
-const shDate = (t = Date.now()) => new Date(t + 8 * 3600e3).toISOString().slice(0, 10);   // Asia/Shanghai 的日期
-const plusDays = (n, t = Date.now()) => shDate(t + n * 86400e3);
+const shDate = (t = Date.now()) => localTime.localDay(t);
+const plusDays = (n, t = Date.now()) => localTime.localDayPlus(n, t);
 const MAX_ITEMS = 20;
 
 // 请求体 → 干净的输入；不合法就抛 {code:400}

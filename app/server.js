@@ -19,6 +19,7 @@ const transcriptPick = require('./transcript-pick');  // D5：同一场会「用
 const assistantCore = require('../web/assistant-core');
 const Busboy = require('busboy');
 const topicDocModule = require('./topic-doc');
+const localTime = require('./local-time');
 
 const meetingTrash = require('./meeting-trash');
 const settings = require('./config');
@@ -1248,7 +1249,7 @@ function saveCondensed(file,original,result){
  const latest=journal.read(file);if(!latest||JSON.stringify(latest)!==JSON.stringify(original))return false;
  journal.write(file,{...latest,condensed:result});return true;
 }
-function bjStamp() { return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-'); } // YYYYMMDD-HHMM 北京
+function bjStamp() { return localTime.localStamp(); }
 function queueArchive(j) {
   const target=j.target||'local';
   if(!['local','lark'].includes(target))throw Error('不支持此归档方式');
@@ -1486,11 +1487,11 @@ async function calendarMatch(sess) {
     env: { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER:'1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER:'1' } }, (e, so) => res(e ? '' : String(so||''))); } catch (e) { res(''); } });
   const parse = t => { try { const i = t.indexOf('{'); return i >= 0 ? JSON.parse(t.slice(i)) : null; } catch (e) { return null; } };
   const s0 = typeof sess.start === 'number' ? sess.start : Date.parse(sess.start), e0 = (typeof sess.end === 'number' ? sess.end : Date.parse(sess.end)) || (s0 + 3600e3);
-  const bj = t => new Date(t + 8*3600e3).toISOString().slice(0,10);
-  const day = bj(s0);
+  const range = localTime.localDayRange(s0);
+  const day = range.day;
   let event = null, reason = '', dayEvents = [];
   try {
-    const j = parse(await run(['calendar','+agenda','--as','user','--start', day+'T00:00:00+08:00','--end', day+'T23:59:59+08:00']));
+    const j = parse(await run(['calendar','+agenda','--as','user','--start', range.start.toISOString(),'--end', range.end.toISOString()]));
     const items = j && j.ok ? (Array.isArray(j.data) ? j.data : (j.data && j.data.events) || []) : [];
     if (!j) reason = 'lark-cli 不可用'; else if (!j.ok) reason = (j.error && j.error.message) || '日历读不到';
     // 你拒了的日程不算；剩下的按和录音重叠的时长排。重叠不到录音一半、或有第二个候选咬得很近，就只算「猜测」，要你确认。
@@ -2228,7 +2229,7 @@ return {id:s.id,kind:require('./session-kind').kindOf(s),title:s.title||'',topic
     const title = oneLine(j.title).slice(0, 200), detail = String(j.detail || '').trim().slice(0, 6000), sid = String(j.sessionId || '').trim();
     if (!title) return reply(400, { ok: false, error: '缺标题' });
     if (sid && !/^[A-Za-z0-9_-]{1,80}$/.test(sid)) return reply(400, { ok: false, error: '会议编号不对' });
-    const stamp = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+    const stamp = localTime.localStamp();
     const name = stamp + '-livemate-' + (sid || 'nosession') + '.md';
     const meetingTitle = oneLine(j.meetingTitle).slice(0, 120);
     // 原话与会议原文各自包进一次性随机边界：内容里猜不到这串 nonce，就闭合不了边界、逃不进指令区（与 hub-claude-tasks.sh 同一手法）。

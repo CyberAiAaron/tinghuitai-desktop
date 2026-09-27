@@ -2,7 +2,7 @@
   // POST /insight-action {id, cardId, do, args, confirmed:true[, retryConfirmed]}；执行态由 ws {type:'insightAction'} 推回来（applyInsightAction）。
   // set_date 先问两句（负责人默认承诺人、截止默认今天 +7），按取消就什么都不发。旁听（viewOnly）不出按钮动作。
   function insightCardOf(node){ const c=node.closest('.card.ck'); if(!c||!cur) return null; const id=c.dataset.id; return (cur.factchecks||[]).find(x=>id&&x.id===id)||null; }
-  function shDate(plus){ const d=new Date(Date.now()+8*3600e3+(plus||0)*86400e3); return d.toISOString().slice(0,10); }
+  function shDate(plus){ const d=new Date(); d.setDate(d.getDate()+(plus||0)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   async function insightPost(body){
     const r=await fetch(relayBase()+'/insight-action?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(90000)});
     let j=null; try{ j=await r.json(); }catch(e){}

@@ -12,6 +12,7 @@
 const fs = require('fs'), path = require('path');
 const board = require('./decision-board');
 const larkCli = require('./tools/lark');   // 找人 / 文档链接 / 建任务：命令行只在工具层拼（tests/tools-architecture），这里只调函数
+const localTime = require('./local-time');
 
 const QUOTE_MAX = 200;
 const NOT_FOUND = '资料里没有这个数';
@@ -33,8 +34,8 @@ const docs = () => { const t = loadDocTokens(); return DOCS_BASE.map(d => ({ ...
 const expand = p => path.resolve(String(p).replace(/^~(?=\/)/, process.env.HOME || '~'));
 const clip = (s, n) => { const a = [...String(s || '')]; return a.length > n ? a.slice(0, n - 1).join('') + '…' : a.join(''); };
 const flat = s => String(s || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
-const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
-const plusDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const todayISO = () => localTime.localDay();
+const plusDays = localTime.addIsoDays;
 const isoDay = v => { const d = String(v || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return ''; const t = new Date(d + 'T00:00:00Z'); return (!isNaN(t) && t.toISOString().slice(0, 10) === d) ? d : ''; };
 
 // ---------- 找文件 ----------
@@ -368,7 +369,7 @@ async function onePager({ card, session = {}, dataDir, ask, log = () => {} }) {
   const raw = await ask(ONE_PAGER_SYS, '【洞察卡与执行产物】\n' + facts + '\n\n只输出 JSON。');
   const body = parseOnePager(raw);
   if (!body) throw Object.assign(Error(raw ? '模型没按格式回，可重试' : '模型没有回应，可重试'), { definite: true });
-  const at = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16);
+  const at = new Date().toLocaleString('sv-SE').slice(0, 16);
   const title = clip((card.type === 'recheck' ? '承诺回查：' : '数字纠错：') + flat(card.claim), 60);
   const file = onePagerFile(dataDir, session.id, card.id);
   fs.mkdirSync(path.dirname(file), { recursive: true });

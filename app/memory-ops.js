@@ -2,6 +2,7 @@
 // 记忆的三件事：会后抽卡、开会前后检索、导出给 Claude 看的只读投影。
 const path = require('path'), fs = require('fs'), crypto = require('crypto');
 const mem = require('./memory');
+const localTime = require('./local-time');
 
 const EXTRACT_PROMPT = `你从一场会议的逐字稿里抽取长期记忆，只输出 JSON，不要解释。
 只抽四类，抽不到就给空数组：
@@ -301,8 +302,8 @@ const safe = s => String(s || '').replace(/[\r\n\v\f\u0085\u2028\u2029]+/g, ' ')
 // 只认真实日历日期（2026-99-99 这种格式对、日子不存在的不算），recorded_at 与 due 共用一把尺子。
 const isoDay = v => { const d = String(v || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return ''; const t = new Date(d + 'T00:00:00Z'); return (!isNaN(t) && t.toISOString().slice(0, 10) === d) ? d : ''; };
 const dateOf = c => { const d = isoDay(c.recorded_at); return d ? ' ' + d : ''; };
-// 截止日还没到的承诺不算「没落地」：这里按上海日期直接标出来，模型不用自己算今天几号（提示词规定标了就不回查）。
-const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+// 截止日还没到的承诺不算「没落地」：这里按设备日期直接标出来，模型不用自己算今天几号（提示词规定标了就不回查）。
+const todayISO = () => localTime.localDay();
 const dueMark = c => { const d = isoDay(c.due); return (d && d > todayISO()) ? '（截止未到）' : ''; };
 function toPromptBlock(cards) {
   if (!cards.length) return '';

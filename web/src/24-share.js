@@ -46,7 +46,7 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
 </div></body></html>`;
   }
   const dl = (name, text, mime) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff'+text], {type:mime+';charset=utf-8'})); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 4000); };
-  const fileBase = () => `听会台_${(cur.title||'会议').slice(0,20).replace(/[\\/:*?"<>|]/g,'')}_${new Date(cur.start).toISOString().slice(0,10)}`;
+  const fileBase = () => { const d=new Date(cur.start), day=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); return `听会台_${(cur.title||'会议').slice(0,20).replace(/[\\/:*?"<>|]/g,'')}_${day}`; };
   async function archiveTo(target, quiet){
     if (!cur) return false;
     if (!cfg.relayToken) { note(T('arch_notoken') || '还没填 Mac 中转口令，去设置里填一下。', true); return false; }
