@@ -3346,7 +3346,7 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
 </div></body></html>`;
   }
   const dl = (name, text, mime) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff'+text], {type:mime+';charset=utf-8'})); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 4000); };
-  const fileBase = () => `听会台_${(cur.title||'会议').slice(0,20).replace(/[\\/:*?"<>|]/g,'')}_${new Date(cur.start).toISOString().slice(0,10)}`;
+  const fileBase = () => { const d=new Date(cur.start), day=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); return `听会台_${(cur.title||'会议').slice(0,20).replace(/[\\/:*?"<>|]/g,'')}_${day}`; };
   async function archiveTo(target, quiet){
     if (!cur) return false;
     if (!cfg.relayToken) { note(T('arch_notoken') || '还没填 Mac 中转口令，去设置里填一下。', true); return false; }
@@ -3422,6 +3422,7 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
   $('#mk-doc').onclick=()=>{if(!toggleDialog('#meeting-archive'))return;renderArchive();$('#meeting-archive').showModal();refreshArchive();};
   $('#archive-current').onclick=async()=>{const b=$('#archive-current');b.disabled=true;try{if(await archiveTo('local',true))await refreshArchive();}finally{b.disabled=running;}};
   $('#b-notes').onclick=()=>{if(!toggleDialog('#meeting-notes'))return;loadAssets();renderAnalysis();if(!cur){note(archiveEnglish()?'Start a meeting first.':'开始听会后即可记笔记。');return;}$('#personal-notes').value=cur.notes||'';$('#notes-title').textContent=archiveEnglish()?'Material':'补充材料';$('#notes-hint').textContent=archiveEnglish()?'Saved on this device as you type. Notes taken during the meeting are archived with it; the transcript stays unchanged.':'随手记重点。笔记自动保存在本机，会中笔记随会议归档；不会改写原话。';$('#meeting-notes').showModal();};
+
   // ===== 「给我的 Agent 先做做看」：只挂在待办上，交给助手先出一版可执行方案，你只要点确认 =====
   let draftBusy=false;
   async function draftFor(text){
@@ -3625,7 +3626,7 @@ ${visibleViews().length?`<h2>${ui==='en'?'Views':'看法'} · ${visibleViews().l
   // POST /insight-action {id, cardId, do, args, confirmed:true[, retryConfirmed]}；执行态由 ws {type:'insightAction'} 推回来（applyInsightAction）。
   // set_date 先问两句（负责人默认承诺人、截止默认今天 +7），按取消就什么都不发。旁听（viewOnly）不出按钮动作。
   function insightCardOf(node){ const c=node.closest('.card.ck'); if(!c||!cur) return null; const id=c.dataset.id; return (cur.factchecks||[]).find(x=>id&&x.id===id)||null; }
-  function shDate(plus){ const d=new Date(Date.now()+8*3600e3+(plus||0)*86400e3); return d.toISOString().slice(0,10); }
+  function shDate(plus){ const d=new Date(); d.setDate(d.getDate()+(plus||0)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   async function insightPost(body){
     const r=await fetch(relayBase()+'/insight-action?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(90000)});
     let j=null; try{ j=await r.json(); }catch(e){}
