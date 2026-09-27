@@ -631,12 +631,14 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     <textarea id="personal-notes" rows="5" maxlength="20000" aria-label="补充材料 / Supplementary material" placeholder="写点什么，或把图片拖进来 / 粘进来（⌘V）"></textarea>
     <div class="composer-bar">
       <button class="btn sm" id="asset-add" type="button">＋ 图片 / PDF</button>
+      <button class="btn sm" id="asset-camera" type="button">拍照</button>
       <span id="asset-msg" class="msg"></span>
       <span style="flex:1"></span>
       <span id="asset-send-msg" class="msg"></span>
       <button class="btn primary" id="asset-send" type="button" disabled>发送给助手看</button>
     </div>
     <input type="file" id="asset-input" accept="image/*,application/pdf" multiple hidden>
+    <input type="file" id="asset-camera-input" accept="image/*" capture="environment" hidden>
   </div>
   <div id="asset-analysis"></div>
 </div></dialog>
