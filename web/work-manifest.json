@@ -1,7 +1,7 @@
 {
   "name": "工作台",
   "short_name": "工作台",
-  "description": "Aaron 的总待办、项目与日报 — 听会台同一套数据",
+  "description": "我的总待办、项目与日报 — 听会台同一套数据",
   "start_url": "./work.html",
   "scope": "./",
   "display": "standalone",

@@ -55,8 +55,6 @@ function fakeAsk(seen, { failOn = null } = {}) {
       const idx = JSON.parse(opts.user.slice(opts.user.indexOf('要预研究的事项：') + 8));
       return answer({ items: idx.map(x => ({ i: x.i, scope: '覆盖 A/B', sources: ['公开论文'], expected: '给出一张对照表' })) });
     }
-    if (/整条项目线上处在什么位置/.test(s)) return answer({ position: '这场把输入方式收敛到两条路，卡在 ID 形态没定' });
-    if (/有没有硬冲突/.test(s)) return answer({ risks: [] });
     if (/读这些项目文件/.test(s)) return answer({ items: ['把 D1 定下来', '把 D3 定下来', '把概念 A/B 判据定下来'] });
     return answer({});
   };
@@ -96,7 +94,6 @@ test('卡片来自待办 + 建议两处；建议正文进 advice，「建议怎�
   assert.equal(out.cards.length, 9);                                   // 5 条待办 + 4 条建议
   assert.equal(out.cards.filter(c => c.adviceIndex !== undefined).length, 4);
   for (const c of out.cards.filter(c => c.adviceIndex !== undefined)) assert.equal(c.advice, c.text);
-  assert.ok(out.thinking.position.includes('卡在'));
 });
 
 test('预研究每场最多 3 条，多出来的标明没跑，不偷偷跑第 4 次模型', async () => {
@@ -155,19 +152,6 @@ test('重新生成：已打叉 / 已发出 / 已认领的状态按文本对回�
   assert.equal(back.sentRef.url, 'https://example.invalid/e/1');
 });
 
-test('风险提示：没配事实源整块不跑；配了但没有硬冲突时 risks 为空', async () => {
-  const dir = tmp('actions-risk'), seen = [];
-  await withFakeAsk(seen, {}, () => actions.generate({ dir, sessionId: ENHANCED.id, enhanced: ENHANCED, env: baseEnv(), dataDir: dir }));
-  assert.equal(seen.filter(x => /有没有硬冲突/.test(x.system)).length, 0, '没配 FACT_SOURCE_FILES 就一次模型都不该调');
-  assert.deepEqual(actions.read(dir, ENHANCED.id).risks, []);
-
-  const dir2 = tmp('actions-risk2'), seen2 = [], factFile = path.join(dir2, 'facts.md');
-  fs.writeFileSync(factFile, '# 决策板\nD1 未定。\n');
-  const out = await withFakeAsk(seen2, {}, () => actions.generate({ dir: dir2, sessionId: ENHANCED.id, enhanced: ENHANCED, env: { ...baseEnv(), FACT_SOURCE_FILES: [factFile] }, dataDir: dir2 }));
-  assert.equal(seen2.filter(x => /有没有硬冲突/.test(x.system)).length, 1);
-  assert.deepEqual(out.risks, []);
-});
-
 test('项目最重要的三件事：同一天两次读到的逐字一致，模型只算一次；没配就整块不显示', async () => {
   const dir = tmp('actions-focus'), seen = [], focusFile = path.join(dir, 'state.md');
   fs.writeFileSync(focusFile, '项目状态：D1 和 D3 都没定。\n');
@@ -194,7 +178,7 @@ test('隐私：团队名单 / 项目文件 / 事实源进 prompt 的调用一律
     await actions.projectFocus({ dataDir: dir, env });
   });
   const sensitive = seen.filter(x => x.user.includes('团队名单文件原文') || x.user.includes('事实源：') || x.user.includes('项目状态'));
-  assert.ok(sensitive.length >= 3, '这三类调用都要出现');
+  assert.ok(sensitive.length >= 2, '团队名单 / 项目文件这两类调用都要出现（事实源那一类随风险提示 09-25 删除）');
   for (const c of sensitive) assert.equal(c.noFallback, true, '带本机文件内容的调用不许降级：' + c.system.slice(0, 24));
   // 反面：只带会议内容的分类调用可以走降级链，否则模型一挂整页空白
   assert.equal(seen.find(x => /事项分类/.test(x.system)).noFallback, false);
@@ -248,8 +232,6 @@ process.stdin.on('end', () => {
     const idx = JSON.parse(input.slice(input.indexOf('要预研究的事项：') + 8));
     return out({ items: idx.map(x => ({ i: x.i, scope: '覆盖 A/B', sources: ['公开论文'], expected: '一张对照表' })) });
   }
-  if (/整条项目线上处在什么位置/.test(sys)) return out({ position: '卡在 ID 形态没定' });
-  if (/有没有硬冲突/.test(sys)) return out({ risks: [] });
   if (/读这些项目文件/.test(sys)) return out({ items: ['定 D1', '定 D3', '定 A/B 判据'] });
   out({});
 });
@@ -291,8 +273,6 @@ test('路由与外发门禁：只有 do:"send" 会碰 lark-cli，其余动作和
     assert.ok(meeting, '有一张「我要组织的会」');
     assert.deepEqual(meeting.draft.attendees, ['John Du', 'Shawn Hu'], '互斥组保险在真服务上也生效');
     assert.ok(A.cards.filter(c => c.kind === 'research' && c.draft).length <= actions.MAX_RESEARCH);
-    assert.deepEqual(A.risks, [], '没配事实源就不出风险');
-    assert.ok(A.thinking.position);
 
     // 第二句：同一天两次逐字一致
     const f1 = await get('/project-focus'), f2 = await get('/project-focus');
@@ -302,9 +282,9 @@ test('路由与外发门禁：只有 do:"send" 会碰 lark-cli，其余动作和
     // 第 20 条（2026-09-22）：处理台的每次模型调用都要进用量账，带资料的那几次要有 contextHash / contextParts
     const usage = fs.readFileSync(path.join(dir, 'state', 'usage.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
     const byPurpose = p => usage.filter(u => u.purpose === p);
-    for (const p of ['actions.classify', 'actions.calendar', 'actions.position', 'actions.focus'])
+    for (const p of ['actions.classify', 'actions.calendar', 'actions.focus'])
       assert.ok(byPurpose(p).length >= 1, '处理台的 ' + p + ' 这次调用没记进用量账');
-    for (const p of ['actions.classify', 'actions.calendar', 'actions.position'])
+    for (const p of ['actions.classify', 'actions.calendar'])
       assert.equal(byPurpose(p)[0].sessionId, sid, p + ' 没记会议 id');
     const focusRow = byPurpose('actions.focus')[0];
     assert.ok(focusRow.contextHash && /^[0-9a-f]{8,}$/i.test(focusRow.contextHash), '带了项目文件的调用要记 contextHash，拿到的是 ' + JSON.stringify(focusRow.contextHash));
@@ -388,13 +368,20 @@ test('页面契约：「建议怎么做」「可能讲错的」「合适的部�
     assert.ok(!noComment(js).includes(gone), 'archive.js 里不该再有「' + gone + '」');
     assert.ok(!noComment(html).includes(gone), 'archive.html 里不该再有「' + gone + '」');
   }
-  // 顺序（09-22 Aaron 定「飞书纪要式」）：1 一屏速览（结论加粗）→ 2 议题 → 3 待办表 → 一句话对话框 → 一句话思考 → 风险提示。
-  // 文案走 t() 字典，所以在拼 #bf-sum 的那一段里按文案键排，不按中文原文排。
-  const seg = js.slice(js.indexOf("$('#bf-sum').innerHTML="), js.indexOf('paintActions();'));
+  // 顺序（09-24 Aaron 定，取代 09-22）：左栏 智能总结 = 1 一屏速览（结论加粗）→ 议题折叠 → 2 项目状态更新；
+  // 右栏 洞察与行动 = 洞察（风险提示 → 偏离/背景 → 一句话思考）→ 行动（待办表 → 一句话对话框）。议题细节不再平铺，待办不再压在议题下面。
+  const seg = js.slice(js.indexOf("$('#bf-sum').innerHTML="), js.indexOf("$('#bf-rev').innerHTML="));
   assert.ok(seg.length > 200, '没找到 #bf-sum 的拼装段落');
-  const order = ["t('quick')", "t('topics')", 'bf-cards', 'bf-say', 'bf-think', 'bf-risks'].map(k => seg.indexOf(k));
-  assert.ok(order.every(i => i >= 0), '这六块都要在 #bf-sum 里渲染：' + JSON.stringify(order));
-  for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], '第 ' + i + ' 块的顺序不对');
+  const left = ["t('keyc')", "t('topics')", 'bf-tt', 'bf-brain'].map(k => seg.indexOf(k));
+  assert.ok(left.every(i => i >= 0), '左栏这几块都要在 #bf-sum 里渲染：' + JSON.stringify(left));
+  for (let i = 1; i < left.length; i++) assert.ok(left[i] > left[i - 1], '左栏第 ' + i + ' 块的顺序不对');
+  for (const gone of ['bf-cards', 'bf-say']) assert.ok(!seg.includes(gone), gone + ' 不该还在智能总结栏里');
+  const rseg = js.slice(js.indexOf("$('#bf-rev').innerHTML="), js.indexOf("querySelectorAll('[data-say]')"));
+  const order = ["t('ins')", 'bf-rev-items', "t('acts')", 'bf-cards', 'bf-say'].map(k => rseg.indexOf(k));
+  assert.ok(js.includes('b.insights'), '洞察要读 brief.insights 并编号渲染');
+  assert.ok(order.every(i => i >= 0), '右栏这五块都要在 #bf-rev 里渲染：' + JSON.stringify(order));
+  for (let i = 1; i < order.length; i++) assert.ok(order[i] > order[i - 1], '右栏第 ' + i + ' 块的顺序不对');
+  assert.ok(html.includes('洞察与行动') && !html.includes('点评与指导'), '右栏标题应是「洞察与行动」');
   // 中英文都要有
   assert.ok(js.includes("uiLang==='en'") || js.includes('T('), 'archive.js 要有中英文文案');
 });

@@ -41,13 +41,13 @@ test('② outputRules：只新增 + 上限；sweep 才有「只补漏」；英�
 
 test('③ 输出上限 700 只走接口路；命令行不设 CLAUDE_CODE_MAX_OUTPUT_TOKENS（超限是整次报错）；分诊关思考走 MAX_THINKING_TOKENS，只给 claude 设', () => {
   assert.equal(T.MAX_OUTPUT_TOKENS, 700);
-  assert.match(server, /triageFast\.MAX_OUTPUT_TOKENS, 'live', trace\)/, '分诊 askModel 用常量');
+  assert.match(server, /liveInsight\.MAX_OUTPUT_TOKENS, 'live', trace\)/, '分诊 askModel 用常量（09-24 起分诊只出一条洞察，常量在 app/live-insight.js）');
   assert.doesNotMatch(server, /【最新转写】\\n\$\{recent\}\$\{userReminder\}`, 2000/, '2000 那个字面量该没了');
   const cli = fs.readFileSync(path.join(root, 'app/cli-llm.js'), 'utf8');
   assert.doesNotMatch(cli, /CLAUDE_CODE_MAX_OUTPUT_TOKENS:/, '不许给命令行设硬输出上限（09-22 实测 haiku 上限 60：is_error「exceeded the 60 output token maximum」，整次报废）');
   assert.match(cli, /kind === 'claude' && [^\n]*\{ MAX_THINKING_TOKENS: String\(Math\.max\(0, Math\.floor\(Number\(thinking\)\)\)\) \}/, '只有 claude 命令行按 thinking 设 MAX_THINKING_TOKENS');
   const llm = fs.readFileSync(path.join(root, 'app/llm.js'), 'utf8');
-  assert.match(llm, /cliLlm\.askDetailed\(p\.kind, user, \{[^}]*thinking \}\)/, 'llm.js 的 cli 适配器把 thinking 传下去');
+  assert.match(llm, /cliLlm\.askDetailed\(p\.kind, user, \{[^}]*thinking, tools(, purpose)? \}\)/, 'llm.js 的 cli 适配器把 thinking（和 tools）传下去');
   assert.match(server, /thinking: triageFast\.liveThinking\(this\.env\)/, '分诊 trace 带 thinking');
   assert.match(server, /thinking: trace \? trace\.thinking : undefined/, 'askModel 把 trace.thinking 递给 llm.ask');
   // liveThinking 的解析：'0' 关；'' / 缺 / 非法 → 不干预；正整数原样
@@ -93,10 +93,10 @@ test('⑤ PackDelta：首次 full，同 hash → 一行占位 + same，hash 变 
 
 test('⑥ 定时器：gate on 120 s 兜底、off 25 s；server.js 用它', () => {
   assert.equal(T.triageInterval(true), 120000); assert.equal(T.triageInterval(false), 25000);
-  assert.match(server, /setInterval\(\(\) => this\.runTriage\(\), triageFast\.triageInterval\(this\.jev\.enabled\)\)/);
+  assert.match(server, /setInterval\(\(\) => this\.runTriage\(\), triageFast\.triageInterval\(this\.jev\.active\)\)/);
   assert.doesNotMatch(server, /this\.jev\.enabled \? 60000 : 25000/, '旧的 60 s 三元该没了');
   // 兜底轮的提示词：门卫开着且不是门卫触发 → sweep
-  assert.match(server, /triageFast\.outputRules\(\{ enUI, sweep: gateOn && !gate \}\)/);
+  assert.match(server, /liveInsight\.systemPrompt\(\{ enUI, sweep: gateOn && !gate \}\)/, '09-24 起 outputRules 并进 live-insight.systemPrompt，sweep 语义不变');
 });
 
 test('⑦ JEV_REALTIME 是 JEV_GATE 的别名：config.aliasJev 与 settingsOf 两处；JEV_GATE 写了以它为准', () => {

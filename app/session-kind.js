@@ -23,6 +23,5 @@ function durationSec(s) {
   return end && start ? Math.max(0, Math.round((end - start) / 1000)) : 0;
 }
 
-const isReal = s => kindOf(s) === 'real';
 
-module.exports = { kindOf, isReal, TEST_ID };
+module.exports = { kindOf, TEST_ID };

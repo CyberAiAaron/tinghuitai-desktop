@@ -8,6 +8,9 @@ const root = path.join(__dirname, '..'), pause = ms => new Promise(r => setTimeo
 const freePort = () => new Promise(r => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 const IA = require(path.join(root, 'app/insight-actions.js'));
 const TOKEN = 'k'.repeat(40), SID = 'ia-b4';
+// 命题文档 token 是个人配置（<数据目录>/docs.json），测试写一份
+const DOC_TOKENS = {"board": "FakeDocA2hQ000000000000000000", "prd": "FakeDocCOqz000000000000000000", "arch": "FakeDocUifY000000000000000000", "ur": "FakeDocRxi9000000000000000000", "intel": "FakeDocSRLM000000000000000000"};
+const writeDocs = d => fs.writeFileSync(path.join(d, 'docs.json'), JSON.stringify(DOC_TOKENS));
 const PAGE = { said: 'Cary 说流失率是 4.1%', recorded: '决策板 D3（2026-09-17）记的是 6.3%', source: '决策板 D3，2026-09-17 夜间导出', decision: '已附决策板文档链接，会后总结带冲突条' };
 
 // ---------- 单元：onePager ----------
@@ -70,6 +73,7 @@ function kbFixture() {
 }
 async function startServer({ dir, port, cli, kb, claude }) {
   fs.mkdirSync(path.join(dir, 'pending'), { recursive: true });
+  writeDocs(dir);
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ RELAY_TOKEN: TOKEN, ARCHIVE_TARGET: 'local', MEMORY_PROJECTION_DIR: path.join(dir, 'mem'), DECISION_BOARD_DIR: kb, INSIGHT_ACTION_GRACE_MS: 0, LLM_PROVIDER: 'claude' }));
   const child = spawn(process.execPath, [path.join(root, 'app/server.js')], { env: { ...process.env, THT_DATA_DIR: dir, THT_PORT: String(port), THT_NO_OPEN: '1', THT_TEST: '1', THT_LARK_CLI: cli.bin, THT_CLAUDE_BIN: claude, FAKE_LOG: path.join(dir, 'claude.log'), FAKE_RESULT: JSON.stringify(PAGE) }, stdio: 'ignore' });
   const base = 'http://127.0.0.1:' + port;
@@ -105,7 +109,7 @@ test('POST /insight-action one_pager：只在上一动作 done 后可用；post 
     const file = IA.onePagerFile(dir, SID, cid); assert.ok(fs.existsSync(file), 'HTML 落 exports/one-pager/');
     // 会后台按 path 打开：带口令 200 HTML；不带口令 401；编号不合法 400；没有的 404
     let g = await fetch(S.base + '/asr-relay/' + r.j.state.path + '&token=' + TOKEN); assert.equal(g.status, 200); assert.match(g.headers.get('content-type'), /text\/html/);
-    const html = await g.text(); for (const h of ['会上说什么', '记录是什么', '出处', '这次怎么定']) assert.ok(html.includes('<h2>' + h + '</h2>'), h); assert.ok(html.includes(PAGE.said) && html.includes('href="https://example.test/docx/A2hQdjgAUoIV1vxecJzlFw57gId"'));
+    const html = await g.text(); for (const h of ['会上说什么', '记录是什么', '出处', '这次怎么定']) assert.ok(html.includes('<h2>' + h + '</h2>'), h); assert.ok(html.includes(PAGE.said) && html.includes('href="https://example.test/docx/FakeDocA2hQ000000000000000000"'));
     g = await fetch(S.base + '/asr-relay/' + r.j.state.path, { headers: { origin: 'https://phone.example', 'sec-fetch-site': 'cross-site' } }); assert.equal(g.status, 401, '外来请求不带口令拿不到');
     g = await fetch(S.base + '/asr-relay/one-pager?id=../x&card=' + cid + '&token=' + TOKEN); assert.equal(g.status, 400);
     g = await fetch(S.base + '/asr-relay/one-pager?id=' + SID + '&card=nope&token=' + TOKEN); assert.equal(g.status, 404);

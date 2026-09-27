@@ -2,7 +2,7 @@
   // POST /insight-action {id, cardId, do, args, confirmed:true[, retryConfirmed]}；执行态由 ws {type:'insightAction'} 推回来（applyInsightAction）。
   // set_date 先问两句（负责人默认承诺人、截止默认今天 +7），按取消就什么都不发。旁听（viewOnly）不出按钮动作。
   function insightCardOf(node){ const c=node.closest('.card.ck'); if(!c||!cur) return null; const id=c.dataset.id; return (cur.factchecks||[]).find(x=>id&&x.id===id)||null; }
-  function shDate(plus){ const d=new Date(Date.now()+8*3600e3+(plus||0)*86400e3); return d.toISOString().slice(0,10); }
+  function shDate(plus){ const d=new Date(); d.setDate(d.getDate()+(plus||0)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   async function insightPost(body){
     const r=await fetch(relayBase()+'/insight-action?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(90000)});
     let j=null; try{ j=await r.json(); }catch(e){}
@@ -30,14 +30,27 @@
     }catch(e){ setSt({status:'failed',do:doAct,at:Date.now(),error:e.message||String(e)}); }
     persist(); resetSigs(); render();
   }
+  // 会中洞察卡的那一个按钮（app/live-insight.js）：todo = 加进本场待办（走现有「收进工作台」接口同步）；ask = 复制到剪贴板 + 显示「你可以问：…」；note = 记进要点日志；handoff 只显示（回看页那边接 person-handoff）。
+  el.ck.addEventListener('click', async e=>{
+    const b=e.target.closest('button.live-act'); if(!b||b.disabled) return;
+    e.stopPropagation(); e.preventDefault();
+    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only the owner can run this.':'旁听只能看，动作要本人点。'); return; }
+    const it=insightCardOf(b); if(!it||!it.action) return;
+    const d=b.dataset.do||it.action.do, text=String(it.action.text||'').trim(); if(!text) return;
+    const at=Date.now();
+    if(d==='todo'){ if(!(cur.todos||[]).some(t=>t&&t.text===text)) cur.todos.push({id:'m'+at,at,text,owner:ui==='en'?'me':'本人',how:'',fromInsight:it.id||''}); it.liveDone={do:'todo',at}; persist(); resetSigs(); render(); try{ if(macOnline) await hubAPI('session',{session:cur}); }catch(err){} return; }
+    if(d==='ask'){ let copied=false; try{ await navigator.clipboard.writeText(text); copied=true; }catch(err){} it.liveDone={do:'ask',at,copied}; persist(); resetSigs(); render(); return; }
+    if(d==='note'){ if(!(cur.highlights||[]).some(h=>h&&h.text===text)) cur.highlights.push({id:'m'+at,at,text,log:true,fromInsight:it.id||''}); it.liveDone={do:'note',at}; persist(); resetSigs(); render(); return; }
+  }, true);
   el.ck.addEventListener('click', async e=>{
     const b=e.target.closest('button'); if(!b) return;
+    if(b.classList.contains('live-act')) return;
     // 批 4：纠错单是本机文件，链接 = relayBase()/one-pager?id&card + 口令（data-path），不是外网 URL
     if(b.classList.contains('insight-open')){ e.stopPropagation(); const url=b.dataset.path?(relayBase()+'/'+b.dataset.path+'&token='+encodeURIComponent(cfg.relayToken||'')):(b.dataset.url||''); if(!url) return; let abs=''; try{ abs=new URL(url,location.href).href; }catch(err){ return; } window.open(abs,'_blank','noopener'); return; }
     if(b.classList.contains('insight-cancel')){ e.stopPropagation(); const it=insightCardOf(b); if(!it) return; try{ await insightPost({id:cur.id,cardId:it.id,do:'cancel'}); }catch(err){} return; }
     if(!b.classList.contains('insight-act')) return;
     e.stopPropagation();
-    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only Aaron can run this.':'旁听只能看，动作要 Aaron 本人点。'); return; }
+    if(cur&&cur.viewOnly){ alert(ui==='en'?'View-only: only the owner can run this.':'旁听只能看，动作要本人点。'); return; }
     const it=insightCardOf(b); if(!it) return;
     const d=b.dataset.do||''; let args={};
     // offer 态的「照会上说的新建」：沿用上次填的负责人 / 截止（服务端存在 actionState.args），只加 createIfMissing，不再弹两句

@@ -12,23 +12,30 @@
 const fs = require('fs'), path = require('path');
 const board = require('./decision-board');
 const larkCli = require('./tools/lark');   // 找人 / 文档链接 / 建任务：命令行只在工具层拼（tests/tools-architecture），这里只调函数
+const localTime = require('./local-time');
 
-const SELF_OPEN_ID = 'ou_00c28e8ed0b15769a9a5f5e4ea36f7e8';   // 本人（需求单 §1）
 const QUOTE_MAX = 200;
 const NOT_FOUND = '资料里没有这个数';
-// 命题文档：文件名前缀 → 飞书 token（需求单 §3 表）。
-const DOCS = [
-  { key: 'board', prefix: '决策板D1-D8', label: '决策板', token: 'A2hQdjgAUoIV1vxecJzlFw57gId', match: /决策板|decision board/i },
-  { key: 'prd', prefix: '产品需求总纲', label: '产品需求总纲', token: 'COqzdiAr6oGyX3xZb6alPLxQghg', match: /总纲|PRD/i },
-  { key: 'arch', prefix: '技术架构', label: '技术架构', token: 'UifYd8eGCoxyyuxEIZjlzBHNgae', match: /技术架构|架构文档/ },
-  { key: 'ur', prefix: '用研', label: '用研', token: 'Rxi9djN7vo9FrwxWXhhlYsmQgAR', match: /用研|用户研究/ },
-  { key: 'intel', prefix: '行业与竞品情报', label: '行业与竞品情报', token: 'SRLMdavSXoUyEnxhZyllQe9qgEh', match: /行业|竞品/ },
+// 命题文档：文件名前缀 → 飞书 token。token 是个人配置，从 <数据目录>/docs.json（{key: token}）读；包里默认 null。
+const DOCS_BASE = [
+  { key: 'board', prefix: '决策板D1-D8', label: '决策板', token: null, match: /决策板|decision board/i },
+  { key: 'prd', prefix: '产品需求总纲', label: '产品需求总纲', token: null, match: /总纲|PRD/i },
+  { key: 'arch', prefix: '技术架构', label: '技术架构', token: null, match: /技术架构|架构文档/ },
+  { key: 'ur', prefix: '用研', label: '用研', token: null, match: /用研|用户研究/ },
+  { key: 'intel', prefix: '行业与竞品情报', label: '行业与竞品情报', token: null, match: /行业|竞品/ },
 ];
+function loadDocTokens() {
+  const f = process.env.THT_DATA_DIR ? path.join(process.env.THT_DATA_DIR, 'docs.json') : '';
+  if (!f) return {};
+  try { const j = JSON.parse(fs.readFileSync(f, 'utf8')); return j && typeof j === 'object' ? j : {}; } catch (e) { return {}; }
+}
+// 每次现读（数据目录可能在启动后才定 / 测试里换目录）
+const docs = () => { const t = loadDocTokens(); return DOCS_BASE.map(d => ({ ...d, token: typeof t[d.key] === 'string' && t[d.key] ? t[d.key] : null })); };
 const expand = p => path.resolve(String(p).replace(/^~(?=\/)/, process.env.HOME || '~'));
 const clip = (s, n) => { const a = [...String(s || '')]; return a.length > n ? a.slice(0, n - 1).join('') + '…' : a.join(''); };
 const flat = s => String(s || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
-const todayISO = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
-const plusDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const todayISO = () => localTime.localDay();
+const plusDays = localTime.addIsoDays;
 const isoDay = v => { const d = String(v || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return ''; const t = new Date(d + 'T00:00:00Z'); return (!isNaN(t) && t.toISOString().slice(0, 10) === d) ? d : ''; };
 
 // ---------- 找文件 ----------
@@ -124,7 +131,7 @@ function parseBoardRef(source, refs) {
 }
 function resolveBoard(source, refs, ctx) {
   const dId = parseBoardRef(source, refs);
-  const latest = latestKb(ctx.dir, DOCS[0].prefix);
+  const latest = latestKb(ctx.dir, docs()[0].prefix);
   if (!latest) return null;
   let raw; try { raw = fs.readFileSync(latest.file, 'utf8'); } catch (e) { return null; }
   const rows = board.extractRows(raw);
@@ -133,7 +140,7 @@ function resolveBoard(source, refs, ctx) {
   if (row) quote = clip([`${row.id} ${row.name}`, row.lean, row.due ? `期限 ${row.due}` : '', row.state ? `状态 ${row.state}` : ''].filter(Boolean).join('｜'), QUOTE_MAX);
   else { const sec = findSection(raw, '', ctx.needles); quote = sec ? quoteFrom(sec.body, ctx.needles, ctx.hints) : ''; }
   if (!quote) return null;
-  return { kind: 'board', label: '决策板' + (dId ? ' ' + dId : ''), date: latest.date, file: latest.file, quote, token: DOCS[0].token, section: dId };
+  return { kind: 'board', label: '决策板' + (dId ? ' ' + dId : ''), date: latest.date, file: latest.file, quote, token: docs()[0].token || null, section: dId };
 }
 function resolveDocFile(doc, source, ctx) {
   const latest = latestKb(ctx.dir, doc.prefix);
@@ -143,7 +150,7 @@ function resolveDocFile(doc, source, ctx) {
   if (!sec) return null;
   const quote = quoteFrom(sec.body, ctx.needles, ctx.hints) || clip(sec.title, QUOTE_MAX);
   if (!quote) return null;
-  return { kind: doc.key, label: `${doc.label}《${sec.title}》`, date: latest.date, file: latest.file, quote, token: doc.token, section: sec.title };
+  return { kind: doc.key, label: `${doc.label}《${sec.title}》`, date: latest.date, file: latest.file, quote, token: doc.token || null, section: sec.title };
 }
 // 《会名》日期 / 09-12 硬件周会 → memory.db 里那场的承诺 / 决定卡
 function parseMeetingRef(source) {
@@ -188,9 +195,9 @@ async function resolveSource(source, refs, opts = {}) {
   const ctx = { dir: opts.dir || kbDir(env), needles: needlesOf(opts.claim, refs), hints: hintsOf(opts.claim, opts.evidence), db: opts.db || null };
   const src = String(source || '');
   let hit = null;
-  const isBoard = DOCS[0].match.test(src) || (refs || []).some(r => /^D[1-9]$/.test(String(r)));
+  const isBoard = docs()[0].match.test(src) || (refs || []).some(r => /^D[1-9]$/.test(String(r)));
   if (isBoard) hit = resolveBoard(src, refs, ctx);
-  if (!hit) for (const doc of DOCS.slice(1)) if (doc.match.test(src)) { hit = resolveDocFile(doc, src, ctx); if (hit) break; }
+  if (!hit) for (const doc of docs().slice(1)) if (doc.match.test(src)) { hit = resolveDocFile(doc, src, ctx); if (hit) break; }
   if (!hit && parseMeetingRef(src)) hit = resolveMeeting(src, ctx);
   let mapHit = null;
   if (!hit) {
@@ -261,7 +268,7 @@ function matchPromise(db, card) {
   for (const row of rows) { const q = ops.terms(row.topic + ' ' + row.text); if (!q.length) continue; let hit = 0; for (const w of q) if (hay.includes(w)) hit++; const score = hit >= 2 && hit / q.length >= 0.3 ? hit / q.length : 0; if (score > bestScore) { best = row; bestScore = score; } }
   return best;
 }
-const isSelf = o => !o || o === '本人' || /^aaron(\s*wang)?$/i.test(o);
+const isSelf = o => !o || /^(本人|我|我自己|自己|me|myself)$/i.test(String(o).trim());
 
 // set_date：建飞书任务 + 承诺卡写 due / 状态。args {owner, due, title}
 // 负责人默认顺序：按钮参数 owner → 模型给的 action.args.owner/who → 同一件事的承诺卡 owner → 本人。回退本人时卡片 task.ownerFrom 说明为什么。
@@ -276,12 +283,14 @@ async function setDate({ card, args = {}, session = {}, env, db, log = () => {},
   let ownerFrom = owner ? 'args' : '';
   if (!owner && best && String(best.owner || '').trim()) { owner = String(best.owner).trim().slice(0, 60); ownerFrom = 'promise'; }
   if (!owner) ownerFrom = 'self';
-  let assignee = SELF_OPEN_ID, note = '';
+  let assignee = '', note = '';
   if (!isSelf(owner)) {
     const got = await larkCli.resolveIds([owner], { execImpl, log });
     const id = got.ok ? (got.ids || [])[0] : '';
     if (id) assignee = id; else note = `代办对象：${owner}`;
   }
+  // 默认建给当前登录的飞书用户本人；拿不到就不传 --assignee（taskCreate 对空值不拼参数）
+  if (!assignee) { try { assignee = String((await larkCli.selfOpenId({ execImpl, log })) || ''); } catch (e) { assignee = ''; } }
   if (ownerFrom === 'self') note = [note, '负责人：承诺卡里没有记承诺人，先建给本人'].filter(Boolean).join('；');
   const title = clip(String(args.title || '').trim() || card.claim, 100);
   const desc = [card.claim, card.evidence ? `会上原话：「${card.evidence}」` : '', card.source ? `出处：${card.source}` : '', session.title ? `来自会议：${session.title}` : '', note].filter(Boolean).join('\n');
@@ -360,7 +369,7 @@ async function onePager({ card, session = {}, dataDir, ask, log = () => {} }) {
   const raw = await ask(ONE_PAGER_SYS, '【洞察卡与执行产物】\n' + facts + '\n\n只输出 JSON。');
   const body = parseOnePager(raw);
   if (!body) throw Object.assign(Error(raw ? '模型没按格式回，可重试' : '模型没有回应，可重试'), { definite: true });
-  const at = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16);
+  const at = new Date().toLocaleString('sv-SE').slice(0, 16);
   const title = clip((card.type === 'recheck' ? '承诺回查：' : '数字纠错：') + flat(card.claim), 60);
   const file = onePagerFile(dataDir, session.id, card.id);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -371,4 +380,4 @@ async function onePager({ card, session = {}, dataDir, ask, log = () => {} }) {
   return { ok: true, patch: { onePager: onePagerState }, attachment: { kind: 'one_pager', cardId: card.id, title, path: rel, file, at: onePagerState.at }, body };
 }
 
-module.exports = { resolveSource, openSource, setDate, matchPromise, OFFER_MSG, onePager, onePagerFile, parseOnePager, onePagerHtml, kbDir, latestKb, kbMapLookup, findSection, quoteFrom, recordedValue, correctionValue, parseMeetingRef, parseBoardRef, sections, NOT_FOUND, SELF_OPEN_ID, QUOTE_MAX, DOCS, ONE_PAGER_KEYS };
+module.exports = { resolveSource, openSource, setDate, matchPromise, OFFER_MSG, onePager, onePagerFile, parseOnePager, onePagerHtml, kbDir, latestKb, kbMapLookup, findSection, quoteFrom, recordedValue, correctionValue, parseMeetingRef, parseBoardRef, sections, NOT_FOUND, QUOTE_MAX, docs, ONE_PAGER_KEYS };

@@ -19,7 +19,6 @@
 // ⚠️ ⑤ 的前提是模型「记得上一次」。claude -p 每次都是新进程，模型其实看不到上一次那份资料；
 //    占位省的是输入 token，代价是那一轮没有项目背景可对照（conflict / answer 类洞察会少）。这是 Aaron 拍板的取舍，
 //    回放对照（scripts/replay-triage.js --compare）把两组的条目数并排给他看。→ 主对话 09-22 拍板：默认关，'1' 才开。
-const crypto = require('crypto');
 
 const MAX_OUTPUT_TOKENS = 700;
 const INTERVAL_GATE_ON_MS = 120000;
@@ -84,7 +83,6 @@ class PackDelta {
   snapshot() { return { lastHash: this.lastHash, full: this.full, same: this.same }; }
 }
 
-const hashOf = text => crypto.createHash('sha256').update(String(text || '')).digest('hex').slice(0, 12);
 
 module.exports = { MAX_OUTPUT_TOKENS, INTERVAL_GATE_ON_MS, INTERVAL_GATE_OFF_MS, HIT_WINDOW, SUMMARY_CHARS,
-  triageInterval, liveThinking, existedSummary, outputRules, gateWindow, PackDelta, hashOf };
+  triageInterval, liveThinking, existedSummary, outputRules, gateWindow, PackDelta };

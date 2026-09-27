@@ -31,22 +31,25 @@ async function send({ dataDir, kind, key, body = {}, meta = null, run }) {
   if (locks.has(lockId)) throw bad('正在发送，请勿重复点击', 409);
   let prev = null;
   try { prev = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { prev = null; }
-  if (prev && prev.status === 'sent') return { ...prev, alreadySent: true };
-  if (prev && body.retryConfirmed !== true) throw bad('上次发送结果还没确认，请先到对方那边核对，确认没发出去再重试', 409, { uncertain: true });
+  // 发过但没全成（partial）：带 retryFailed:true 才补发，run(prev) 只重做失败项；否则原样回收据
+  const resume = !!(prev && prev.status === 'sent' && prev.partial && body.retryFailed === true);
+  if (prev && prev.status === 'sent' && !resume) return { ...prev, alreadySent: true };
+  if (prev && !resume && body.retryConfirmed !== true) throw bad('上次发送结果还没确认，请先到对方那边核对，确认没发出去再重试', 409, { uncertain: true });
   locks.add(lockId);
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ status: 'pending', ...(meta || {}), at: Date.now() }), { mode: 0o600 });
     let out;
-    try { out = await run(); }
+    try { out = await run(resume ? prev : null); }
     catch (e) {
       // 对方明确说了「没发成」（definite）才清收据允许重来；含糊的（超时、网络断）留着 pending，
       // 下一次必须显式 retryConfirmed。宁可让人多看一眼，也不要重复外发。
-      if (e && e.definite) { try { fs.rmSync(file, { force: true }); } catch (x) {} }
+      if (resume) { try { fs.writeFileSync(file, JSON.stringify(prev), { mode: 0o600 }); } catch (x) {} }   // 补发没成：收据退回上一份，别把已成的三件变 pending
+      else if (e && e.definite) { try { fs.rmSync(file, { force: true }); } catch (x) {} }
       else if (e) e.uncertain = true;
       throw e;
     }
-    const receipt = { status: 'sent', ...(meta || {}), ...(out && typeof out === 'object' ? out : {}), at: Date.now() };
+    const receipt = { status: 'sent', ...(meta || {}), ...(out && typeof out === 'object' ? out : {}), at: Date.now(), ...(resume ? { resumed: true } : {}) };
     try { fs.writeFileSync(file, JSON.stringify(receipt), { mode: 0o600 }); } catch (e) {}
     return receipt;
   } finally { locks.delete(lockId); }

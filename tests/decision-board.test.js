@@ -25,7 +25,7 @@ v1.1 ｜ 2026-09-05（v1.0 2026-09-02）｜ 维护人：Aaron / Chansey 助理 �
 | D4 | 首发市场与商业目标 | 美国 / USD 500 / 10 万台能否同时成立 | 改量 ｜ 谈运营商 | 09-05 采纳：改量 + 耳机线创收；不押运营商渠道 | Aaron | 单向 | 09-22 | [倾向→定] |
 | D5 | BOM 口径统一 | 以哪版为准 | One BOM of record | 指定 Cary 成本模型为唯一口径 | Cary Luo / Abel Mei | 单向 | 09-22 | [待定] |
 | D6 | 无线充电规格 | 15W vs 25W | 三选一 | 15W 首发、预留 25W；结构优先内置磁吸 | Abel Mei | **双向** | 本周（09-05 前）会前拍掉 | [倾向] 自 08-21 挂起 |
-| D7 | Trust 方案范围与 owner | 软硬边界 | 两条 | Trust 定义已定；硬件四个 Trust 时刻见[架构 七](https://example.invalid/docx/UifYd8eGCoxyyuxEIZjlzBHNgae)；Owner 待定 | ⚠️ 待 Aaron 定 | 单向 | 09-22 | [待定] |
+| D7 | Trust 方案范围与 owner | 软硬边界 | 两条 | Trust 定义已定；硬件四个 Trust 时刻见[架构 七](https://example.invalid/docx/FakeDocUifY000000000000000000)；Owner 待定 | ⚠️ 待 Aaron 定 | 单向 | 09-22 | [待定] |
 | D8 | 资源与投入规模 | 量级 | 待 D3 | 一行：量级 + 与 AI SP「HARDWARE GATE」的关系 | Aaron | 单向 | 09-22 | [待定] |
 
 **依赖**：D1 未定卡 D2 / D6 / D7；D3 未定卡 D4 / D8。

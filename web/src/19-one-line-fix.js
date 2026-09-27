@@ -61,7 +61,7 @@
   async function handoffItem(task, said, itemText){
     try {
       const r = await fetch(relayBase()+'/handoff?token='+encodeURIComponent(cfg.relayToken||''), {method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ title: task.slice(0,200), detail: '会议里的这一条：' + itemText + (said && said !== task ? '\n\nAaron 的原话：' + said : ''), sessionId: cur && cur.id, meetingTitle: (cur && (cur.topicTitle||cur.title)) || '' }),
+        body: JSON.stringify({ title: task.slice(0,200), detail: '会议里的这一条：' + itemText + (said && said !== task ? '\n\n本人原话：' + said : ''), sessionId: cur && cur.id, meetingTitle: (cur && (cur.topicTitle||cur.title)) || '' }),
         signal: AbortSignal.timeout(20000)});
       return await r.json();
     } catch (e) { return { ok:false, error: e.message }; }
@@ -150,7 +150,6 @@
     const fixesBefore = JSON.parse(JSON.stringify(cur.fixes || []));
     const rulesBefore = JSON.parse(JSON.stringify(cur.assistantRules || []));
     const namesBefore = JSON.parse(JSON.stringify(cur.names || {}));
-    const stateNamesBefore = JSON.parse(JSON.stringify(state.names || {}));
     const memBefore = Array.isArray(assistantMemory) ? assistantMemory.slice() : [];
     const listWas = kind==='ck' ? 'factchecks' : (cur.highlights.includes(target.it) ? 'highlights' : (cur.todos.includes(target.it) ? 'todos' : ''));
     const done = [];
@@ -177,7 +176,7 @@
     }
     if (intent.names) {
       cur.names = cur.names || {};
-      for (const [id, nm] of Object.entries(intent.names)) { cur.names[id] = nm; state.names[id] = nm; done.push((ui==='en'?'S':'S') + id + ' = ' + nm); }
+      for (const [id, nm] of Object.entries(intent.names)) { cur.names[id] = nm; done.push((ui==='en'?'S':'S') + id + ' = ' + nm); }
       sendNames();
     }
     const lx = intent.lexicon;
@@ -208,7 +207,7 @@
       else { Object.keys(target.it).forEach(k => delete target.it[k]); Object.assign(target.it, before); }
       cur.fixes = fixesBefore;                       // 这一次记下的词一起收回
       cur.assistantRules = rulesBefore;              // 这一场的规则一起收回
-      cur.names = namesBefore; state.names = stateNamesBefore; sendNames();
+      cur.names = namesBefore; sendNames();
       // 长期规矩也收回：这一次新加的那几条从服务端删掉，回到点「撤销」之前的样子
       for (const t of assistantMemory.filter(x => !memBefore.includes(x))) { forgetRule(t).catch(()=>{}); }
       assistantMemory = memBefore.slice();
@@ -247,7 +246,7 @@
     if(running&&asrMode&&asrWs?.readyState===1){
       // Existing start handler updates context on the SAME connection. Omit hotwords
       // to avoid restarting the provider in the middle of an utterance.
-      asrWs.send(JSON.stringify({type:'start',sessionId:cur.id,rate:asrCtx?asrCtx.sampleRate:16000,lang:relayLang(),uiLang:ui,brief:effectiveBrief(cur),fixes:cur.fixes,transcriptEdits:cur.transcriptEdits||[],names:cur.names||{}}));
+      asrWs.send(JSON.stringify({type:'start',sessionId:cur.id,rate:asrCtx?asrCtx.sampleRate:16000,lang:relayLang(),uiLang:ui,brief:effectiveBrief(cur),fixes:cur.fixes,transcriptEdits:cur.transcriptEdits||[],names:cur.names||{},...meetingContextPayload(cur)}));
     }
   }
 

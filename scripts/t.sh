@@ -8,6 +8,9 @@
 set -u
 cd "$(dirname "$0")/.." || exit 2
 export PATH="/Users/aaron.wang/.local/bin:$PATH"
+export LIVE_CARD_WARMUP=off   # 老测试一开会就要分诊；热身本身由 tests/live-warmup.test.js 单测
+export THT_OWNERS_FILE="$(cd "$(dirname "$0")/.." && pwd)/tests/fixtures/owners.json"   # 负责人表个人版不进包，测试用 fixture
+export THT_LLM_AUTOPICK=off   # 测试不许真去跑本机 claude / codex
 OUT="${THT_TEST_OUT:-.tmp/test.out}"; mkdir -p "$(dirname "$OUT")"
 MODE="changed"; MSG=""; FILES=()
 case "${1:-}" in

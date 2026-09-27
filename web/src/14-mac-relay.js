@@ -15,9 +15,6 @@
     if (cfg.micLabel && /聚合|aggregate|听会台线上会/i.test(cfg.micLabel)) return 'asr-sys';
     return 'asr';
   }
-  const MODE_LABEL_ZH = {asr:'线下会', 'asr-sys':'线上会', ime:'输入法听写', browser:'浏览器识别', caption:'字幕', 'asr-tab':'线上会','asr-room':'线上+线下'};
-  const MODE_LABEL_EN = {asr:'In person', 'asr-sys':'Online call', ime:'IME dictation', browser:'Browser ASR', caption:'Captions', 'asr-room':'Online + room','asr-tab':'Tab audio'};
-  const modeLabel = m => (ui === 'en' ? MODE_LABEL_EN[m] : MODE_LABEL_ZH[m]) || MODE_LABEL_ZH[m] || m;
   function updateModeChip(){
     const b = document.querySelector('#mode-chip'); if (!b) return;
     const m=running&&startedMode?startedMode:resolveMode();

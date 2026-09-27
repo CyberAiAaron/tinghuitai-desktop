@@ -96,4 +96,82 @@ async function taskCreate({ summary, description = '', assignee = '', due = '' }
   return { ok: true, url, id };
 }
 
-module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, clip, norm };
+// 私聊发一条 markdown（交给某人 handoff 用，2026-09-24）。写类：调用方自己过确认门禁再来。
+async function messageSend({ openId, markdown }, opts = {}) {
+  if (!/^ou_[A-Za-z0-9]{1,64}$/.test(String(openId || ''))) return { ok: false, error: '收件人 open_id 不像样' };
+  const md = clip(String(markdown || '').trim(), 4000);
+  if (!md) return { ok: false, error: '消息是空的' };
+  const r = await runCli(['im', '+messages-send', '--user-id', openId, '--markdown', md, '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const d = (r.json && r.json.data) || {};
+  return { ok: true, messageId: String(d.message_id || (d.message && d.message.message_id) || '') };
+}
+
+// 私聊发一张交互卡片（会后自动推送给本人用，2026-09-25）。card = 卡片 JSON 对象；idem = 飞书侧幂等键（≤50 字）。
+async function cardSend({ openId, card, idem = '' }, opts = {}) {
+  if (!/^ou_[A-Za-z0-9]{1,64}$/.test(String(openId || ''))) return { ok: false, error: '收件人 open_id 不像样' };
+  if (!card || typeof card !== 'object') return { ok: false, error: '卡片是空的' };
+  const args = ['im', '+messages-send', '--user-id', openId, '--msg-type', 'interactive', '--content', JSON.stringify(card), '--as', 'user', '--format', 'json'];
+  if (idem) args.push('--idempotency-key', clip(String(idem), 50));
+  const r = await runCli(args, { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const d = (r.json && r.json.data) || {};
+  return { ok: true, messageId: String(d.message_id || (d.message && d.message.message_id) || '') };
+}
+
+// 现在 lark-cli 登录的是谁（open_id）。拿不到回 ''。
+async function selfOpenId(opts = {}) {
+  const r = await runCli(['contact', '+get-user', '--as', 'user', '--format', 'json'], { timeout: 25000, ...opts });
+  const u = r.ok && r.json && r.json.data && r.json.data.user;
+  return (u && u.open_id) ? String(u.open_id) : '';
+}
+
+// 新建一份 XML 文档（本人身份，天然 owner）。返回 {ok,token,url}。
+async function docCreate({ title, content }, opts = {}) {
+  const t = clip(String(title || '').trim(), 120);
+  if (!t) return { ok: false, error: '文档标题是空的' };
+  const r = await runCli(['docs', '+create', '--title', t, '--content', String(content || ''), '--doc-format', 'xml', '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const doc = ((r.json && r.json.data) || {}).document || {};
+  const token = String(doc.document_id || ''), url = String(doc.url || '');
+  if (!token) return { ok: false, error: '飞书回包里没有文档 token', uncertain: true };
+  return { ok: true, token, url };
+}
+
+// 在文档末尾追加一段 XML（docs +update --command append）。返回 {ok,revision}。
+async function docAppend({ token, content }, opts = {}) {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9]{10,64}$/.test(t)) return { ok: false, error: '文档 token 不像样' };
+  const c = String(content || '').trim();
+  if (!c) return { ok: false, error: '要追加的内容是空的' };
+  const r = await runCli(['docs', '+update', '--doc', t, '--command', 'append', '--content', c, '--doc-format', 'xml', '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error, uncertain: !!r.uncertain };
+  const doc = ((r.json && r.json.data) || {}).document || {};
+  return { ok: true, revision: doc.revision_id == null ? '' : String(doc.revision_id) };
+}
+
+// 读飞书文档正文（markdown），主题差异拿它当基线（09-25 审核：原来基线是空的，会写出重复内容）。只读。
+async function docFetchMarkdown(token, opts = {}) {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9]{10,64}$/.test(t)) return { ok: false, error: '文档 token 不像样' };
+  const r = await runCli(['docs', '+fetch', '--doc', t, '--doc-format', 'markdown', '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!r.ok) return { ok: false, error: r.error };
+  const doc = ((r.json && r.json.data) || {}).document || {};
+  return { ok: true, markdown: String(doc.content || '') };
+}
+
+// 主题文档写回：先让 docs parser 校验 XML，再追加。同一条的幂等由调用方 send-gate 包住整个函数，
+// 因此已有收据时 parse 和 update 都不会重复调用。
+async function docValidateAppend({ token, content }, opts = {}) {
+  const t = String(token || '').trim();
+  if (!/^[A-Za-z0-9]{10,64}$/.test(t)) return { ok: false, error: '文档 token 不像样' };
+  const c = String(content || '').trim();
+  if (!c) return { ok: false, error: '要追加的内容是空的' };
+  const parsed = await runCli(['docs', '+script', '--command', 'parse', '--content', c, '--as', 'user', '--format', 'json'], { timeout: 30000, ...opts });
+  if (!parsed.ok) return { ok: false, error: parsed.error, uncertain: false };
+  const assessment = parsed.json && parsed.json.data && parsed.json.data.assessment;
+  if (!assessment || assessment.status !== 'passed') return { ok: false, error: 'XML 校验未通过', uncertain: false };
+  return docAppend({ token: t, content: c }, opts);
+}
+
+module.exports = { binPath, binInstalled, larkAvailable, runCli, resolveIds, docInspect, taskCreate, messageSend, cardSend, selfOpenId, docCreate, docAppend, docValidateAppend, docFetchMarkdown, clip, norm };

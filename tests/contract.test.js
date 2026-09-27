@@ -38,7 +38,7 @@ function clientPaths(){
   const base=(work.match(/const base\s*=\s*'([^']+)'/)||[])[1]||'';
   for (const m of work.matchAll(/api\('(\/[^']*)'/g)) add(base+m[1]);
   add(base);
-  for (const f of ['web/archive.js','web/memory.html'])
+  for (const f of ['web/archive.js','web/archive-v2.js','web/memory.html'])
     for (const m of read(f).matchAll(/fetch\('(\/asr-relay\/[^'?]+)/g)) add(m[1]);
   return [...out];
 }
@@ -108,7 +108,7 @@ test('no function is defined and then never called', ()=>{
   const defined=[...scripts.matchAll(/^\s{0,4}(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map(m=>m[1]);
   // 明确知道的历史遗留：新旧两套界面里都没人调用，是被后来的做法取代的旧代码。
   // 留在这儿是为了不悄悄删掉能力（要删要接，等 Aaron 拍板），但不许再增加新的。
-  const KNOWN_DEAD=new Set(['showShareNote','syncMeetingList']);
+  const KNOWN_DEAD=new Set([]);   // 09-25 清理：showShareNote / syncMeetingList 已按 Aaron「死代码删一删」删除；不许再往这里加
   const orphans=defined.filter(n=>{
     if (KNOWN_DEAD.has(n)) return false;
     // 定义那一处不算；出现在别处（调用、传引用、挂事件）就算有人用
@@ -169,7 +169,15 @@ test('TRIAGE carries the three insight types, the F2 rules and the §5.2 schema,
       assert.ok(text.includes(s), name+' 缺：'+s);
     assert.ok(!text.includes('至今未落地'), name+' 不许断言「至今未落地」');
   }
-  // 服务端追加的【洞察门槛】也要点到 type / evidence / refs，否则模型只看它就把新字段省了
-  const gate=(server.match(/【洞察门槛】[^']*/)||[''])[0];
-  for (const s of ['type','conflict','recheck','answer','evidence','refs']) assert.ok(gate.includes(s),'server.js 洞察门槛缺：'+s);
+  // 09-24 第二轮（Aaron「no template, just first principles」）：会中不再给 JSON schema，模型自由写 markdown；
+  // 怎么想在 app/THINK.md，唯一保留的约定是 `@人名：` 那行。
+  const live=read('app/live-insight.js');
+  for (const s of ['自由 markdown','没有模板','不要「洞察 / 原因 / 行动」这种表头','≤120 字','`@人名：` 开头的一行','NONE','不要 JSON']) assert.ok(live.includes(s),'live-insight.js 提示词缺：'+s);
+  assert.ok(!live.includes('"do":"ask|todo|note|handoff"'),'JSON schema 已经去掉');
+  const think=read('app/THINK.md');
+  for (const s of ['你要做的事','具体怎么做的','不当核对员']) assert.ok(think.includes(s),'THINK.md 缺：'+s);
+  assert.match(read('app/llm.js'), /require\('\.\/think'\)\.prefix\(system, dataDir\)/, 'ask() 前置 THINK.md');
+  assert.match(read('app/meeting-pipeline.py'), /system = think_prefix\(system\)/, '会后管线也前置 THINK.md');
+  assert.match(server, /liveInsight\.systemPrompt\(/, 'server.js 分诊要用 live-insight 的提示词');
+  assert.doesNotMatch(server, /【洞察门槛】/, '旧的【洞察门槛】不该再进会中分诊');
 });

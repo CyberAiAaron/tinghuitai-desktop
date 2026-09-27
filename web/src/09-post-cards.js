@@ -48,25 +48,3 @@
     const id = open || (e.target.closest('.pc') && e.target.closest('.pc').dataset.pc);
     if (id) openArchivePanel(id);          // 整张卡都可点，直达那场会的回看页（09-22 Aaron 定）
   });
-  // 纪要就地看、一键复制。标清是自动整理版还是你确认过的版本。
-  function showShareNote(text, confirmed){
-    let d = $('#share-dlg');
-    if (!d) {
-      d = document.createElement('dialog'); d.id = 'share-dlg';
-      d.innerHTML = '<h2 id="sn-title"></h2><p class="hint" id="sn-hint"></p><pre id="sn-body"></pre>'
-        + '<div class="row"><button class="btn" id="sn-close">关闭</button><button class="btn primary" id="sn-copy">复制</button></div>';
-      document.body.append(d);
-      d.querySelector('#sn-close').onclick = () => d.close();
-      d.querySelector('#sn-copy').onclick = async () => {
-        try { await navigator.clipboard.writeText($('#sn-body').textContent); $('#sn-copy').textContent = ui==='en'?'Copied':'已复制'; }
-        catch(e){ $('#sn-copy').textContent = ui==='en'?'Copy failed':'复制失败'; }
-      };
-    }
-    $('#sn-title').textContent = ui==='en' ? 'Meeting note' : '会议纪要';
-    $('#sn-hint').textContent = confirmed
-      ? (ui==='en'?'You have been through this one — this is the confirmed version.':'这一场你过过一遍，这是确认过的版本。')
-      : (ui==='en'?'Auto-sorted version. Going through it can change the wording, owners and dates.':'自动整理版。过一遍之后，措辞、负责人和日期可能会变。');
-    $('#sn-body').textContent = text || '';
-    $('#sn-copy').textContent = ui==='en'?'Copy':'复制';
-    d.showModal();
-  }

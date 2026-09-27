@@ -7,6 +7,8 @@ set -euo pipefail
 V="${1:?用法: release-publish.sh <版本> [--dry-run]}"; DRY="${2:-}"
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 ZIP="/tmp/tinghuitai-desktop-v${V}.zip"; [ -f "$ZIP" ] || { echo "❌ 缺 $ZIP"; exit 1; }
+# 双击安装的 .dmg（packaging/make-app.sh 产出）。有就一起发，没有就只发 zip，不挡发布。
+DMG="${THT_DMG:-/tmp/tinghuitai-app/听会台-${V}.dmg}"
 # updater.js 现在要求 sha256 必填（审查 X4）。手填这一格漏过、或停在上一版，装机端就只会看到
 # 「更新包没有校验值」。按真 zip 算一遍写进去，正常发版不会被自己拦住。
 node "$SRC/scripts/stamp-release.js" "$V" "$ZIP" "$SRC/version.json"
@@ -18,10 +20,11 @@ for R in CyberAiAaron GitAaronW; do
   else gh repo clone "$R/tinghuitai-desktop" "$D" -- --depth 1 -q; fi
   cd "$D"; git checkout -q -B "release/v$V"
   cp "$ZIP" "tinghuitai-desktop-v$V.zip"; cp "$ZIP" tinghuitai-desktop.zip
+  if [ -f "$DMG" ]; then cp "$DMG" "Tinghuitai-v$V.dmg"; cp "$DMG" Tinghuitai.dmg; fi
   for f in version.json CHANGELOG.json README.md AI-SETUP.md 开始用.md; do [ -f "$SRC/$f" ] && cp "$SRC/$f" "$f"; done
   [ -d "$SRC/docs" ] && rsync -a --delete "$SRC/docs/" docs/
   git add -A
-  git -c user.name="Aaron Wang" -c user.email="rangeraaronlol@gmail.com" commit -q -m "Publish $V" -m "$(python3 -c "import json;print(json.load(open('$SRC/CHANGELOG.json'))['items'][0]['notes'])")" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" || { echo "$R: 没有变化"; continue; }
+  git -c user.name="Aaron Wang" -c user.email="rangeraaronlol@gmail.com" commit -q -m "Publish $V" -m "$(python3 -c "import json;print(json.load(open('$SRC/CHANGELOG.json'))['items'][0]['notes'])")" -m "Prepared by Codex on behalf of Aaron Wang." || { echo "$R: 没有变化"; continue; }
   if [ "$DRY" = "--dry-run" ]; then echo "🧪 $R dry-run: $(git log --oneline -1) （未推送）"; continue; fi
   if [ "$R" = "GitAaronW" ]; then TOK="$(gh auth token --user GitAaronW)"; AUTH="-c credential.helper= -c http.extraheader=AUTHORIZATION:\ basic\ $(printf 'x-access-token:%s' "$TOK" | base64)"; else TOK="$(gh auth token --user CyberAiAaron)"; AUTH=""; fi
   eval git $AUTH push -q -f origin "release/v$V"
@@ -29,7 +32,7 @@ for R in CyberAiAaron GitAaronW; do
 
 门禁：check-package 0 凭据 / npm test / 冒烟 / 全新安装 / 升级回滚（证据见 ~/Workbuddy/听会台日志）。
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)")
+— 由 Codex 代 Aaron Wang 发布。")
   GH_TOKEN="$TOK" gh pr merge "$PR" -R "$R/tinghuitai-desktop" --squash --delete-branch
   echo "✅ $R 已合入 main：$PR"
 done

@@ -23,7 +23,7 @@ const who = (session, spk) => {
 // 分成两个文件的话，转发时总有一个会被落下。
 function buildMarkdown(session, note) {
   const title = session.topicTitle || session.title || ('会议 ' + (session.id || ''));
-  const when = session.start ? new Date(session.start).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '';
+  const when = session.start ? new Date(session.start).toLocaleString('zh-CN') : '';
   const out = ['# ' + title];
   if (when) out.push('', '_' + when + '_');
   out.push('', note && note.trim() ? note.trim() : '_这一场还没有整理好的纪要。_');

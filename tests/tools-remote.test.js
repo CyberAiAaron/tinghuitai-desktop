@@ -34,11 +34,11 @@ function withCli(bin, fn) {
 
 const SEARCH_REPLY = `a => ({ ok: true, data: { has_more: false, page_token: '', total: 2, results: [
   { entity_type: 'docx', title_highlighted: '产品需求<h>总纲</h>', summary_highlighted: '26191 的<h>总纲</h>，D1 未定',
-    result_meta: { token: 'COqzdiAr6oGyX3xZb6alPLxQghg', url: 'https://x.feishu.cn/docx/COqzdiAr6oGyX3xZb6alPLxQghg',
+    result_meta: { token: 'FakeDocCOqz000000000000000000', url: 'https://x.feishu.cn/docx/FakeDocCOqz000000000000000000',
       doc_types: ['docx'], owner_name: 'Aaron Wang', edit_user_name: 'Aaron Wang',
       create_time_iso: '2026-09-02T01:00:00+08:00', update_time_iso: '2026-09-20T09:00:00+08:00' } },
   { entity_type: 'wiki', title_highlighted: '决策板 D1-D8', summary_highlighted: 'D1 卡 D2 / D6 / D7',
-    result_meta: { token: 'A2hQdjgAUoIV1vxecJzlFw57gId', url: 'https://x.feishu.cn/wiki/A2hQdjgAUoIV1vxecJzlFw57gId',
+    result_meta: { token: 'FakeDocA2hQ000000000000000000', url: 'https://x.feishu.cn/wiki/FakeDocA2hQ000000000000000000',
       owner_name: 'Aaron Wang', update_time_iso: '2026-09-19T09:00:00+08:00' } } ] } })`;
 
 test('搜飞书文档：按真实字段解析，标题里的高亮标记剥掉，token 和链接都带回来', async () => {
@@ -50,8 +50,8 @@ test('搜飞书文档：按真实字段解析，标题里的高亮标记剥掉�
     const a = r.items[0];
     assert.equal(a.title, '产品需求总纲', '<h></h> 剥干净');
     assert.equal(a.text, '26191 的总纲，D1 未定');
-    assert.equal(a.token, 'COqzdiAr6oGyX3xZb6alPLxQghg');
-    assert.equal(a.ref, 'lark:COqzdiAr6oGyX3xZb6alPLxQghg');
+    assert.equal(a.token, 'FakeDocCOqz000000000000000000');
+    assert.equal(a.ref, 'lark:FakeDocCOqz000000000000000000');
     assert.equal(a.source, 'lark:docs');
     assert.equal(a.at, '2026-09-20T09:00:00+08:00');
     assert.equal(a.docType, 'docx');
@@ -64,23 +64,23 @@ test('搜飞书文档：按真实字段解析，标题里的高亮标记剥掉�
 
 test('取飞书文档正文：默认只取目录，keyword 要配关键词；非飞书链接直接挡下', async () => {
   const dir = tmp('lark-fetch');
-  const cli = stubCli(dir, `a => ({ ok: true, data: { document: { content: '# 总纲\\n\\n## D1\\nPin 与手机绑定未定', document_id: 'COqzdiAr6oGyX3xZb6alPLxQghg', revision_id: 412 } } })`);
+  const cli = stubCli(dir, `a => ({ ok: true, data: { document: { content: '# 总纲\\n\\n## D1\\nPin 与手机绑定未定', document_id: 'FakeDocCOqz000000000000000000', revision_id: 412 } } })`);
   await withCli(cli.bin, async () => {
-    const r = await reg.call('lark.docs.fetch', { doc: 'COqzdiAr6oGyX3xZb6alPLxQghg' }, { dataDir: dir });
+    const r = await reg.call('lark.docs.fetch', { doc: 'FakeDocCOqz000000000000000000' }, { dataDir: dir });
     assert.equal(r.ok, true);
     assert.match(r.data.text, /Pin 与手机绑定未定/);
-    assert.equal(r.data.ref, 'lark:COqzdiAr6oGyX3xZb6alPLxQghg');
+    assert.equal(r.data.ref, 'lark:FakeDocCOqz000000000000000000');
     assert.equal(r.data.revision, 412);
     const argv = cli.calls()[0];
     assert.ok(argv.includes('--doc-format') && argv[argv.indexOf('--doc-format') + 1] === 'markdown');
     assert.equal(argv[argv.indexOf('--scope') + 1], 'outline', '默认只取目录，不整份拉回来');
 
-    const kw = await reg.call('lark.docs.fetch', { doc: 'COqzdiAr6oGyX3xZb6alPLxQghg', scope: 'keyword', keyword: 'D1|绑定' }, { dataDir: dir });
+    const kw = await reg.call('lark.docs.fetch', { doc: 'FakeDocCOqz000000000000000000', scope: 'keyword', keyword: 'D1|绑定' }, { dataDir: dir });
     assert.equal(kw.ok, true);
     const argv2 = cli.calls()[1];
     assert.equal(argv2[argv2.indexOf('--keyword') + 1], 'D1|绑定');
 
-    assert.match((await reg.call('lark.docs.fetch', { doc: 'COqzdiAr6oGyX3xZb6alPLxQghg', scope: 'keyword' }, { dataDir: dir })).error, /要同时给 keyword/);
+    assert.match((await reg.call('lark.docs.fetch', { doc: 'FakeDocCOqz000000000000000000', scope: 'keyword' }, { dataDir: dir })).error, /要同时给 keyword/);
     assert.match((await reg.call('lark.docs.fetch', { doc: 'https://evil.example/docx/abc' }, { dataDir: dir })).error, /不是飞书文档链接/);
     assert.equal(cli.calls().length, 2, '被挡下的两次一条命令都没跑');
   });

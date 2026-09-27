@@ -37,7 +37,7 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   const input=path.join(dir,key+'.input.json');write(input,session);
   const job={schema:2,key,sessionId:String(session.id),title:session.title||'未命名会议',input,status:'queued',phase:'等待整理',created:new Date().toISOString(),attempts:0};write(jobPath,job);pump();return job;
  }
- function list(){return fs.readdirSync(dir).filter(f=>f.endsWith('.job.json')).map(f=>{try{return read(path.join(dir,f));}catch{return null;}}).filter(Boolean).sort((a,b)=>a.created.localeCompare(b.created));}
+ function list(){return fs.readdirSync(dir).filter(f=>f.endsWith('.job.json')).map(f=>{try{return read(path.join(dir,f));}catch{return null;}}).filter(Boolean).sort((a,b)=>String(a.created||"").localeCompare(String(b.created||"")));}
  // 只自动补跑最近 7 天的会：一次补 22 场老会议会连着跑一小时模型，老的交给他自己点「重新整理」
  const fresh=j=>Date.now()-Date.parse(j.created||0)<7*864e5;
  // 重跑要想真的把总结补出来，必须先把上一版 enhanced 挪走：meeting-pipeline.py 只有在
@@ -63,16 +63,18 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   // P-03：以前只有 error 会自动重试，「归档完成但总结没出来」的那些就永远停在那儿，
   // 界面还显示「已归档」。现在这类自动补跑一次（只一次，空会和坏数据不会无限重跑）。
   // R8：partial（总结缺段、说话人存疑）以前永远停在那儿，只有他自己点「重新整理」才动。现在也自动补跑，上限 2 次。
+  // 09-25 验收：模型整个不可用时 2 秒内连烧 3 次、恢复后再也不试。自动补跑之间至少隔 10 分钟（THT_AUTO_RETRY_GAP_MS 可调）
+  const gap=Number(process.env.THT_AUTO_RETRY_GAP_MS||600000),cool=x=>Date.now()-(Number(x.lastAutoRetryAt)||0)>=gap;
   const j=list().find(x=>x.status==='queued'||x.status==='running'
     ||(x.status==='error'&&x.attempts<4&&x.nextRetry*1000<Date.now())
-    ||(x.status==='done'&&x.summaryGenerated!==true&&(x.summaryRetries||0)<1&&fresh(x))
-    ||(x.status==='partial'&&(x.partialRetries||0)<2&&fresh(x)));if(!j)return;
+    ||(x.status==='done'&&x.summaryGenerated!==true&&(x.summaryRetries||0)<1&&fresh(x)&&cool(x))
+    ||(x.status==='partial'&&(x.partialRetries||0)<2&&fresh(x)&&cool(x)));if(!j)return;
   if(j.status==='done'){const p2=path.join(dir,j.key+'.job.json');const cur=read(p2);
     shelveEnhanced(j.key);
-    write(p2,{...cur,status:'queued',phase:'总结没出来，自动补跑一次',summaryRetries:(cur.summaryRetries||0)+1});
+    write(p2,{...cur,status:'queued',phase:'总结没出来，自动补跑一次',summaryRetries:(cur.summaryRetries||0)+1,lastAutoRetryAt:Date.now()});
     log('自动补跑总结 '+j.key);}
   if(j.status==='partial'){const p2=path.join(dir,j.key+'.job.json');const cur=read(p2);
-    write(p2,{...cur,status:'queued',phase:'整理不完整，自动补跑一次',partialRetries:(cur.partialRetries||0)+1});
+    write(p2,{...cur,status:'queued',phase:'整理不完整，自动补跑一次',partialRetries:(cur.partialRetries||0)+1,lastAutoRetryAt:Date.now()});
     log('自动补跑不完整的整理 '+j.key);}
   // detached：Python 自己起了 node 桥、桥可能再起命令行。超时要杀的是整棵树，所以给它自己的进程组。
   child=spawn(process.env.THT_PYTHON||'python3',[path.join(root,'meeting-pipeline.py'),path.join(dir,j.key+'.job.json')],{env:{...process.env,THT_PIPELINE_DIR:dir,THT_NODE:process.execPath,THT_CFG_JSON:cfgJson()},stdio:['ignore','ignore','pipe'],detached:true});
@@ -130,6 +132,7 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   const value=String(text||'').trim().slice(0,40)||q.options[choice];
   const names={};
   for(const f of q.affects||[]){const m=/^speaker:S?(\w{1,12})$/i.exec(f);if(m&&value)names[m[1]]=value;}
+  aliasFromRename(id,e.names,names);
   const session=patchEnhanced(p.enhanced,{answers:{[qid]:{choice,text:String(text||'').slice(0,200),at:Date.now()}},...(Object.keys(names).length?{names}:{})});
   return{question:q,value,session};}
  // 议题的决定状态（已一致 / 待讨论 / 有分歧 / 搁置）：模型先给一版，他点一下改掉的存进 brief.decisions。
@@ -141,8 +144,11 @@ module.exports=function({root=__dirname,dir=process.env.THT_PIPELINE_DIR||path.j
   if(!DECISIONS.includes(decision))throw Error('状态不对');
   const session=patchEnhanced(p.enhanced,{decisions:{[String(num)]:decision}});
   return{n:num,decision,session};}
+ // M3：同一个说话人原来有名字、被人手改成另一个名字 → 全局别名规则卡（app/memory.js putAliasRule）。失败不影响改名本身。
+ function aliasFromRename(id,oldNames,patch){try{const mem=require('./memory');const db=mem.open(process.env.THT_DATA_DIR||path.dirname(path.dirname(dir)));for(const [k,v] of Object.entries(patch||{})){const o=(oldNames||{})[k]||(oldNames||{})['S'+k];if(o&&v&&String(o).trim()!==String(v).trim())mem.putAliasRule(db,o,v,id);}}catch(e){}}
  // 认人（会后一屏）把名字写进归档结果的 names。空串 = 清掉这个名字，认错了要能改回来。
  function setNames(id,patch){const p=paths(id);if(!p||!fs.existsSync(p.enhanced))return null;
+  try{aliasFromRename(id,read(p.enhanced).names,patch);}catch(e){}
   return patchEnhanced(p.enhanced,{names:patch||{}});}
- const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{stopped=true;clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
+ const api={brief,briefState,answer,setDecision,setNames,enqueue,retry,reviseTranscript,patchResult:(id,patch)=>{const p=paths(id);if(!p||!fs.existsSync(p.enhanced)){const e=Error('这场会还没整理完');e.code=404;throw e;}return patchEnhanced(p.enhanced,patch);},result:id=>{const j=list().find(x=>x.sessionId===id);if(!j)return null;const p=path.join(dir,j.key+'.job.enhanced.json');return fs.existsSync(p)?read(p):null;},list:()=>list().map(({input,...safe})=>safe),stop:()=>{stopped=true;clearInterval(timer);clearTimeout(nextPump);}};managers.set(dir,api);return api;
 };

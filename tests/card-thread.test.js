@@ -75,7 +75,7 @@ test('线程持久化：POST 后 GET 能读回、pending 文件里有 threads、
   // 再发一句：历史进系统提示
   const r2=await t.post('th1','todo1','那就约周三');
   assert.equal(r2.json.messages.length,4);
-  assert.ok(argOf(t.calls()[1].argv,'--system-prompt').includes('Aaron：这件事先查一下两人下周忙闲'));
+  assert.ok(argOf(t.calls()[1].argv,'--system-prompt').includes('用户：这件事先查一下两人下周忙闲'));
   // 找不到的卡 / 场次
   assert.equal((await t.post('th1','nope','x')).status,404);
   assert.equal((await t.post('zzz','todo1','x')).status,404);

@@ -1,11 +1,11 @@
 {
   "name": "tinghuitai-desktop",
-  "version": "0.6.17",
+  "version": "0.6.22",
   "description": "",
   "main": "app/server.js",
   "scripts": {
     "start": "node app/server.js",
-    "test": "node --test tests/*.test.js",
+    "test": "LIVE_CARD_WARMUP=off THT_LLM_AUTOPICK=off THT_OWNERS_FILE=tests/fixtures/owners.json node --test tests/*.test.js",
     "doctor": "node scripts/doctor.js",
     "smoke": "node scripts/ui-smoke.js",
     "build": "node scripts/build-web.js",
