@@ -20,6 +20,7 @@ const assistantCore = require('../web/assistant-core');
 const Busboy = require('busboy');
 const topicDocModule = require('./topic-doc');
 const localTime = require('./local-time');
+const ownerTracking = require('./owner-tracking');
 
 const meetingTrash = require('./meeting-trash');
 const settings = require('./config');
@@ -277,11 +278,11 @@ class Session {
     this.clients = new Set();          // 所有 ws（说话人 + 观众）
     this.volcWs = null; this.seq = 1; this.queuedAudio=[]; this.queuedAudioBytes=0; this.hasKey = !!(env.VOLC_APP_KEY && env.VOLC_ACCESS_KEY);
     this.transcriptionGapSeconds=0;this.browserGapSeconds=0;
-    this.transcript = []; this.highlights = []; this.todos = []; this.factchecks = []; this.threads = {};   // threads：每张卡下面的对话（app/card-thread.js）
+    this.transcript = []; this.highlights = []; this.todos = []; this.factchecks = []; this.threads = {}; this.ownerQuestions = []; this.ownerSpeakerVerdicts = {};   // threads：每张卡下面的对话（app/card-thread.js）
     this.startTs = Date.now(); this.lastFinalTs = Date.now(); this.lastAudioTs = Date.now();
     this.journalPath=path.join(DATA,'state','live-sessions',this.id+'.json');
     const recovered=journal.read(this.journalPath);if(recovered?.complete)throw Error('本场已结束，请开始新会议');
-    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds','calendar','nameFixes','threads','projectId','contextSourceIds'])if(recovered[k]!==undefined)this[k]=recovered[k];if(!this.projectId&&recovered.project)this.projectId=String(recovered.project).trim().slice(0,80);this.startTs=recovered.startTs||this.startTs;}
+    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds','calendar','nameFixes','threads','projectId','contextSourceIds','ownerQuestions','ownerSpeakerVerdicts'])if(recovered[k]!==undefined)this[k]=recovered[k];if(!this.projectId&&recovered.project)this.projectId=String(recovered.project).trim().slice(0,80);this.startTs=recovered.startTs||this.startTs;}
 
     try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
@@ -369,7 +370,7 @@ class Session {
     if(complete||force){this.journalWrite.stop();return this.writeJournal(complete);}
     this.journalWrite.call();return true;
   }
-  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,projectId:this.projectId,contextSourceIds:this.contextSourceIds,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,threads:this.threads||{},notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[],complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
+  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,projectId:this.projectId,contextSourceIds:this.contextSourceIds,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,ownerQuestions:this.ownerQuestions,ownerSpeakerVerdicts:this.ownerSpeakerVerdicts,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,threads:this.threads||{},notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[],complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
   // 会中把要点分好的那棵议题树（web/src/12-grouping.js 的 hlGroups）。分组在浏览器里算，
   // 会后回看页要看到同一套议题划分，所以每排完一轮就送过来存一份，归档时跟着会话一起落盘。
   setOutline(groups) {
@@ -411,7 +412,7 @@ class Session {
     return false;
   }
   broadcast(o) { const s = JSON.stringify(o); for (const c of this.clients) { try { if (c.readyState === WebSocket.OPEN) c.send(s); } catch (e) {} } }
-  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, projectId: this.projectId, contextSourceIds: this.contextSourceIds, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names, calendar: this.calendar, nameFixes: this.nameFixes, threads: this.threads || {} } }; }
+  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, projectId: this.projectId, contextSourceIds: this.contextSourceIds, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, ownerQuestions: this.ownerQuestions, summary: this.summary || '', names: this.names, calendar: this.calendar, nameFixes: this.nameFixes, threads: this.threads || {} } }; }
   // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
   connectAsr() {
     if (this.mac || this.dg) return;            // 续场重连时已经有一个在跑，再造一个会漏掉旧的进程和端口
@@ -555,6 +556,7 @@ class Session {
         if (!text) continue;
         if (this.isDuplicateFinal(u, text)) { log('dedup final skip ' + this.id); continue; }
         const at = Math.round((Date.now() - this.startTs) / 1000); const row = { id: 'g' + this.idTag + (this.segSeq = (this.segSeq || 0) + 1), rev: 1, at, t: fmtClock(at), speaker: out.speaker || '', text };
+        this.applyStoredOwnerVerdict(row);
         this.fixNames(row); out.text = row.text; out.seg = row.id;
         this.broadcast(out); this.volcFailStreak = 0;
         this.gateFinal(row);
@@ -675,8 +677,50 @@ class Session {
     }
     return block;
   }
-  // 线上会说话人：页面在 final 后紧接着发 {type:'spk',at,who}；就近落到最近一条还没标 who 的 final，随 transcript 一起归档。
-  applySpk(m) { const who = m && (m.who === 'them' ? 'them' : (m.who === 'me' ? 'me' : null)); if (!who) return; for (let i = this.transcript.length - 1; i >= 0; i--) { if (!this.transcript[i].who) { this.transcript[i].who = who; this.transcript[i].speaker=who; this.broadcast({type:'speaker_update',index:i,speaker:who}); break; } } this.spkMarks.push({ at: m.at, who }); }
+  // 双轨能量只能作「是我」候选；来源和置信度随句落盘，不升级为生物身份。
+  applyStoredOwnerVerdict(row) {
+    const speaker = String(row && (row.speaker || row.who) || '');
+    const attribution = ownerTracking.manualAttribution(this.ownerSpeakerVerdicts[speaker]);
+    if (!attribution) return false;
+    row.ownerAttribution = attribution;
+    ownerTracking.addOwnerQuestion(this.ownerQuestions, row);
+    return true;
+  }
+  applySpk(m) {
+    const who = m && (m.who === 'them' ? 'them' : (m.who === 'me' ? 'me' : null));
+    const attribution = ownerTracking.signalAttribution(who, m && m.confidence);
+    if (!attribution) return;
+    for (let i = this.transcript.length - 1; i >= 0; i--) {
+      const row = this.transcript[i];
+      if (!row.ownerAttribution) {
+        row.who = who;
+        row.speaker = who;
+        row.ownerAttribution = attribution;
+        this.applyStoredOwnerVerdict(row);
+        this.broadcast({ type: 'speaker_update', index: i, speaker: who });
+        this.broadcast({ type: 'owner_attribution_update', index: i, attribution });
+        break;
+      }
+    }
+    this.spkMarks.push({ at: Number(m.at) || Date.now(), who, source: 'split_track', confidence: attribution.confidence });
+    this.checkpoint();
+  }
+  applyOwnerAttribution(m) {
+    const speaker = String(m && m.speaker || '').slice(0, 80);
+    if (speaker && ['me', 'not_me', 'unknown'].includes(m && m.verdict)) this.ownerSpeakerVerdicts[speaker] = m.verdict;
+    const changed = ownerTracking.applyManualAttribution(this.transcript, speaker, m && m.verdict);
+    if (!changed) return;
+    for (const row of this.transcript) ownerTracking.addOwnerQuestion(this.ownerQuestions, row);
+    this.broadcast({ type: 'owner_attribution_batch', speaker, verdict: m.verdict, ownerQuestions: this.ownerQuestions });
+    this.checkpoint(false, { force: true });
+  }
+  updateOwnerQuestion(m) {
+    const ids = new Set(this.transcript.map(row => String(row.id || '')).filter(Boolean));
+    const question = ownerTracking.updateOwnerQuestion(this.ownerQuestions, m, ids);
+    if (!question) return;
+    this.broadcast({ type: 'owner_question_update', question });
+    this.checkpoint(false, { force: true });
+  }
   // 深推理档：只在明确改口和关键字段出现时触发，命中才回读原文核对，并且允许修订已有条目。
   // Aaron 2026-09-11 拍板：砍掉「但是」和「人名+动词」两条，太宽会让这一档接近常驻。
   static TRIGGERS = [
@@ -1007,7 +1051,7 @@ class Session {
     this.checkpoint(false,{force:true}); clearInterval(this.journalTimer); await this.closeAudio();
     let saved=false;
     try {
-      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,projectId:this.projectId,contextSourceIds:this.contextSourceIds,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[]};
+      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,projectId:this.projectId,contextSourceIds:this.contextSourceIds,endReason:reason,names:this.names,ownerQuestions:this.ownerQuestions,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[]};
       // 批 4（F5）：四个数从 usage.jsonl（本场 sessionId 的行）和场次自己算，落进场次文件，会后台直接显示；算不出不影响这场
       try { sess.stats = sessionStats.forSession(DATA, sess); log(`会后统计 ${this.id}：Jev ${sess.stats.jevCalls} 次，Sonnet ${sess.stats.sonnetCalls} 次，洞察 ${sess.stats.insights} 条，采纳 ${sess.stats.adopted} 条，出处命中 ${sess.stats.sourceHit.hit} / 缺失 ${sess.stats.sourceHit.miss}`); } catch (e) { log('会后统计失败（不影响这场）' + e.message); }
       // 这一场里，你纠正过的词有没有再错。这是「回流到底有没有用」的唯一证据。
@@ -2815,6 +2859,8 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({type:'assistantAck',requestId:msg.requestId,applied:result.applied,skipped:result.skipped,saved}));
       }
       else if (msg.type === 'spk') { if (session) session.applySpk(msg); }
+      else if (msg.type === 'owner_attribution') { if (session && !session.finalized && role === 'speaker' && !isView) session.applyOwnerAttribution(msg); }
+      else if (msg.type === 'owner_question') { if (session && !session.finalized && role === 'speaker' && !isView) session.updateOwnerQuestion(msg); }
       // 只在测试进程里存在（THT_TEST）：灌一条 final，按需立刻跑一次分诊。
       // 会中分析的 prompt 要有 ASR 出的 final 才拼得出来，测试里没有真 ASR，
       // 金样测试（tests/context-golden.test.js）靠这个口子抓「真正发出去的那份 system + user」。

@@ -49,15 +49,16 @@
   }
   function stopSpkTrack(){ if (spkTrack) { clearInterval(spkTrack.timer); spkTrack = null; } }
   function whoSpoke(from, to){
-    if (!spkTrack) return '';
+    if (!spkTrack) return null;
     let a = 0, b = 0, n = 0;
     for (const e of spkTrack.log) if (e.t >= from && e.t <= to) { a += e.a; b += e.b; n++; }
-    if (n < 3) return '';
+    if (n < 3) return null;
     const q = 0.004 * n;
-    if (a < q && b < q) return '';
-    if (a > b * 1.5) return 'them';
-    if (b > a * 1.5) return 'me';
-    return '';
+    if (a < q && b < q) return null;
+    const confidence = Math.max(0, Math.min(1, Math.max(a,b) / Math.max(0.000001,a+b)));
+    if (a > b * 1.5) return {who:'them',confidence};
+    if (b > a * 1.5) return {who:'me',confidence};
+    return null;
   }
   async function asrAudioUp(){
     if (asrStream) return;
@@ -165,16 +166,20 @@
         // Relay deduplicates utterance IDs/timestamps; repeated spoken words are valid.                          // 20 秒内同一句只收一次
         const now = Date.now();
         if (isDup(m.text)) return;                       // 长句在 20 秒内重发，丢掉
-        const spk = m.speaker ? String(m.speaker) : whoSpoke(lastFinalAt || (now - 8000), now);
+        const ownerSignal = m.speaker ? null : whoSpoke(lastFinalAt || (now - 8000), now);
+        const spk = m.speaker ? String(m.speaker) : (ownerSignal&&ownerSignal.who)||'';
         lastFinalAt = now;
         cur.transcript.push({at: now, t: Math.round((now-cur.start)/1000), text: m.text, spk, seg: m.seg||''});
         // 识别语言选「自动」时，攒够几句就去认一次是中文还是英文。
         // 这一行以前漏了，于是「自动」这个选项从来没真正生效过（2026-09-12 补）。
         try { maybeDetectTongue(); } catch(e){}
-        if(spk && !m.speaker && asrWs?.readyState===1) asrWs.send(JSON.stringify({type:'spk',who:spk,at:now}));
+        if(ownerSignal && asrWs?.readyState===1) asrWs.send(JSON.stringify({type:'spk',who:ownerSignal.who,confidence:ownerSignal.confidence,at:now}));
         persist(); render();
       }
       else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
+        else if (m.type === 'owner_attribution_update' && cur.transcript[m.index]) {cur.transcript[m.index].ownerAttribution=m.attribution;persist();}
+        else if (m.type === 'owner_attribution_batch') {for(const row of cur.transcript||[])if(String(row.spk||row.speaker||row.who||'')===String(m.speaker||''))row.ownerAttribution={candidate:m.verdict==='me'?true:m.verdict==='not_me'?false:null,source:'manual',confidence:m.verdict==='unknown'?0:1,correctedByUser:true,updatedAt:Date.now()};cur.ownerQuestions=Array.isArray(m.ownerQuestions)?m.ownerQuestions:cur.ownerQuestions;persist();}
+        else if (m.type === 'owner_question_update' && m.question) {cur.ownerQuestions=cur.ownerQuestions||[];const i=cur.ownerQuestions.findIndex(q=>q.id===m.question.id);if(i>=0)cur.ownerQuestions[i]=m.question;else cur.ownerQuestions.push(m.question);persist();}
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
         else if (m.type === 'condensed') applyCondensed(m);

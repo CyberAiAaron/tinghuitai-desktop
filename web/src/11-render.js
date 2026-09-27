@@ -25,7 +25,8 @@
     }
     return spkIdxCache.map[s] || 0;
   }
-  const spkName = (s) => (cur && cur.names && cur.names[s]) || state.names[s] || SPK_DEF()[s] || (s ? 'S'+(spkIndex(s)||s) : '');
+  // ASR speaker ids are scoped to one meeting. Never reuse S1/S2 names from another session.
+  const spkName = (s) => (cur && cur.names && cur.names[s]) || SPK_DEF()[s] || (s ? 'S'+(spkIndex(s)||s) : '');
   // 要点 / 待办 / 看法里模型写的「S6」是原始号：换成同一套显示名（起过名字就显示名字）。只换这场真出现过的号，S24 这类产品名不动。
   const spkText = (t) => String(t==null?'':t).replace(/(?<![A-Za-z0-9])S(\d{1,2})(?![A-Za-z0-9])/g, (m, d) => spkIndex(d) ? spkName(d) : m);
   const spkCls = (s) => s==='me' ? 's1' : s==='them' ? 's2' : /^\d+$/.test(s) ? 's'+Math.min(6, parseInt(s,10)||1) : 's'+(1 + ([...String(s)].reduce((h,c)=>(h*31 + c.charCodeAt(0))>>>0, 7) % 6));
@@ -146,7 +147,7 @@
       sigCk = nCk;
       keepScroll(el.ck, () => { el.ck.innerHTML = viewListHtml(cks, first) + hlLogHtml(cur.highlights); }); if (first) el.ck.scrollTop = el.ck.scrollHeight;
     }
-    const myTodosEl=$('#my-todos'); if(myTodosEl){ const h=myTodosHtml(cur.todos||[]); if(myTodosEl.dataset.sig!==h){ myTodosEl.dataset.sig=h; myTodosEl.innerHTML=h; myTodosEl.hidden=!h; } }
+    const myTodosEl=$('#my-todos'); if(myTodosEl){ const h=myTodosHtml(cur.todos||[])+ownerQuestionsHtml(cur.ownerQuestions||[]); if(myTodosEl.dataset.sig!==h){ myTodosEl.dataset.sig=h; myTodosEl.innerHTML=h; myTodosEl.hidden=!h; } }
     el.ctr.textContent = tr.length; el.chl.textContent = items.length; el.cck.textContent = cks.length;
     const nSum = (cur.summary || '') + '|' + ui + '|' + (cur.i18n && cur.i18n[ui] ? JSON.stringify(cur.i18n[ui]).length : 0);
     if (nSum !== sigSum) { sigSum = nSum; const sumTxt = tt(cur.summary); el.sum.innerHTML = cur.summary ? esc(sumTxt) : `<span class="empty">${T('e_sum')||'结束后会出现在这里。'}</span>`; }
@@ -249,7 +250,19 @@
     const line=x=>`<div class="my-todo" data-fix="hl" data-kind="todo" data-key="${esc(x.text)}">${esc(tt(x.text))}</div>`;
     return `<div class="my-todos-label">${ui==='en'?'Mine':'本人待办'} <span class="count">${mine.length}</span></div>`+recent.map(line).join('')+(older.length?`<details class="my-todos-older"><summary>${ui==='en'?('Earlier '+older.length):('更早 '+older.length+' 条')}</summary>${older.map(line).join('')}</details>`:'');
   }
+  function ownerQuestionsHtml(questions){
+    const list=(questions||[]).filter(q=>q&&q.id&&q.text).slice(-5).reverse();
+    if(!list.length)return '';
+    const labels=ui==='en'?{open:'Open',partial:'Partial',resolved:'Resolved',deferred:'Deferred'}:{open:'待回答',partial:'部分回答',resolved:'已解决',deferred:'暂缓'};
+    const line=q=>`<div class="my-todo owner-question" data-question-id="${esc(q.id)}" data-source-seg="${esc(q.sourceRefs&&q.sourceRefs[0]&&q.sourceRefs[0].id||'')}"><span>${esc(tt(q.text))}</span><select data-owner-question-status aria-label="${ui==='en'?'Question status':'问题状态'}">${Object.entries(labels).map(([k,v])=>`<option value="${k}"${q.status===k?' selected':''}>${v}</option>`).join('')}</select></div>`;
+    return `<div class="my-todos-label">${ui==='en'?'My questions':'我的问题'} <span class="count">${list.length}</span></div>`+list.map(line).join('');
+  }
   function viewItemOf(card){ if(!cur||!card) return null; const id=card.dataset.id, key=card.dataset.key; return (cur.factchecks||[]).find(x=>id&&x.id===id) || (cur.factchecks||[]).find(x=>x.claim===key) || null; }
+  const myTodosEl=$('#my-todos');
+  if(myTodosEl){
+    myTodosEl.addEventListener('click',e=>{if(e.target.closest('select'))return;const row=e.target.closest('.owner-question'),seg=row&&row.dataset.sourceSeg;if(!seg)return;const hit=[...el.tr.querySelectorAll('p[data-seg]')].find(p=>p.dataset.seg===seg);if(hit){stickBottom=false;el.jump.hidden=false;hit.scrollIntoView({block:'center',behavior:'smooth'});hit.classList.add('tr-flash');setTimeout(()=>hit.classList.remove('tr-flash'),1800);}});
+    myTodosEl.addEventListener('change',e=>{const select=e.target.closest('[data-owner-question-status]'),row=select&&select.closest('.owner-question');if(!select||!row||!cur)return;const q=(cur.ownerQuestions||[]).find(x=>x.id===row.dataset.questionId);if(!q)return;q.status=select.value;q.humanEdited=true;q.updatedAt=Date.now();if(asrWs&&asrWs.readyState===1)asrWs.send(JSON.stringify({type:'owner_question',id:q.id,status:q.status,answerRefs:q.answerRefs||[]}));persist();});
+  }
   async function sendViewFeedback(it,rating,comment){ if(!it) return; it.rating=rating; if(comment!==undefined) it.comment=comment; persist(); sigCk='\u0000'; render();
     try{ const r=await fetch(relayBase()+'/view-feedback?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:cur.id,id:it.id||'',kind:it.kind||'',claim:it.claim||'',rating:rating||'',comment:it.comment||''}),signal:AbortSignal.timeout(4000)}); if(!r.ok) throw new Error('HTTP '+r.status); it.fbSynced=true; }
     catch(e){ it.fbSynced=false; note((ui==='en'?'Saved here; Mac not reached: ':'已记在本机，没送到 Mac：')+e.message,true); } persist(); }
@@ -258,6 +271,11 @@
     const disarm=()=>{ if(t){clearTimeout(t);t=null;} };
     el.ck.addEventListener('pointerdown',arm); el.ck.addEventListener('pointermove',e=>{ if(t&&(Math.abs(e.clientX-x0)>10||Math.abs(e.clientY-y0)>10)) disarm(); }); el.ck.addEventListener('pointerup',disarm); el.ck.addEventListener('pointercancel',disarm); el.ck.addEventListener('pointerleave',disarm,true);
     el.ck.addEventListener('click', e=>{ if(fired){ fired=false; e.stopPropagation(); e.preventDefault(); } }, true); })();
-  el.tr.addEventListener('click', e => { const s = e.target.closest('.spk'); if (!s || !s.dataset.spk) return; const id = s.dataset.spk; $('#spk-label').textContent = spkName(id) + (T('spk_all')||'（全场生效）'); $('#spk-name').value = ((cur&&cur.names&&cur.names[id])||state.names[id]||''); $('#dlg-spk').dataset.id = id; $('#dlg-spk').showModal(); setTimeout(()=>$('#spk-name').focus(),50); });
+  el.tr.addEventListener('click', e => { const s = e.target.closest('.spk'); if (!s || !s.dataset.spk) return; const id = s.dataset.spk; $('#spk-label').textContent = spkName(id) + (T('spk_all')||'（全场生效）'); $('#spk-name').value = ((cur&&cur.names&&cur.names[id])||''); $('#dlg-spk').dataset.id = id; $('#dlg-spk').showModal(); setTimeout(()=>$('#spk-name').focus(),50); });
   $('#spk-cancel').onclick = () => $('#dlg-spk').close();
-  $('#spk-save').onclick = () => { const id = $('#dlg-spk').dataset.id, nm = $('#spk-name').value.trim(); if (cur) { cur.names = cur.names||{}; if (nm) cur.names[id] = nm; else delete cur.names[id]; } if (nm) state.names[id] = nm; persist(); $('#dlg-spk').close(); render(); sendNames(); };
+  $('#spk-save').onclick = () => { const id = $('#dlg-spk').dataset.id, nm = $('#spk-name').value.trim(); if (cur) { cur.names = cur.names||{}; if (nm) cur.names[id] = nm; else delete cur.names[id]; } persist(); $('#dlg-spk').close(); render(); sendNames(); };
+  const ownerVerdict = verdict => { const id=$('#dlg-spk').dataset.id; if(!cur||!id)return; const attr={candidate:verdict==='me'?true:verdict==='not_me'?false:null,source:'manual',confidence:verdict==='unknown'?0:1,correctedByUser:true,updatedAt:Date.now()}; for(const row of cur.transcript||[])if(String(row.spk||row.speaker||row.who||'')===String(id))row.ownerAttribution={...attr}; if(verdict==='me'){cur.names=cur.names||{};cur.names[id]=(window.THT_BOOT&&window.THT_BOOT.ownerProfile&&window.THT_BOOT.ownerProfile.displayName)||'我';sendNames();} if(asrWs&&asrWs.readyState===1)asrWs.send(JSON.stringify({type:'owner_attribution',speaker:id,verdict})); persist(); $('#dlg-spk').close(); resetSigs(); render(); };
+  const ownerYes=$('#spk-owner-yes'),ownerNo=$('#spk-owner-no'),ownerUnknown=$('#spk-owner-unknown');
+  if(ownerYes)ownerYes.onclick=()=>ownerVerdict('me');
+  if(ownerNo)ownerNo.onclick=()=>ownerVerdict('not_me');
+  if(ownerUnknown)ownerUnknown.onclick=()=>ownerVerdict('unknown');

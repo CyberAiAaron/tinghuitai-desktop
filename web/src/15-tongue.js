@@ -70,10 +70,13 @@
           cur = Object.assign(newSession('view', 'view'), S, {viewOnly:true}); resetSigs(); stickBottom = true; render(); el.src.textContent = '🎙 ' + (m.session.source||'另一台设备') + ' 在采音'; updateStatusIdle(); } } else { viewLive = false; updateStatusIdle(); } }
       else if (!running && cur && cur.viewOnly) {
         if(m.type==='assistantAck'){assistantAck(m);return;}
-      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names','calendar'])if(restored[key]!==undefined)cur[key]=restored[key];cur.nameFixCount=(m.session.nameFixes||[]).length;persist();resetSigs();render();}
+      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','ownerQuestions','summary','names','calendar'])if(restored[key]!==undefined)cur[key]=restored[key];cur.nameFixCount=(m.session.nameFixes||[]).length;persist();resetSigs();render();}
       else if (m.type === 'partial') { interim = m.text||''; render(); }
         else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||'', seg: m.seg||''}); render(); }
         else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
+        else if (m.type === 'owner_attribution_update' && cur.transcript[m.index]) {cur.transcript[m.index].ownerAttribution=m.attribution;persist();}
+        else if (m.type === 'owner_attribution_batch') {for(const row of cur.transcript||[])if(String(row.spk||row.speaker||row.who||'')===String(m.speaker||''))row.ownerAttribution={candidate:m.verdict==='me'?true:m.verdict==='not_me'?false:null,source:'manual',confidence:m.verdict==='unknown'?0:1,correctedByUser:true,updatedAt:Date.now()};cur.ownerQuestions=Array.isArray(m.ownerQuestions)?m.ownerQuestions:cur.ownerQuestions;persist();}
+        else if (m.type === 'owner_question_update' && m.question) {cur.ownerQuestions=cur.ownerQuestions||[];const i=cur.ownerQuestions.findIndex(q=>q.id===m.question.id);if(i>=0)cur.ownerQuestions[i]=m.question;else cur.ownerQuestions.push(m.question);persist();}
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
         else if (m.type === 'condensed') applyCondensed(m);

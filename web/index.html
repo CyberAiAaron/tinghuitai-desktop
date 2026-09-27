@@ -602,6 +602,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
 <dialog id="dlg-spk">
   <h2 data-i18n="dlg_spk">给说话人起名</h2>
   <div class="field"><label id="spk-label">S1</label><input type="text" id="spk-name" placeholder="例如同事姓名"></div>
+  <div class="row" style="margin-bottom:10px"><button class="btn" id="spk-owner-yes">这是我</button><button class="btn" id="spk-owner-no">不是我</button><button class="btn" id="spk-owner-unknown">未确认</button></div>
   <div class="row"><button class="btn" id="spk-cancel" data-i18n="cancel">取消</button><button class="btn primary" id="spk-save" data-i18n="save">保存</button></div>
 </dialog>
 
@@ -1117,8 +1118,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       try { localStorage.setItem('tht-state', JSON.stringify({...small, sessions: small.sessions.filter(s => notSafeYet(s) || (cur && s.id === cur.id))})); }
       catch(e2){ note('本机存储满了，请导出后清空旧场次。', true); }
     } };
-  function normalizeSession(s){const start=typeof s.start==='number'?s.start:Date.parse(s.start)||Date.now();return {...s,start,end:s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)):null,transcript:(s.transcript||[]).map(x=>({...x,at:Number(x.at)>1e11?Number(x.at):start+Number(x.at||0)*1000,spk:x.spk||x.speaker||x.who||''})),todos:s.todos||[],highlights:s.highlights||[],factchecks:s.factchecks||[]};}
-  const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, transcript: [], highlights: [], todos: [], factchecks: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
+  function normalizeSession(s){const start=typeof s.start==='number'?s.start:Date.parse(s.start)||Date.now();return {...s,start,end:s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)):null,transcript:(s.transcript||[]).map(x=>({...x,at:Number(x.at)>1e11?Number(x.at):start+Number(x.at||0)*1000,spk:x.spk||x.speaker||x.who||''})),todos:s.todos||[],highlights:s.highlights||[],factchecks:s.factchecks||[],ownerQuestions:s.ownerQuestions||[]};}
+  const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, transcript: [], highlights: [], todos: [], factchecks: [], ownerQuestions: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
 
   // Meeting assistant: local profile, per-session rules, guarded field patches.
   // L-18：「以后也记住」以前只写进这个浏览器的 localStorage，底栏「它记住的」是服务端记忆，两套东西。
@@ -1167,6 +1168,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   loadRules();
   const assistantContext=(s=cur)=>[...assistantMemory,...(s?.assistantRules||[])].join('\n').slice(-10000);
   const effectiveBrief=(s=cur)=>[briefText,assistantContext(s)].filter(Boolean).join('\n');
+
   // ===== 会后卡片：整理好了要有个落点，不然人根本不知道它跑完了 =====
   // 触发时机：收敛完成（秒级到几分钟），不等归档那 5–30 分钟——先能用的先给。
   // 只在「有收敛结果且还没过一遍」时出现；归档失败不进这里，那是「会议档案」的事。
@@ -1377,7 +1379,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     }
     return spkIdxCache.map[s] || 0;
   }
-  const spkName = (s) => (cur && cur.names && cur.names[s]) || state.names[s] || SPK_DEF()[s] || (s ? 'S'+(spkIndex(s)||s) : '');
+  // ASR speaker ids are scoped to one meeting. Never reuse S1/S2 names from another session.
+  const spkName = (s) => (cur && cur.names && cur.names[s]) || SPK_DEF()[s] || (s ? 'S'+(spkIndex(s)||s) : '');
   // 要点 / 待办 / 看法里模型写的「S6」是原始号：换成同一套显示名（起过名字就显示名字）。只换这场真出现过的号，S24 这类产品名不动。
   const spkText = (t) => String(t==null?'':t).replace(/(?<![A-Za-z0-9])S(\d{1,2})(?![A-Za-z0-9])/g, (m, d) => spkIndex(d) ? spkName(d) : m);
   const spkCls = (s) => s==='me' ? 's1' : s==='them' ? 's2' : /^\d+$/.test(s) ? 's'+Math.min(6, parseInt(s,10)||1) : 's'+(1 + ([...String(s)].reduce((h,c)=>(h*31 + c.charCodeAt(0))>>>0, 7) % 6));
@@ -1498,7 +1501,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       sigCk = nCk;
       keepScroll(el.ck, () => { el.ck.innerHTML = viewListHtml(cks, first) + hlLogHtml(cur.highlights); }); if (first) el.ck.scrollTop = el.ck.scrollHeight;
     }
-    const myTodosEl=$('#my-todos'); if(myTodosEl){ const h=myTodosHtml(cur.todos||[]); if(myTodosEl.dataset.sig!==h){ myTodosEl.dataset.sig=h; myTodosEl.innerHTML=h; myTodosEl.hidden=!h; } }
+    const myTodosEl=$('#my-todos'); if(myTodosEl){ const h=myTodosHtml(cur.todos||[])+ownerQuestionsHtml(cur.ownerQuestions||[]); if(myTodosEl.dataset.sig!==h){ myTodosEl.dataset.sig=h; myTodosEl.innerHTML=h; myTodosEl.hidden=!h; } }
     el.ctr.textContent = tr.length; el.chl.textContent = items.length; el.cck.textContent = cks.length;
     const nSum = (cur.summary || '') + '|' + ui + '|' + (cur.i18n && cur.i18n[ui] ? JSON.stringify(cur.i18n[ui]).length : 0);
     if (nSum !== sigSum) { sigSum = nSum; const sumTxt = tt(cur.summary); el.sum.innerHTML = cur.summary ? esc(sumTxt) : `<span class="empty">${T('e_sum')||'结束后会出现在这里。'}</span>`; }
@@ -1601,7 +1604,19 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const line=x=>`<div class="my-todo" data-fix="hl" data-kind="todo" data-key="${esc(x.text)}">${esc(tt(x.text))}</div>`;
     return `<div class="my-todos-label">${ui==='en'?'Mine':'本人待办'} <span class="count">${mine.length}</span></div>`+recent.map(line).join('')+(older.length?`<details class="my-todos-older"><summary>${ui==='en'?('Earlier '+older.length):('更早 '+older.length+' 条')}</summary>${older.map(line).join('')}</details>`:'');
   }
+  function ownerQuestionsHtml(questions){
+    const list=(questions||[]).filter(q=>q&&q.id&&q.text).slice(-5).reverse();
+    if(!list.length)return '';
+    const labels=ui==='en'?{open:'Open',partial:'Partial',resolved:'Resolved',deferred:'Deferred'}:{open:'待回答',partial:'部分回答',resolved:'已解决',deferred:'暂缓'};
+    const line=q=>`<div class="my-todo owner-question" data-question-id="${esc(q.id)}" data-source-seg="${esc(q.sourceRefs&&q.sourceRefs[0]&&q.sourceRefs[0].id||'')}"><span>${esc(tt(q.text))}</span><select data-owner-question-status aria-label="${ui==='en'?'Question status':'问题状态'}">${Object.entries(labels).map(([k,v])=>`<option value="${k}"${q.status===k?' selected':''}>${v}</option>`).join('')}</select></div>`;
+    return `<div class="my-todos-label">${ui==='en'?'My questions':'我的问题'} <span class="count">${list.length}</span></div>`+list.map(line).join('');
+  }
   function viewItemOf(card){ if(!cur||!card) return null; const id=card.dataset.id, key=card.dataset.key; return (cur.factchecks||[]).find(x=>id&&x.id===id) || (cur.factchecks||[]).find(x=>x.claim===key) || null; }
+  const myTodosEl=$('#my-todos');
+  if(myTodosEl){
+    myTodosEl.addEventListener('click',e=>{if(e.target.closest('select'))return;const row=e.target.closest('.owner-question'),seg=row&&row.dataset.sourceSeg;if(!seg)return;const hit=[...el.tr.querySelectorAll('p[data-seg]')].find(p=>p.dataset.seg===seg);if(hit){stickBottom=false;el.jump.hidden=false;hit.scrollIntoView({block:'center',behavior:'smooth'});hit.classList.add('tr-flash');setTimeout(()=>hit.classList.remove('tr-flash'),1800);}});
+    myTodosEl.addEventListener('change',e=>{const select=e.target.closest('[data-owner-question-status]'),row=select&&select.closest('.owner-question');if(!select||!row||!cur)return;const q=(cur.ownerQuestions||[]).find(x=>x.id===row.dataset.questionId);if(!q)return;q.status=select.value;q.humanEdited=true;q.updatedAt=Date.now();if(asrWs&&asrWs.readyState===1)asrWs.send(JSON.stringify({type:'owner_question',id:q.id,status:q.status,answerRefs:q.answerRefs||[]}));persist();});
+  }
   async function sendViewFeedback(it,rating,comment){ if(!it) return; it.rating=rating; if(comment!==undefined) it.comment=comment; persist(); sigCk='\u0000'; render();
     try{ const r=await fetch(relayBase()+'/view-feedback?token='+encodeURIComponent(cfg.relayToken||''),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:cur.id,id:it.id||'',kind:it.kind||'',claim:it.claim||'',rating:rating||'',comment:it.comment||''}),signal:AbortSignal.timeout(4000)}); if(!r.ok) throw new Error('HTTP '+r.status); it.fbSynced=true; }
     catch(e){ it.fbSynced=false; note((ui==='en'?'Saved here; Mac not reached: ':'已记在本机，没送到 Mac：')+e.message,true); } persist(); }
@@ -1610,9 +1625,14 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const disarm=()=>{ if(t){clearTimeout(t);t=null;} };
     el.ck.addEventListener('pointerdown',arm); el.ck.addEventListener('pointermove',e=>{ if(t&&(Math.abs(e.clientX-x0)>10||Math.abs(e.clientY-y0)>10)) disarm(); }); el.ck.addEventListener('pointerup',disarm); el.ck.addEventListener('pointercancel',disarm); el.ck.addEventListener('pointerleave',disarm,true);
     el.ck.addEventListener('click', e=>{ if(fired){ fired=false; e.stopPropagation(); e.preventDefault(); } }, true); })();
-  el.tr.addEventListener('click', e => { const s = e.target.closest('.spk'); if (!s || !s.dataset.spk) return; const id = s.dataset.spk; $('#spk-label').textContent = spkName(id) + (T('spk_all')||'（全场生效）'); $('#spk-name').value = ((cur&&cur.names&&cur.names[id])||state.names[id]||''); $('#dlg-spk').dataset.id = id; $('#dlg-spk').showModal(); setTimeout(()=>$('#spk-name').focus(),50); });
+  el.tr.addEventListener('click', e => { const s = e.target.closest('.spk'); if (!s || !s.dataset.spk) return; const id = s.dataset.spk; $('#spk-label').textContent = spkName(id) + (T('spk_all')||'（全场生效）'); $('#spk-name').value = ((cur&&cur.names&&cur.names[id])||''); $('#dlg-spk').dataset.id = id; $('#dlg-spk').showModal(); setTimeout(()=>$('#spk-name').focus(),50); });
   $('#spk-cancel').onclick = () => $('#dlg-spk').close();
-  $('#spk-save').onclick = () => { const id = $('#dlg-spk').dataset.id, nm = $('#spk-name').value.trim(); if (cur) { cur.names = cur.names||{}; if (nm) cur.names[id] = nm; else delete cur.names[id]; } if (nm) state.names[id] = nm; persist(); $('#dlg-spk').close(); render(); sendNames(); };
+  $('#spk-save').onclick = () => { const id = $('#dlg-spk').dataset.id, nm = $('#spk-name').value.trim(); if (cur) { cur.names = cur.names||{}; if (nm) cur.names[id] = nm; else delete cur.names[id]; } persist(); $('#dlg-spk').close(); render(); sendNames(); };
+  const ownerVerdict = verdict => { const id=$('#dlg-spk').dataset.id; if(!cur||!id)return; const attr={candidate:verdict==='me'?true:verdict==='not_me'?false:null,source:'manual',confidence:verdict==='unknown'?0:1,correctedByUser:true,updatedAt:Date.now()}; for(const row of cur.transcript||[])if(String(row.spk||row.speaker||row.who||'')===String(id))row.ownerAttribution={...attr}; if(verdict==='me'){cur.names=cur.names||{};cur.names[id]=(window.THT_BOOT&&window.THT_BOOT.ownerProfile&&window.THT_BOOT.ownerProfile.displayName)||'我';sendNames();} if(asrWs&&asrWs.readyState===1)asrWs.send(JSON.stringify({type:'owner_attribution',speaker:id,verdict})); persist(); $('#dlg-spk').close(); resetSigs(); render(); };
+  const ownerYes=$('#spk-owner-yes'),ownerNo=$('#spk-owner-no'),ownerUnknown=$('#spk-owner-unknown');
+  if(ownerYes)ownerYes.onclick=()=>ownerVerdict('me');
+  if(ownerNo)ownerNo.onclick=()=>ownerVerdict('not_me');
+  if(ownerUnknown)ownerUnknown.onclick=()=>ownerVerdict('unknown');
 
   // ===== 会中实时结构化：把要点归到几个大标题下（1 / 1a / 1b），原卡片与点击改删不变 =====
   // 只按要点文本分组，不改任何数据；分组失败或没算完时照常平铺显示。
@@ -2220,10 +2240,13 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
           cur = Object.assign(newSession('view', 'view'), S, {viewOnly:true}); resetSigs(); stickBottom = true; render(); el.src.textContent = '🎙 ' + (m.session.source||'另一台设备') + ' 在采音'; updateStatusIdle(); } } else { viewLive = false; updateStatusIdle(); } }
       else if (!running && cur && cur.viewOnly) {
         if(m.type==='assistantAck'){assistantAck(m);return;}
-      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','summary','names','calendar'])if(restored[key]!==undefined)cur[key]=restored[key];cur.nameFixCount=(m.session.nameFixes||[]).length;persist();resetSigs();render();}
+      if(m.type==='snapshot'&&m.session?.id===cur.id){const restored=normalizeSession(m.session);for(const key of ['transcript','highlights','todos','factchecks','ownerQuestions','summary','names','calendar'])if(restored[key]!==undefined)cur[key]=restored[key];cur.nameFixCount=(m.session.nameFixes||[]).length;persist();resetSigs();render();}
       else if (m.type === 'partial') { interim = m.text||''; render(); }
         else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||'', seg: m.seg||''}); render(); }
         else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
+        else if (m.type === 'owner_attribution_update' && cur.transcript[m.index]) {cur.transcript[m.index].ownerAttribution=m.attribution;persist();}
+        else if (m.type === 'owner_attribution_batch') {for(const row of cur.transcript||[])if(String(row.spk||row.speaker||row.who||'')===String(m.speaker||''))row.ownerAttribution={candidate:m.verdict==='me'?true:m.verdict==='not_me'?false:null,source:'manual',confidence:m.verdict==='unknown'?0:1,correctedByUser:true,updatedAt:Date.now()};cur.ownerQuestions=Array.isArray(m.ownerQuestions)?m.ownerQuestions:cur.ownerQuestions;persist();}
+        else if (m.type === 'owner_question_update' && m.question) {cur.ownerQuestions=cur.ownerQuestions||[];const i=cur.ownerQuestions.findIndex(q=>q.id===m.question.id);if(i>=0)cur.ownerQuestions[i]=m.question;else cur.ownerQuestions.push(m.question);persist();}
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
         else if (m.type === 'condensed') applyCondensed(m);
@@ -2384,15 +2407,16 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   }
   function stopSpkTrack(){ if (spkTrack) { clearInterval(spkTrack.timer); spkTrack = null; } }
   function whoSpoke(from, to){
-    if (!spkTrack) return '';
+    if (!spkTrack) return null;
     let a = 0, b = 0, n = 0;
     for (const e of spkTrack.log) if (e.t >= from && e.t <= to) { a += e.a; b += e.b; n++; }
-    if (n < 3) return '';
+    if (n < 3) return null;
     const q = 0.004 * n;
-    if (a < q && b < q) return '';
-    if (a > b * 1.5) return 'them';
-    if (b > a * 1.5) return 'me';
-    return '';
+    if (a < q && b < q) return null;
+    const confidence = Math.max(0, Math.min(1, Math.max(a,b) / Math.max(0.000001,a+b)));
+    if (a > b * 1.5) return {who:'them',confidence};
+    if (b > a * 1.5) return {who:'me',confidence};
+    return null;
   }
   async function asrAudioUp(){
     if (asrStream) return;
@@ -2500,16 +2524,20 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
         // Relay deduplicates utterance IDs/timestamps; repeated spoken words are valid.                          // 20 秒内同一句只收一次
         const now = Date.now();
         if (isDup(m.text)) return;                       // 长句在 20 秒内重发，丢掉
-        const spk = m.speaker ? String(m.speaker) : whoSpoke(lastFinalAt || (now - 8000), now);
+        const ownerSignal = m.speaker ? null : whoSpoke(lastFinalAt || (now - 8000), now);
+        const spk = m.speaker ? String(m.speaker) : (ownerSignal&&ownerSignal.who)||'';
         lastFinalAt = now;
         cur.transcript.push({at: now, t: Math.round((now-cur.start)/1000), text: m.text, spk, seg: m.seg||''});
         // 识别语言选「自动」时，攒够几句就去认一次是中文还是英文。
         // 这一行以前漏了，于是「自动」这个选项从来没真正生效过（2026-09-12 补）。
         try { maybeDetectTongue(); } catch(e){}
-        if(spk && !m.speaker && asrWs?.readyState===1) asrWs.send(JSON.stringify({type:'spk',who:spk,at:now}));
+        if(ownerSignal && asrWs?.readyState===1) asrWs.send(JSON.stringify({type:'spk',who:ownerSignal.who,confidence:ownerSignal.confidence,at:now}));
         persist(); render();
       }
       else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
+        else if (m.type === 'owner_attribution_update' && cur.transcript[m.index]) {cur.transcript[m.index].ownerAttribution=m.attribution;persist();}
+        else if (m.type === 'owner_attribution_batch') {for(const row of cur.transcript||[])if(String(row.spk||row.speaker||row.who||'')===String(m.speaker||''))row.ownerAttribution={candidate:m.verdict==='me'?true:m.verdict==='not_me'?false:null,source:'manual',confidence:m.verdict==='unknown'?0:1,correctedByUser:true,updatedAt:Date.now()};cur.ownerQuestions=Array.isArray(m.ownerQuestions)?m.ownerQuestions:cur.ownerQuestions;persist();}
+        else if (m.type === 'owner_question_update' && m.question) {cur.ownerQuestions=cur.ownerQuestions||[];const i=cur.ownerQuestions.findIndex(q=>q.id===m.question.id);if(i>=0)cur.ownerQuestions[i]=m.question;else cur.ownerQuestions.push(m.question);persist();}
         else if (m.type === 'revise') applyRevise(m);
         else if (m.type === 'recomputed') applyRecomputed(m);
         else if (m.type === 'condensed') applyCondensed(m);
@@ -2552,6 +2580,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       for(const r of rows.sort((a,b)=>b.started-a.started)){const p=document.createElement('p'),btn=document.createElement('button');btn.className='btn';btn.textContent=new Date(r.started).toLocaleString()+' · '+(r.bytes/1048576).toFixed(1)+' MB · '+(r.state==='error'?'保存出错 / Save error':!r.ended?'未正常收尾 / Not finalized':!r.chunks?'无音频片段 / No chunks':'已收尾 / Finalized')+' · 导出 / Export';btn.onclick=async()=>{try{const b=await RecordingSafety.blob(r.id),url=URL.createObjectURL(b),a=document.createElement('a');a.href=url;a.download=r.id+(r.mime.includes('mp4')?'.m4a':'.webm');a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}catch(e){note(e.message,true);}};p.append(btn);if(!(running&&r.sessionId===cur?.id)){const del=document.createElement('button');del.className='btn sm';del.textContent=ui==='en'?'Delete backup':'删除备份';del.onclick=async()=>{if(!confirm(ui==='en'?'Delete this local audio backup permanently? Export it first if needed.':'永久删除这份本机录音备份？需要保留请先导出。'))return;try{await RecordingSafety.remove(r.id);p.remove();}catch(e){note(e.message,true);}};p.append(del);}box.append(p);}
     }catch(e){box.textContent='读取失败：'+e.message;}
   };
+
   // ===== 导入现成转写 =====
   function parseTranscript(raw){
     const out = [];
@@ -2863,7 +2892,6 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const fixesBefore = JSON.parse(JSON.stringify(cur.fixes || []));
     const rulesBefore = JSON.parse(JSON.stringify(cur.assistantRules || []));
     const namesBefore = JSON.parse(JSON.stringify(cur.names || {}));
-    const stateNamesBefore = JSON.parse(JSON.stringify(state.names || {}));
     const memBefore = Array.isArray(assistantMemory) ? assistantMemory.slice() : [];
     const listWas = kind==='ck' ? 'factchecks' : (cur.highlights.includes(target.it) ? 'highlights' : (cur.todos.includes(target.it) ? 'todos' : ''));
     const done = [];
@@ -2890,7 +2918,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     }
     if (intent.names) {
       cur.names = cur.names || {};
-      for (const [id, nm] of Object.entries(intent.names)) { cur.names[id] = nm; state.names[id] = nm; done.push((ui==='en'?'S':'S') + id + ' = ' + nm); }
+      for (const [id, nm] of Object.entries(intent.names)) { cur.names[id] = nm; done.push((ui==='en'?'S':'S') + id + ' = ' + nm); }
       sendNames();
     }
     const lx = intent.lexicon;
@@ -2921,7 +2949,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       else { Object.keys(target.it).forEach(k => delete target.it[k]); Object.assign(target.it, before); }
       cur.fixes = fixesBefore;                       // 这一次记下的词一起收回
       cur.assistantRules = rulesBefore;              // 这一场的规则一起收回
-      cur.names = namesBefore; state.names = stateNamesBefore; sendNames();
+      cur.names = namesBefore; sendNames();
       // 长期规矩也收回：这一次新加的那几条从服务端删掉，回到点「撤销」之前的样子
       for (const t of assistantMemory.filter(x => !memBefore.includes(x))) { forgetRule(t).catch(()=>{}); }
       assistantMemory = memBefore.slice();
