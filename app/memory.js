@@ -51,7 +51,7 @@ function open(dataDir) {
   db.exec('PRAGMA synchronous=NORMAL');
   db.exec(`CREATE TABLE IF NOT EXISTS cards(
     id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 1,
-    project TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, topic TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '', scope TEXT NOT NULL DEFAULT 'project', kind TEXT NOT NULL, topic TEXT NOT NULL DEFAULT '',
     text TEXT NOT NULL, state TEXT NOT NULL, owner TEXT NOT NULL DEFAULT '', due TEXT NOT NULL DEFAULT '',
     aliases TEXT NOT NULL DEFAULT '', meeting_id TEXT NOT NULL DEFAULT '', meeting_title TEXT NOT NULL DEFAULT '',
     source_refs TEXT NOT NULL DEFAULT '[]', recorded_at TEXT NOT NULL, effective_at TEXT,
@@ -59,6 +59,8 @@ function open(dataDir) {
     review_note TEXT NOT NULL DEFAULT '')`);
   // 老库没有这一列：被替代的旧决定要留下「是哪句话把它推翻的」。
   addColumn(db, 'cards', 'change_reason', "change_reason TEXT NOT NULL DEFAULT ''");
+  // 可跨项目的记忆必须显式标成 global；旧卡保持 project 范围，避免升级后突然泄到别的项目。
+  addColumn(db, 'cards', 'scope', "scope TEXT NOT NULL DEFAULT 'project'");
   db.exec(`CREATE TABLE IF NOT EXISTS card_history(
     id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, changed_at TEXT NOT NULL,
     PRIMARY KEY(id, revision))`);
@@ -71,6 +73,7 @@ function open(dataDir) {
   // P-11：失败的抽卡要能自动重来，得记住重来过几次，免得坏数据无限重跑
   addColumn(db, 'ingested', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 0');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_kind_state ON cards(kind,state)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_cards_project_live ON cards(project,scope,state,kind)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_meeting ON cards(meeting_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_cards_live ON cards(state,needs_review,recorded_at)');
   POOL.set(key, db);
@@ -108,7 +111,7 @@ function inTx(db, fn) {
   return r;
 }
 
-const COLS = ['project','kind','topic','text','state','owner','due','aliases','meeting_id','meeting_title',
+const COLS = ['project','scope','kind','topic','text','state','owner','due','aliases','meeting_id','meeting_title',
               'source_refs','recorded_at','effective_at','supersedes_id','change_reason','human_edited','needs_review','review_note'];
 
 function putCard(db, c) {
@@ -116,7 +119,7 @@ function putCard(db, c) {
   const allowed = STATES[kind];
   const state = allowed.includes(c.state) ? c.state : DEFAULT_STATE[kind];
   const row = {
-    id: str(c.id, 64) || uid(), revision: 1, project: str(c.project, 80), kind, topic: str(c.topic, 120),
+    id: str(c.id, 64) || uid(), revision: 1, project: str(c.project, 80), scope: c.scope === 'global' ? 'global' : 'project', kind, topic: str(c.topic, 120),
     text: str(c.text, 2000), state, owner: str(c.owner, 80), due: str(c.due, 40),
     aliases: Array.isArray(c.aliases) ? c.aliases.map(x => str(x, 60)).join(',').slice(0, 300) : str(c.aliases, 300),
     meeting_id: str(c.meeting_id, 100), meeting_title: str(c.meeting_title, 200),

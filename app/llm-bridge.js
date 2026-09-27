@@ -61,7 +61,9 @@ function reasonOf(r) {
   if (want) {
     try {
       pack = contextPack.build(settings.load(), { purpose: String(req.context.purpose), dataDir: settings.dataDir,
-        meetingId: String(req.context.meetingId || ''), memoryBlock: req.context.memoryBlock });
+        meetingId: String(req.context.meetingId || ''), memoryBlock: req.context.memoryBlock,
+        session: { projectId: String(req.context.projectId || ''),
+          contextSourceIds: Array.isArray(req.context.contextSourceIds) ? req.context.contextSourceIds : [] } });
     } catch (e) { log('本机资料没拼出来（' + String((e && e.message) || e).slice(0, 120) + '），这次不带资料'); }
   }
   const system = fill(req.system, pack ? pack.text : '', pack ? pack.note : '');

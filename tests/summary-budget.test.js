@@ -20,7 +20,7 @@ print(json.dumps({'mode':mp.SUMMARY_NOTE['mode'],'calls':len(calls),'maxUser':ma
 test('预算：Claude 档 200k token，扣掉系统提示 / 记忆 / 输出预留', () => {
   const r = py(`print(json.dumps({'c':mp.model_context_tokens('fable'),'d':mp.model_context_tokens('unknown-x'),'b':mp.summary_budget_chars('x'*1000,'',model='opus')}))`);
   assert.equal(r.c, 200000); assert.equal(r.d, 32000);
-  assert.equal(r.b, Math.floor((200000 - 5000) * 1.5) - 1000 - 9000);
+  assert.equal(r.b, Math.floor((200000 - 5000) * 1.5) - 1000 - 13000);
 });
 test('长会（约 5 万字）在 200k 模型下单趟全文，不分块', () => {
   const r = py(RUN.replace('range(N)', 'range(2000)'), { LLM_MODEL_POST: 'fable' });

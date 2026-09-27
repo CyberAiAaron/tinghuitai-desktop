@@ -350,7 +350,7 @@ NOTE_SLOT = '\x00CONTEXT_NOTE\x00'
 # 字 ↔ token 按 1.5 字/token 折算（中文偏保守；比 llm.js 估账用的 2 字/token 更紧，宁可多分一块也不撑爆）。
 CHARS_PER_TOKEN = 1.5
 OUTPUT_RESERVE_TOKENS = 3000 + 2000      # max_tokens=3000 + 余量（思考 / 格式）
-MEMORY_RESERVE_CHARS = 3000 + 4000 + 2000  # context-pack post-summary 两份上限 + 本场 memoryBlock 预留
+MEMORY_RESERVE_CHARS = 3000 + 4000 + 4000 + 2000  # core + memory + 本场选择来源 + 余量
 def post_model_name():
     chain = cfg('LLM_CHAIN', None)
     if isinstance(chain, list) and chain:
@@ -422,7 +422,9 @@ def summarize(session, on_phase=None, context_purpose='post-summary'):
                           timeout=min(300, max(60, int(left))), session_id=session.get('id', ''),
                           purpose='summary', skip=burnt['skip'],
                           context={'purpose': context_purpose, 'meetingId': session.get('id', ''),
-                                   'memoryBlock': session.get('memoryBlock')} if (final and context_purpose) else None)
+                                   'memoryBlock': session.get('memoryBlock'),
+                                   'projectId': session.get('projectId', ''),
+                                   'contextSourceIds': session.get('contextSourceIds', [])} if (final and context_purpose) else None)
         except ModelError as e:
             raise RuntimeError('没能生成总结（' + str(e) + '）')
         burnt['skip'] += len(r.get('attempts') or [])
@@ -688,7 +690,8 @@ def make_review(session, brief, attendees=None, timeout=600):
             + '\n会中记下的待核查：\n' + '\n'.join('- ' + c for c in checks if c) + '\n本人笔记：' + str(session.get('notes') or '')[:2000]
             + '\n\n逐字稿：\n' + _brief_text(session, cap=70000))
     raw, r = _json_ask(system, user, timeout=timeout, session_id=session.get('id', ''), purpose='review',
-                       context={'purpose': 'review', 'meetingId': session.get('id', '')}, retry_note='点评这一步')
+                       context={'purpose': 'review', 'meetingId': session.get('id', ''),
+                                'projectId': session.get('projectId', ''), 'contextSourceIds': session.get('contextSourceIds', [])}, retry_note='点评这一步')
     background = bool(((r.get('context') or {}).get('chars') or 0))   # 桥回的字数就是「背景带上没有」
     rv = raw.get('review') or {}
     qs = []
@@ -764,7 +767,8 @@ def make_insights(session, brief, attendees=None, timeout=600):
             + '\n本人笔记：' + str(session.get('notes') or '')[:2000]
             + '\n\n逐字稿（每行开头〔编号〕就是 evidence 要写的片段编号）：\n' + _insight_text(session))
     raw, r = _json_ask(system, user, timeout=timeout, session_id=session.get('id', ''), purpose='insights',
-                       context={'purpose': 'insights', 'meetingId': session.get('id', '')}, retry_note='洞察这一步')
+                       context={'purpose': 'insights', 'meetingId': session.get('id', ''),
+                                'projectId': session.get('projectId', ''), 'contextSourceIds': session.get('contextSourceIds', [])}, retry_note='洞察这一步')
     valid = set(i for i in _seg_ids(session) if i)
     out, dropped = [], 0
     for it in (raw.get('insights') or [])[:8]:
@@ -905,7 +909,8 @@ def _deep_once(system, user, session, run, timeout):
     t0 = time.time()
     r = ask_model(system, user, timeout=timeout, session_id=session.get('id', ''),
                   purpose='insights-deep' + ('' if run == 1 else '-r%d' % run),
-                  context={'purpose': 'insights-deep', 'meetingId': session.get('id', '')},
+                  context={'purpose': 'insights-deep', 'meetingId': session.get('id', ''),
+                           'projectId': session.get('projectId', ''), 'contextSourceIds': session.get('contextSourceIds', [])},
                   kind='insight-deep', max_tokens=8000, json_mode=False)
     md = _clean_insights_md(r.get('text'))
     if not md: raise ModelError('深度洞察没有正文')

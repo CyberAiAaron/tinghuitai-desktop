@@ -259,6 +259,9 @@ class Session {
   constructor(id, startMsg, env) {
     this.id = id || ('s-' + Date.now());
     this.notes = String(startMsg.notes||'').slice(0,20000); this.title = startMsg.title || ''; this.source = startMsg.source || ''; this.names = startMsg.names || {};
+    this.projectId = String(startMsg.projectId || startMsg.project || '').trim().slice(0,80);
+    this.contextSourceIds = [...new Set((Array.isArray(startMsg.contextSourceIds) ? startMsg.contextSourceIds : [])
+      .map(x => String(x || '').trim()).filter(x => /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(x)))].slice(0,40);
     this.uiLang = (startMsg.uiLang === 'en') ? 'en' : 'zh';   // 界面语言：分诊/收尾总结/会中提醒跟随；归档 md 与时光机深度版恒中文
     this.lang = LANGS[startMsg.lang] ? startMsg.lang : '';
     if (this.lang && !LANGS[this.lang].volcOk) setTimeout(() => this.broadcast({ type: 'error', message: '实时转写暂时听不准' + LANGS[this.lang].label + '，会中字幕仅供参考；录音会完整保存，会后自动用本机模型重新转写一遍。' }), 1500);
@@ -278,7 +281,7 @@ class Session {
     this.startTs = Date.now(); this.lastFinalTs = Date.now(); this.lastAudioTs = Date.now();
     this.journalPath=path.join(DATA,'state','live-sessions',this.id+'.json');
     const recovered=journal.read(this.journalPath);if(recovered?.complete)throw Error('本场已结束，请开始新会议');
-    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds','calendar','nameFixes','threads'])if(recovered[k]!==undefined)this[k]=recovered[k];this.startTs=recovered.startTs||this.startTs;}
+    if(recovered && !recovered.complete){for(const k of ['transcript','highlights','todos','factchecks','names','summary','notes','fixes','brief','hlGroups','uiLang','transcriptionGapSeconds','browserGapSeconds','calendar','nameFixes','threads','projectId','contextSourceIds'])if(recovered[k]!==undefined)this[k]=recovered[k];if(!this.projectId&&recovered.project)this.projectId=String(recovered.project).trim().slice(0,80);this.startTs=recovered.startTs||this.startTs;}
 
     try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch (e) {}
     this.audioPath = path.join(AUDIO_DIR, `${this.id}.pcm`);
@@ -294,7 +297,7 @@ class Session {
     this.memoryBlock = '';
     try { const ops = require('./memory-ops');
       const q = [startMsg.title||'', Object.values(startMsg.names||{}).join(' '), startMsg.brief||''].join(' ');
-      this.memoryCards = ops.retrieve(DATA, q, { log });
+      this.memoryCards = ops.retrieve(DATA, q, { projectId: this.projectId, log });
       this.memoryBlock = ops.toPromptBlock(this.memoryCards);
     } catch (e) { log('memory retrieve 失败 ' + e.message); }
     // REQ-009 回流：上几场会后已经发出去的会议邀请和派发的任务，开场就带上，
@@ -342,7 +345,7 @@ class Session {
       if (spoken.replace(/\s/g, '').length < 80) return;
       const q = [this.title || '', spoken].join(' ');
       const t0 = Date.now();
-      const cards = ops.retrieve(DATA, q, { log });
+      const cards = ops.retrieve(DATA, q, { projectId: this.projectId, log });
       const cost = Date.now() - t0;
       const block = ops.toPromptBlock(cards);
       // 检索是同步读 SQLite。库大了或磁盘慢了，会卡住会议这一拍。
@@ -366,7 +369,7 @@ class Session {
     if(complete||force){this.journalWrite.stop();return this.writeJournal(complete);}
     this.journalWrite.call();return true;
   }
-  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,threads:this.threads||{},notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[],complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
+  writeJournal(complete=false) {try{if(this.audioFd!=null)fs.fsyncSync(this.audioFd);journal.write(this.journalPath,{id:this.id,startTs:this.startTs,title:this.title,source:this.source,projectId:this.projectId,contextSourceIds:this.contextSourceIds,transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,names:this.names,fixes:this.fixes,brief:this.brief,hlGroups:this.hlGroups,uiLang:this.uiLang,calendar:this.calendar,nameFixes:this.nameFixes,threads:this.threads||{},notes:this.notes||'',assistantOriginals:this.assistantOriginals||{},summary:this.summary||'',audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[],complete,updated:Date.now()});return true;}catch(e){log('checkpoint failed '+this.id+' '+e.message);this.broadcast({type:'error',message:'Mac 保存失败，请从浏览器导出录音备份：'+e.message});return false;}}
   // 会中把要点分好的那棵议题树（web/src/12-grouping.js 的 hlGroups）。分组在浏览器里算，
   // 会后回看页要看到同一套议题划分，所以每排完一轮就送过来存一份，归档时跟着会话一起落盘。
   setOutline(groups) {
@@ -408,7 +411,7 @@ class Session {
     return false;
   }
   broadcast(o) { const s = JSON.stringify(o); for (const c of this.clients) { try { if (c.readyState === WebSocket.OPEN) c.send(s); } catch (e) {} } }
-  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names, calendar: this.calendar, nameFixes: this.nameFixes, threads: this.threads || {} } }; }
+  snapshot() { return { type: 'snapshot', session: { id: this.id, title: this.title, start: this.startTs, end: this.finalized ? this.lastFinalTs : null, source: this.source, projectId: this.projectId, contextSourceIds: this.contextSourceIds, transcript: this.transcript.map(x=>({...x,at:this.startTs+Number(x.at||0)*1000,spk:x.speaker||x.who||''})), highlights: this.highlights, todos: this.todos, factchecks: this.factchecks, summary: this.summary || '', names: this.names, calendar: this.calendar, nameFixes: this.nameFixes, threads: this.threads || {} } }; }
   // 会中转写走哪条路：火山（默认，快、有说话人）或 macOS 自带（离线、不用 Key）
   connectAsr() {
     if (this.mac || this.dg) return;            // 续场重连时已经有一个在跑，再造一个会漏掉旧的进程和端口
@@ -1004,7 +1007,7 @@ class Session {
     this.checkpoint(false,{force:true}); clearInterval(this.journalTimer); await this.closeAudio();
     let saved=false;
     try {
-      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[]};
+      const sess={id:this.id,title:this.title,start:new Date(this.startTs).toISOString(),end:new Date().toISOString(),mode:'online-火山',source:this.source,projectId:this.projectId,contextSourceIds:this.contextSourceIds,endReason:reason,names:this.names,brief:this.brief,fixes:this.fixes,lang:this.lang,localLanguage:(this.lang&&LANGS[this.lang]?LANGS[this.lang].whisper:'auto'),forceLocalTranscribe:!!(this.lang&&LANGS[this.lang]&&!LANGS[this.lang].volcOk),transcriptionGapSeconds:this.transcriptionGapSeconds,browserGapSeconds:this.browserGapSeconds,notes:this.notes||'',hlGroups:this.hlGroups||null,recoveryStatus:'saved-before-summary',transcript:this.transcript,highlights:this.highlights,todos:this.todos,factchecks:this.factchecks,threads:this.threads||{},summary:this.summary||'',uiLang:this.uiLang,audioPath:this.audioPath,audioSaveError:this.audioSaveError||'',jev:this.jev?this.jev.snapshot():null,attachments:this.attachments||[]};
       // 批 4（F5）：四个数从 usage.jsonl（本场 sessionId 的行）和场次自己算，落进场次文件，会后台直接显示；算不出不影响这场
       try { sess.stats = sessionStats.forSession(DATA, sess); log(`会后统计 ${this.id}：Jev ${sess.stats.jevCalls} 次，Sonnet ${sess.stats.sonnetCalls} 次，洞察 ${sess.stats.insights} 条，采纳 ${sess.stats.adopted} 条，出处命中 ${sess.stats.sourceHit.hit} / 缺失 ${sess.stats.sourceHit.miss}`); } catch (e) { log('会后统计失败（不影响这场）' + e.message); }
       // 这一场里，你纠正过的词有没有再错。这是「回流到底有没有用」的唯一证据。
@@ -1020,7 +1023,7 @@ class Session {
       } catch (e) { log('词表统计失败（不影响这场）' + e.message); }
       try { const ops = require('./memory-ops');
         const spoken = (this.transcript||[]).map(r=>r.text).join(' ').slice(0, 6000);
-        const after = ops.retrieve(DATA, [this.title||'', spoken].join(' '), { log });
+        const after = ops.retrieve(DATA, [this.title||'', spoken].join(' '), { projectId: this.projectId, log });
         sess.memoryBlock = ops.toPromptBlock(after);
       } catch (e) { log('memory 会后检索失败 ' + e.message); }
       this.pendingPath=path.join(PENDING_DIR,'sess-'+this.id+'.json');journal.write(this.pendingPath,sess);
@@ -1391,7 +1394,7 @@ const STARTUP_RECOVERY_DELAY_MS=(process.env.THT_TEST&&Number(process.env.THT_RE
 const ORPHAN_AGE_MS=(process.env.THT_TEST&&Number(process.env.THT_ORPHAN_AGE_MS)>0)?Number(process.env.THT_ORPHAN_AGE_MS):30*60000;
 function recoverOrphanJournal(s,file){
   const startTs=s.startTs||s.updated||Date.now(),endTs=s.updated||Date.now();
-  const sess={id:s.id,title:s.title||'',start:new Date(startTs).toISOString(),end:new Date(endTs).toISOString(),mode:'online-火山',source:s.source||'',endReason:'启动时补收尾：上次进程没结束这场',names:s.names||{},brief:s.brief||'',fixes:s.fixes||[],lang:'auto',localLanguage:'auto',forceLocalTranscribe:false,transcriptionGapSeconds:s.transcriptionGapSeconds||0,browserGapSeconds:s.browserGapSeconds||0,notes:s.notes||'',hlGroups:s.hlGroups||null,recoveryStatus:'recovered-at-startup',transcript:Array.isArray(s.transcript)?s.transcript:[],highlights:s.highlights||[],todos:s.todos||[],factchecks:s.factchecks||[],summary:s.summary||'',uiLang:s.uiLang||'zh',audioPath:s.audioPath||'',audioSaveError:s.audioSaveError||''};
+  const sess={id:s.id,title:s.title||'',start:new Date(startTs).toISOString(),end:new Date(endTs).toISOString(),mode:'online-火山',source:s.source||'',projectId:String(s.projectId||s.project||'').slice(0,80),contextSourceIds:Array.isArray(s.contextSourceIds)?s.contextSourceIds:[],endReason:'启动时补收尾：上次进程没结束这场',names:s.names||{},brief:s.brief||'',fixes:s.fixes||[],lang:'auto',localLanguage:'auto',forceLocalTranscribe:false,transcriptionGapSeconds:s.transcriptionGapSeconds||0,browserGapSeconds:s.browserGapSeconds||0,notes:s.notes||'',hlGroups:s.hlGroups||null,recoveryStatus:'recovered-at-startup',transcript:Array.isArray(s.transcript)?s.transcript:[],highlights:s.highlights||[],todos:s.todos||[],factchecks:s.factchecks||[],summary:s.summary||'',uiLang:s.uiLang||'zh',audioPath:s.audioPath||'',audioSaveError:s.audioSaveError||''};
   sess.attachments=Array.isArray(s.attachments)?s.attachments:[];   // 批 4：journal 里的纠错单附件跟着补收尾的场次走
   try{sess.stats=sessionStats.forSession(DATA,sess);}catch(e){}
   const hasText=sess.transcript.some(x=>x&&x.text),hasAudio=!!(sess.audioPath&&fs.existsSync(sess.audioPath)&&fs.statSync(sess.audioPath).size>3200);

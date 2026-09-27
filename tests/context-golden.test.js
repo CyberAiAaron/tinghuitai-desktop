@@ -175,7 +175,7 @@ test('金样 · live（会中分析）', async () => {
     const WS = require('ws');
     const ws = new WS(base.replace('http', 'ws') + '?token=' + 't'.repeat(32));
     await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
-    ws.send(JSON.stringify({ type: 'start', sessionId: 'golden-live', rate: 16000, title: '资料包单一入口',
+    ws.send(JSON.stringify({ type: 'start', sessionId: 'golden-live', rate: 16000, title: '资料包单一入口', projectId: '26191',
       brief: 'Chansey = 26191，资料包指本机资料与记忆库', names: {}, fixes: [{ wrong: '柴西', right: 'Chansey' }] }));
     await pause(400);
     const done = new Promise(res => ws.on('message', d => { try { if (JSON.parse(d.toString()).type === '__test_triaged') res(); } catch (e) {} }));
