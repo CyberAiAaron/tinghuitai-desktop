@@ -993,6 +993,8 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const list = $('#s-context-sources'); if (!list) return;
     list.replaceChildren();
     const rows = contextRegistry.sources || [];
+    const overview = $('#s-context-overview');
+    if (overview) overview.textContent = `来源表 v${contextRegistry.version || 1} · ${rows.filter(x => x.status?.available).length}/${rows.length} 可用 · 本场已选 ${contextSourceIds.length}`;
     if (!rows.length) {
       const empty = document.createElement('div'); empty.className = 'context-source-empty';
       empty.textContent = '还没有本机来源。添加文件或目录后，勾选的来源会随本场会议启动。'; list.append(empty); return;
@@ -1016,8 +1018,6 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn sm'; remove.dataset.contextAction = 'delete'; remove.textContent = '删除';
       actions.append(toggle, remove); row.append(choose, info, actions); list.append(row);
     }
-    const overview = $('#s-context-overview');
-    if (overview) overview.textContent = `来源表 v${contextRegistry.version || 1} · ${rows.filter(x => x.status?.available).length}/${rows.length} 可用 · 本场已选 ${contextSourceIds.length}`;
   }
   async function contextApi(body){
     const r = await fetch(contextApiUrl(), {method:body?'POST':'GET', headers:body?contextHeaders():{'x-tht-token':cfg.relayToken || ''}, ...(body?{body:JSON.stringify(body)}:{}), cache:'no-store'});
