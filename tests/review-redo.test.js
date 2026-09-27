@@ -12,7 +12,8 @@ const share = require('../app/share');
 const A = require('../app/actions');
 const pause = ms => new Promise(r => setTimeout(r, ms));
 const tmp = tag => fs.mkdtempSync(path.join(os.tmpdir(), 'tht-' + tag + '-'));
-const AT = new Date('2026-09-22T10:00:00+08:00');   // 周二
+// 用设备本地日历构造周二，避免把上海的绝对时刻误当成全球都还是 9 月 22 日。
+const AT = new Date(2026, 8, 22, 10, 0, 0);   // 设备本地时间：周二
 const clone = x => JSON.parse(JSON.stringify(x));
 
 // ===================== ③ 一句话改待办：规则解析 =====================
