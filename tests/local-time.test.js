@@ -2,6 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -44,4 +45,14 @@ test('周几解析在上海、洛杉矶、伦敦都以各自设备日历为准',
   for (const tz of ['Asia/Shanghai', 'America/Los_Angeles', 'Europe/London']) {
     assert.deepEqual(runIn(tz, code), ['2026-09-25', '2026-09-28']);
   }
+});
+
+test('任务草稿、卡片线程和记忆写回不再强制上海或 UTC 日期', () => {
+  const actions = fs.readFileSync(path.join(root, 'app/actions.js'), 'utf8');
+  const thread = fs.readFileSync(path.join(root, 'app/card-thread.js'), 'utf8');
+  const diff = fs.readFileSync(path.join(root, 'app/memory-diff.js'), 'utf8');
+  assert.match(actions, /localTime\.localDayPlus\(n, from\)/);
+  assert.doesNotMatch(thread, /Asia\/Shanghai/);
+  assert.match(thread, /localTime\.localDay\(t\)/);
+  assert.match(diff, /const today = localTime\.localDay\(\)/);
 });

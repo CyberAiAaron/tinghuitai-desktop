@@ -700,9 +700,9 @@ class Session {
         row.who = who;
         row.speaker = who;
         row.ownerAttribution = attribution;
-        this.applyStoredOwnerVerdict(row);
+        if (!this.applyStoredOwnerVerdict(row)) ownerTracking.addOwnerQuestion(this.ownerQuestions, row);
         this.broadcast({ type: 'speaker_update', index: i, speaker: who });
-        this.broadcast({ type: 'owner_attribution_update', index: i, attribution });
+        this.broadcast({ type: 'owner_attribution_update', index: i, attribution: row.ownerAttribution, ownerQuestions: this.ownerQuestions });
         break;
       }
     }
@@ -714,6 +714,7 @@ class Session {
     if (speaker && ['me', 'not_me', 'unknown'].includes(m && m.verdict)) this.ownerSpeakerVerdicts[speaker] = m.verdict;
     const changed = ownerTracking.applyManualAttribution(this.transcript, speaker, m && m.verdict);
     if (!changed) return;
+    ownerTracking.pruneOwnerQuestions(this.ownerQuestions, this.transcript);
     for (const row of this.transcript) ownerTracking.addOwnerQuestion(this.ownerQuestions, row);
     this.broadcast({ type: 'owner_attribution_batch', speaker, verdict: m.verdict, ownerQuestions: this.ownerQuestions });
     this.checkpoint(false, { force: true });
@@ -1442,7 +1443,7 @@ const STARTUP_RECOVERY_DELAY_MS=(process.env.THT_TEST&&Number(process.env.THT_RE
 const ORPHAN_AGE_MS=(process.env.THT_TEST&&Number(process.env.THT_ORPHAN_AGE_MS)>0)?Number(process.env.THT_ORPHAN_AGE_MS):30*60000;
 function recoverOrphanJournal(s,file){
   const startTs=s.startTs||s.updated||Date.now(),endTs=s.updated||Date.now();
-  const sess={id:s.id,title:s.title||'',start:new Date(startTs).toISOString(),end:new Date(endTs).toISOString(),mode:'online-火山',source:s.source||'',projectId:String(s.projectId||s.project||'').slice(0,80),contextSourceIds:Array.isArray(s.contextSourceIds)?s.contextSourceIds:[],endReason:'启动时补收尾：上次进程没结束这场',names:s.names||{},brief:s.brief||'',fixes:s.fixes||[],lang:'auto',localLanguage:'auto',forceLocalTranscribe:false,transcriptionGapSeconds:s.transcriptionGapSeconds||0,browserGapSeconds:s.browserGapSeconds||0,notes:s.notes||'',hlGroups:s.hlGroups||null,recoveryStatus:'recovered-at-startup',transcript:Array.isArray(s.transcript)?s.transcript:[],highlights:s.highlights||[],todos:s.todos||[],factchecks:s.factchecks||[],summary:s.summary||'',uiLang:s.uiLang||'zh',audioPath:s.audioPath||'',audioSaveError:s.audioSaveError||''};
+  const sess={id:s.id,title:s.title||'',start:new Date(startTs).toISOString(),end:new Date(endTs).toISOString(),mode:'online-火山',source:s.source||'',projectId:String(s.projectId||s.project||'').slice(0,80),contextSourceIds:Array.isArray(s.contextSourceIds)?s.contextSourceIds:[],endReason:'启动时补收尾：上次进程没结束这场',names:s.names||{},ownerQuestions:Array.isArray(s.ownerQuestions)?s.ownerQuestions:[],ownerSpeakerVerdicts:s.ownerSpeakerVerdicts||{},brief:s.brief||'',fixes:s.fixes||[],lang:'auto',localLanguage:'auto',forceLocalTranscribe:false,transcriptionGapSeconds:s.transcriptionGapSeconds||0,browserGapSeconds:s.browserGapSeconds||0,notes:s.notes||'',hlGroups:s.hlGroups||null,recoveryStatus:'recovered-at-startup',transcript:Array.isArray(s.transcript)?s.transcript:[],highlights:s.highlights||[],todos:s.todos||[],factchecks:s.factchecks||[],summary:s.summary||'',uiLang:s.uiLang||'zh',audioPath:s.audioPath||'',audioSaveError:s.audioSaveError||''};
   sess.attachments=Array.isArray(s.attachments)?s.attachments:[];   // 批 4：journal 里的纠错单附件跟着补收尾的场次走
   try{sess.stats=sessionStats.forSession(DATA,sess);}catch(e){}
   const hasText=sess.transcript.some(x=>x&&x.text),hasAudio=!!(sess.audioPath&&fs.existsSync(sess.audioPath)&&fs.statSync(sess.audioPath).size>3200);

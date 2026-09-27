@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const localTime = require('./local-time');
 
 const TYPES = ['new_fact', 'changed_fact', 'decision', 'superseded_decision', 'owner_change', 'milestone_change', 'new_action', 'resolved_question', 'new_open_question', 'assumption', 'risk', 'blocker'];
 const LEVELS = ['mentioned', 'discussed', 'proposed', 'agreed', 'decided'];
@@ -179,7 +180,7 @@ function insertLine(src, item, text, meeting) {
   for (let k = start + 1; k < lines.length; k++) if (/^## /.test(lines[k])) { end = k; break; }
   // 节尾的空行留在新行后面
   let ins = end; while (ins > start + 1 && lines[ins - 1].trim() === '') ins--;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localTime.localDay();
   const line = `- 〔会议更新 ${meeting.date}〕**${item.field}**：${text}（原：${item.before}）来源：会议 ${meeting.id}「${meeting.title}」，${LEVEL_LABEL[item.level] || item.level}${item.sectionGuessed ? '，节由模型推断' : ''}，Aaron 已确认 ${today}`;
   lines.splice(ins, 0, line);
   let out = lines.join('\n');

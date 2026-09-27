@@ -39,6 +39,22 @@ test('owner questions keep evidence refs and support four explicit states', () =
   assert.equal(owner.addOwnerQuestion(questions, row, 60), question, 'same evidence is idempotent');
 });
 
+test('owner questions are removed when the user corrects that speaker to not me', () => {
+  const rows = [{ id: 'u-1', speaker: '1', text: '这个问题什么时候解决？', ownerAttribution: owner.signalAttribution('me', 0.8, 10) }];
+  const questions = [];
+  owner.addOwnerQuestion(questions, rows[0], 20);
+  owner.applyManualAttribution(rows, '1', 'not_me', 30);
+  assert.equal(owner.pruneOwnerQuestions(questions, rows), 1);
+  assert.deepEqual(questions, []);
+});
+
+test('server wires automatic split-track questions and preserves them during orphan recovery', () => {
+  const server = fs.readFileSync(path.join(__dirname, '../app/server.js'), 'utf8');
+  assert.match(server, /if \(!this\.applyStoredOwnerVerdict\(row\)\) ownerTracking\.addOwnerQuestion\(this\.ownerQuestions, row\)/);
+  assert.match(server, /ownerQuestions:Array\.isArray\(s\.ownerQuestions\)\?s\.ownerQuestions:\[\]/);
+  assert.match(server, /ownerTracking\.pruneOwnerQuestions\(this\.ownerQuestions, this\.transcript\)/);
+});
+
 test('speaker names are session-local in every frontend naming path', () => {
   const render = fs.readFileSync(path.join(__dirname, '../web/src/11-render.js'), 'utf8'), fix = fs.readFileSync(path.join(__dirname, '../web/src/19-one-line-fix.js'), 'utf8');
   assert.doesNotMatch(render, /state\.names\s*\[/); assert.doesNotMatch(fix, /state\.names/); assert.match(render, /cur\.names/);

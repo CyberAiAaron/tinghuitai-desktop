@@ -74,7 +74,7 @@
       else if (m.type === 'partial') { interim = m.text||''; render(); }
         else if (m.type === 'final' && m.text) { cur.transcriptionInterrupted=false; interim=''; cur.transcript.push({at: m.at||Date.now(), t: m.t||0, text: m.text, spk: m.speaker||'', seg: m.seg||''}); render(); }
         else if (m.type === 'speaker_update' && cur.transcript[m.index]) {cur.transcript[m.index].spk=m.speaker;resetSigs();render();}
-        else if (m.type === 'owner_attribution_update' && cur.transcript[m.index]) {cur.transcript[m.index].ownerAttribution=m.attribution;persist();}
+        else if (m.type === 'owner_attribution_update' && cur.transcript[m.index]) {cur.transcript[m.index].ownerAttribution=m.attribution;cur.ownerQuestions=Array.isArray(m.ownerQuestions)?m.ownerQuestions:cur.ownerQuestions;persist();render();}
         else if (m.type === 'owner_attribution_batch') {for(const row of cur.transcript||[])if(String(row.spk||row.speaker||row.who||'')===String(m.speaker||''))row.ownerAttribution={candidate:m.verdict==='me'?true:m.verdict==='not_me'?false:null,source:'manual',confidence:m.verdict==='unknown'?0:1,correctedByUser:true,updatedAt:Date.now()};cur.ownerQuestions=Array.isArray(m.ownerQuestions)?m.ownerQuestions:cur.ownerQuestions;persist();}
         else if (m.type === 'owner_question_update' && m.question) {cur.ownerQuestions=cur.ownerQuestions||[];const i=cur.ownerQuestions.findIndex(q=>q.id===m.question.id);if(i>=0)cur.ownerQuestions[i]=m.question;else cur.ownerQuestions.push(m.question);persist();}
         else if (m.type === 'assets') renderAssets(m.items||[]);

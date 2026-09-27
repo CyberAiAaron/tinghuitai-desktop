@@ -76,6 +76,19 @@ function addOwnerQuestion(questions, row, now = Date.now()) {
   return question;
 }
 
+function pruneOwnerQuestions(questions, rows) {
+  if (!Array.isArray(questions) || !Array.isArray(rows)) return 0;
+  const ineligible = new Set(rows
+    .filter(row => row && row.ownerAttribution && row.ownerAttribution.candidate !== true)
+    .map(row => String(row.id || row.seg || '').trim()).filter(Boolean));
+  if (!ineligible.size) return 0;
+  const before = questions.length;
+  const kept = questions.filter(question => !(question && Array.isArray(question.sourceRefs)
+    && question.sourceRefs.some(ref => ref && ref.type === 'utterance' && ineligible.has(String(ref.id || '')))));
+  questions.splice(0, questions.length, ...kept);
+  return before - questions.length;
+}
+
 function updateOwnerQuestion(questions, patch, validUtteranceIds, now = Date.now()) {
   if (!Array.isArray(questions) || !patch || !QUESTION_STATES.has(patch.status)) return null;
   const question = questions.find(q => q && q.id === patch.id);
@@ -89,4 +102,4 @@ function updateOwnerQuestion(questions, patch, validUtteranceIds, now = Date.now
   return question;
 }
 
-module.exports = { QUESTION_STATES, loadOwnerProfile, signalAttribution, manualAttribution, applyManualAttribution, addOwnerQuestion, updateOwnerQuestion, looksLikeQuestion };
+module.exports = { QUESTION_STATES, loadOwnerProfile, signalAttribution, manualAttribution, applyManualAttribution, addOwnerQuestion, pruneOwnerQuestions, updateOwnerQuestion, looksLikeQuestion };

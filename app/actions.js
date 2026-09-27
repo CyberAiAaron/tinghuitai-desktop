@@ -16,6 +16,7 @@
 // 2026-09-22：外部命令不再由这里直接跑——飞书的活全部搬进 app/tools/ 的工具登记表，
 // 写类工具只有带 confirmedByUser 的调用才执行，而这个标志只有 send() 这一条路会带。
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const localTime = require('./local-time');
 const llm = require('./llm');
 // 本机资料（团队名单 / 项目重点 / 事实源）只从这一个入口读：哪个用途看什么、给多少字，
 // 全写在 app/context-pack.js 的那张表里，这个文件不再自己 readFileSync 设置项里的路径。
@@ -179,7 +180,7 @@ function local(d) {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':00'
     + sign + p(Math.floor(a / 60)) + ':' + p(a % 60);
 }
-const plusDays = (n, from = new Date()) => { const d = new Date(from.getTime()); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const plusDays = (n, from = new Date()) => localTime.localDayPlus(n, from);
 
 // ===== 生成 =====
 // 会后整理跑完就在后台跑这一遍，不等他点。每一步失败都只让对应的块缺席，不整份作废。
