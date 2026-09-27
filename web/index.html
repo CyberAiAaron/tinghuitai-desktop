@@ -309,6 +309,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;letter-spacing:.04em}
 .field .hint{font-size:12px;color:var(--faint);margin-top:4px}
+.context-source-add{display:grid;grid-template-columns:1fr 110px 110px;gap:7px}.context-source-add input:first-child{grid-column:1/-1}.context-source-list{display:grid;gap:7px;margin-top:8px}.context-source-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:start;border:1px solid var(--line);border-radius:10px;padding:9px}.context-source-info{display:grid;gap:3px;min-width:0}.context-source-info strong{font-size:13px}.context-source-info span,.context-source-info code,.context-source-empty{font-size:11px;color:var(--muted)}.context-source-info code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-source-actions{display:flex;gap:5px}.context-source-empty{padding:9px;border:1px dashed var(--line);border-radius:10px}@media(max-width:520px){.context-source-add{grid-template-columns:1fr 1fr}.context-source-add input:first-child{grid-column:1/-1}.context-source-row{grid-template-columns:22px minmax(0,1fr)}.context-source-actions{grid-column:2}}
 .row{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap}
 
 @media (max-width:520px){
@@ -589,6 +590,11 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   <div class="field" id="f-base" hidden><label>Base URL</label><input type="text" id="s-base" placeholder="例如 https://ark.cn-beijing.volces.com/api/v3"></div>
   <input type="hidden" id="s-quick"><input type="hidden" id="s-model">
   <div class="field"><label data-i18n="f_ctx">项目上下文（只喂给会中分析）</label><textarea id="s-ctx" rows="5" placeholder="可选：填写本场背景，不需要预先整理。"></textarea><div class="hint" id="s-ctx-hint"></div></div>
+  <div class="field" id="s-context-manager"><label>项目 ID 与本场来源</label><input type="text" id="s-project" maxlength="80" placeholder="例如 Chansey；用于隔离不同项目的上下文">
+    <div class="hint" id="s-context-overview">来源表未读取</div>
+    <div class="context-source-add" style="margin-top:8px"><input type="text" id="s-context-path" placeholder="本机文件或目录路径，可用 ~/Documents/…"><input type="text" id="s-context-title" placeholder="显示名称（可选）"><select id="s-context-type" aria-label="来源类型"><option value="file">文件</option><option value="directory">目录</option></select><select id="s-context-scope" aria-label="来源范围"><option value="project">当前项目</option><option value="global">所有项目</option></select><button type="button" class="btn" id="s-context-add">添加</button></div>
+    <div class="hint" id="s-context-msg" aria-live="polite"></div><div class="context-source-list" id="s-context-sources"></div>
+  </div>
   <div class="field"><label data-i18n="f_relay">Mac 中转口令</label><input type="password" id="s-relay" autocomplete="off" placeholder="本机自动配置"></div>
   <div class="field"><label data-i18n="f_hot">热词（逗号分隔）</label><input type="text" id="s-hot" placeholder="例如产品名、人名"></div>
   <div class="field"><label data-i18n="f_auto">浏览器识别：无新转写多少分钟后结束</label><input type="number" id="s-auto" min="3" max="60" placeholder="12"><div class="hint">火山转写不使用此项；收音连接中断 12 分钟后保存并结束。 / Cloud ASR ends after 12 minutes without audio data.</div></div>
@@ -932,7 +938,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       try { el.focus({preventScroll:true}); } catch(e) {}
     });
   }
-  function openSettings(section){ loadServerSettings(); $('#s-provider').value = cfg.provider; $('#s-key').value = cfg.key; $('#s-base').value = cfg.base; $('#s-quick').value = cfg.quick; $('#s-model').value = cfg.model; $('#s-relay').value = cfg.relayToken||''; $('#s-hot').value = cfg.hotwords||''; fillMics(); $('#s-auto').value = cfg.autoEndMin||12; $('#f-base').hidden = cfg.provider!=='openai'; $('#s-msg').hidden = true; $('#s-ctx').value = ctx; ctxHint(); dlg.showModal(); if (section) jumpTo(section); }
+  function openSettings(section){ loadServerSettings(); $('#s-provider').value = cfg.provider; $('#s-key').value = cfg.key; $('#s-base').value = cfg.base; $('#s-quick').value = cfg.quick; $('#s-model').value = cfg.model; $('#s-relay').value = cfg.relayToken||''; $('#s-hot').value = cfg.hotwords||''; fillMics(); $('#s-auto').value = cfg.autoEndMin||12; $('#f-base').hidden = cfg.provider!=='openai'; $('#s-msg').hidden = true; $('#s-ctx').value = ctx; $('#s-project').value = contextProjectId; ctxHint(); renderContextSources(); loadContextSources(); dlg.showModal(); if (section) jumpTo(section); }
   async function autoPickMic(){
     if (cfg.micId) return;                       // 他自己指定过就不动
     try {
@@ -956,6 +962,105 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     } catch(e){ hint.textContent = String(e.message||e); }
   }
   $('#gear').onclick = () => openSettings('asr');
+
+  // ===== 本场可配置 Context 来源 =====
+  let contextProjectId = '';
+  let contextSourceIds = [];
+  let contextRegistry = {version:0, sources:[]};
+  try {
+    contextProjectId = localStorage.getItem('tht-project-id') || '';
+    const saved = JSON.parse(localStorage.getItem('tht-context-source-ids') || '[]');
+    if (Array.isArray(saved)) contextSourceIds = saved.filter(x => typeof x === 'string').slice(0, 40);
+  } catch(e) {}
+
+  const contextApiUrl = () => `${relayBase()}/context-sources?token=${encodeURIComponent(cfg.relayToken || '')}`;
+  const contextHeaders = () => ({'content-type':'application/json', 'x-tht-token':cfg.relayToken || ''});
+  const contextStatusText = status => {
+    if (!status) return '未检查';
+    if (status.state === 'ready') return `可用 · ${status.modifiedAt ? new Date(status.modifiedAt).toLocaleString() : '未知版本'}`;
+    if (status.state === 'missing') return '找不到';
+    if (status.state === 'type-mismatch') return '类型不匹配';
+    return '读不了';
+  };
+  function persistContextPreferences(){
+    contextProjectId = ($('#s-project')?.value || '').trim().slice(0, 80);
+    try {
+      localStorage.setItem('tht-project-id', contextProjectId);
+      localStorage.setItem('tht-context-source-ids', JSON.stringify(contextSourceIds));
+    } catch(e) {}
+  }
+  function renderContextSources(){
+    const list = $('#s-context-sources'); if (!list) return;
+    list.replaceChildren();
+    const rows = contextRegistry.sources || [];
+    if (!rows.length) {
+      const empty = document.createElement('div'); empty.className = 'context-source-empty';
+      empty.textContent = '还没有本机来源。添加文件或目录后，勾选的来源会随本场会议启动。'; list.append(empty); return;
+    }
+    for (const source of rows) {
+      const row = document.createElement('div'); row.className = 'context-source-row'; row.dataset.sourceId = source.id;
+      const choose = document.createElement('input'); choose.type = 'checkbox'; choose.className = 'context-source-select';
+      choose.checked = contextSourceIds.includes(source.id); choose.setAttribute('aria-label', '本场使用 '+source.title);
+      choose.onchange = () => {
+        const selected = new Set(contextSourceIds); choose.checked ? selected.add(source.id) : selected.delete(source.id);
+        contextSourceIds = [...selected].slice(0, 40); persistContextPreferences();
+      };
+      const info = document.createElement('div'); info.className = 'context-source-info';
+      const title = document.createElement('strong'); title.textContent = source.title;
+      const detail = document.createElement('span'); detail.textContent = `${source.type === 'directory' ? '目录' : '文件'} · ${source.scope === 'global' ? '所有项目' : (source.projectId || '未分类')} · ${contextStatusText(source.status)}`;
+      const sourcePath = document.createElement('code'); sourcePath.textContent = source.path;
+      info.append(title, detail, sourcePath);
+      const actions = document.createElement('div'); actions.className = 'context-source-actions';
+      const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'btn sm'; toggle.dataset.contextAction = 'toggle';
+      toggle.textContent = source.enabled ? '停用' : '启用'; toggle.title = source.enabled ? '暂停读取这个来源' : '恢复读取这个来源';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn sm'; remove.dataset.contextAction = 'delete'; remove.textContent = '删除';
+      actions.append(toggle, remove); row.append(choose, info, actions); list.append(row);
+    }
+    const overview = $('#s-context-overview');
+    if (overview) overview.textContent = `来源表 v${contextRegistry.version || 1} · ${rows.filter(x => x.status?.available).length}/${rows.length} 可用 · 本场已选 ${contextSourceIds.length}`;
+  }
+  async function contextApi(body){
+    const r = await fetch(contextApiUrl(), {method:body?'POST':'GET', headers:body?contextHeaders():{'x-tht-token':cfg.relayToken || ''}, ...(body?{body:JSON.stringify(body)}:{}), cache:'no-store'});
+    const result = await r.json().catch(()=>({}));
+    if (!r.ok || !result.ok) throw Error(result.error || '本机来源连接失败');
+    contextRegistry = result; renderContextSources(); return result;
+  }
+  async function loadContextSources(){
+    const msg = $('#s-context-msg'); if (msg) msg.textContent = '正在读本机来源…';
+    try { await contextApi(); if (msg) msg.textContent = ''; }
+    catch(e) { contextRegistry = {version:0,sources:[]}; renderContextSources(); if (msg) msg.textContent = e.message; }
+  }
+  $('#s-context-add').onclick = async () => {
+    const button = $('#s-context-add'), sourcePath = $('#s-context-path').value.trim(), title = $('#s-context-title').value.trim();
+    if (!sourcePath) { $('#s-context-msg').textContent = '先填文件或目录路径。'; return; }
+    const scope = $('#s-context-scope').value;
+    const projectId = ($('#s-project').value || '').trim();
+    if (scope === 'project' && !projectId) { $('#s-context-msg').textContent = '项目来源需要先填项目 ID。'; return; }
+    button.disabled = true;
+    try {
+      const before = new Set((contextRegistry.sources || []).map(x=>x.id));
+      const result = await contextApi({action:'upsert', source:{title, path:sourcePath, type:$('#s-context-type').value, scope, projectId, enabled:true, recursive:true}});
+      const added = (result.sources || []).find(x=>!before.has(x.id)); if (added && !contextSourceIds.includes(added.id)) contextSourceIds.push(added.id);
+      $('#s-context-path').value = ''; $('#s-context-title').value = ''; $('#s-context-msg').textContent = '已添加并选为本场来源。'; persistContextPreferences(); renderContextSources();
+    } catch(e) { $('#s-context-msg').textContent = e.message; } finally { button.disabled = false; }
+  };
+  $('#s-context-sources').onclick = async event => {
+    const button = event.target.closest('[data-context-action]'); if (!button) return;
+    const row = button.closest('[data-source-id]'), source = (contextRegistry.sources || []).find(x=>x.id===row?.dataset.sourceId); if (!source) return;
+    button.disabled = true;
+    try {
+      if (button.dataset.contextAction === 'delete') {
+        await contextApi({action:'delete', id:source.id}); contextSourceIds = contextSourceIds.filter(id=>id!==source.id); persistContextPreferences(); renderContextSources();
+      } else await contextApi({action:'toggle', id:source.id, enabled:!source.enabled});
+      $('#s-context-msg').textContent = '';
+    } catch(e) { $('#s-context-msg').textContent = e.message; } finally { button.disabled = false; }
+  };
+
+  const meetingContextPayload = session => ({
+    projectId: String(session?.projectId ?? contextProjectId ?? '').trim().slice(0, 80),
+    contextSourceIds: [...new Set(Array.isArray(session?.contextSourceIds) ? session.contextSourceIds : contextSourceIds)].slice(0, 40),
+  });
+
   // ===== 反馈 / 联系开发者（独立版）：所有内容只发到开发者邮箱，处置权在开发者 =====
   const FB_MAIL='rangerAaronlol@gmail.com';
   let fbShot=null;
@@ -1073,7 +1178,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const b=$('#s-save');if(b.disabled)return;b.disabled=true;
     try{const form=readForm();await saveModelDraft(form);
       cfg={...form,key:'',relayToken:window.THT_BOOT?.relayToken||form.relayToken||cfg.relayToken||''};   // 远端窗口手填的口令要收下（09-22 手机 401）
-      localStorage.setItem('tht-settings',JSON.stringify(cfg));ctx=$('#s-ctx').value.trim();localStorage.setItem('tht-ctx',ctx);
+      localStorage.setItem('tht-settings',JSON.stringify(cfg));ctx=$('#s-ctx').value.trim();localStorage.setItem('tht-ctx',ctx);persistContextPreferences();
       await loadServerSettings();dlg.close();checkMac().then(()=>{viewerConnect();updateStatusIdle();});note('设置已保存。');
     }catch(e){note('保存未完成：'+e.message,true);}finally{b.disabled=false;}
   };
@@ -1119,7 +1224,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
       catch(e2){ note('本机存储满了，请导出后清空旧场次。', true); }
     } };
   function normalizeSession(s){const start=typeof s.start==='number'?s.start:Date.parse(s.start)||Date.now();return {...s,start,end:s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)):null,transcript:(s.transcript||[]).map(x=>({...x,at:Number(x.at)>1e11?Number(x.at):start+Number(x.at||0)*1000,spk:x.spk||x.speaker||x.who||''})),todos:s.todos||[],highlights:s.highlights||[],factchecks:s.factchecks||[],ownerQuestions:s.ownerQuestions||[]};}
-  const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, transcript: [], highlights: [], todos: [], factchecks: [], ownerQuestions: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
+  const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, projectId:contextProjectId, contextSourceIds:[...contextSourceIds], transcript: [], highlights: [], todos: [], factchecks: [], ownerQuestions: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
 
   // Meeting assistant: local profile, per-session rules, guarded field patches.
   // L-18：「以后也记住」以前只写进这个浏览器的 localStorage，底栏「它记住的」是服务端记忆，两套东西。
@@ -2513,7 +2618,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     const mine = () => (gen === asrGen && asrWs === ws);
     ws.onopen = () => { if (!mine()) { try { ws.close(); } catch(e){} return; }
       asrRetry = 0; note('');
-      ws.send(JSON.stringify({type:'start', sessionId: cur.id, title: cur.title||'', source: /Mobile|Android|iPhone/.test(navigator.userAgent)?'手机':'电脑', lang: relayLang(), uiLang: ui, rate: asrCtx ? asrCtx.sampleRate : 16000, hotwords: allHotwords(), brief: effectiveBrief(cur), fixes: parseFixes(briefFix), transcriptEdits:cur.transcriptEdits||[], names: cur.names||{}}));
+      ws.send(JSON.stringify({type:'start', sessionId: cur.id, title: cur.title||'', source: /Mobile|Android|iPhone/.test(navigator.userAgent)?'手机':'电脑', lang: relayLang(), uiLang: ui, rate: asrCtx ? asrCtx.sampleRate : 16000, hotwords: allHotwords(), brief: effectiveBrief(cur), fixes: parseFixes(briefFix), transcriptEdits:cur.transcriptEdits||[], names: cur.names||{}, ...meetingContextPayload(cur)}));
     };
     ws.onmessage = ev => {
       const cur = recordingSession;
@@ -2990,7 +3095,7 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
     if(running&&asrMode&&asrWs?.readyState===1){
       // Existing start handler updates context on the SAME connection. Omit hotwords
       // to avoid restarting the provider in the middle of an utterance.
-      asrWs.send(JSON.stringify({type:'start',sessionId:cur.id,rate:asrCtx?asrCtx.sampleRate:16000,lang:relayLang(),uiLang:ui,brief:effectiveBrief(cur),fixes:cur.fixes,transcriptEdits:cur.transcriptEdits||[],names:cur.names||{}}));
+      asrWs.send(JSON.stringify({type:'start',sessionId:cur.id,rate:asrCtx?asrCtx.sampleRate:16000,lang:relayLang(),uiLang:ui,brief:effectiveBrief(cur),fixes:cur.fixes,transcriptEdits:cur.transcriptEdits||[],names:cur.names||{},...meetingContextPayload(cur)}));
     }
   }
 

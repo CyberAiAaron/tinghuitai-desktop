@@ -39,7 +39,7 @@
       try { el.focus({preventScroll:true}); } catch(e) {}
     });
   }
-  function openSettings(section){ loadServerSettings(); $('#s-provider').value = cfg.provider; $('#s-key').value = cfg.key; $('#s-base').value = cfg.base; $('#s-quick').value = cfg.quick; $('#s-model').value = cfg.model; $('#s-relay').value = cfg.relayToken||''; $('#s-hot').value = cfg.hotwords||''; fillMics(); $('#s-auto').value = cfg.autoEndMin||12; $('#f-base').hidden = cfg.provider!=='openai'; $('#s-msg').hidden = true; $('#s-ctx').value = ctx; ctxHint(); dlg.showModal(); if (section) jumpTo(section); }
+  function openSettings(section){ loadServerSettings(); $('#s-provider').value = cfg.provider; $('#s-key').value = cfg.key; $('#s-base').value = cfg.base; $('#s-quick').value = cfg.quick; $('#s-model').value = cfg.model; $('#s-relay').value = cfg.relayToken||''; $('#s-hot').value = cfg.hotwords||''; fillMics(); $('#s-auto').value = cfg.autoEndMin||12; $('#f-base').hidden = cfg.provider!=='openai'; $('#s-msg').hidden = true; $('#s-ctx').value = ctx; $('#s-project').value = contextProjectId; ctxHint(); renderContextSources(); loadContextSources(); dlg.showModal(); if (section) jumpTo(section); }
   async function autoPickMic(){
     if (cfg.micId) return;                       // 他自己指定过就不动
     try {

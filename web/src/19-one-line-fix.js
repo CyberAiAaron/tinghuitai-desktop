@@ -246,7 +246,7 @@
     if(running&&asrMode&&asrWs?.readyState===1){
       // Existing start handler updates context on the SAME connection. Omit hotwords
       // to avoid restarting the provider in the middle of an utterance.
-      asrWs.send(JSON.stringify({type:'start',sessionId:cur.id,rate:asrCtx?asrCtx.sampleRate:16000,lang:relayLang(),uiLang:ui,brief:effectiveBrief(cur),fixes:cur.fixes,transcriptEdits:cur.transcriptEdits||[],names:cur.names||{}}));
+      asrWs.send(JSON.stringify({type:'start',sessionId:cur.id,rate:asrCtx?asrCtx.sampleRate:16000,lang:relayLang(),uiLang:ui,brief:effectiveBrief(cur),fixes:cur.fixes,transcriptEdits:cur.transcriptEdits||[],names:cur.names||{},...meetingContextPayload(cur)}));
     }
   }
 

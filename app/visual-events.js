@@ -67,8 +67,11 @@ function remove(dataDir, meetingId, idOrName) {
   if (fs.existsSync(file)) fs.unlinkSync(file);
   write(dataDir, meetingId, events.filter(x => x !== hit && x.name !== name)); return !!hit;
 }
-function context(dataDir, meetingId, limit = 4) {
-  const items = list(dataDir, meetingId).filter(x => /\.(png|jpe?g|webp|gif|heic)$/i.test(x.name)).slice(-limit);
+function context(dataDir, meetingId, limit = 4, names = []) {
+  const wanted = new Set((Array.isArray(names) ? names : []).map(String));
+  let items = list(dataDir, meetingId).filter(x => /\.(png|jpe?g|webp|gif|heic)$/i.test(x.name));
+  if (wanted.size) items = items.filter(x => wanted.has(x.name));
+  items = items.slice(-limit);
   const text = items.map(x => `[${x.source}] ${x.name} | capturedAt=${x.capturedAt} | status=${x.status}${x.analysis ? ' | analysis=' + x.analysis : ''}`).join('\n');
   let st = null; try { st = fs.statSync(manifest(dataDir, meetingId)); } catch (e) {}
   return { text, images: items.map(x => ({ id: x.id, path: path.join(dir(dataDir, meetingId), x.name), mime: x.mime || '' })),

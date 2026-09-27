@@ -309,6 +309,7 @@ dialog h2{margin:0 0 12px;font-size:16px}
 .field{margin-bottom:12px}
 .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;letter-spacing:.04em}
 .field .hint{font-size:12px;color:var(--faint);margin-top:4px}
+.context-source-add{display:grid;grid-template-columns:1fr 110px 110px;gap:7px}.context-source-add input:first-child{grid-column:1/-1}.context-source-list{display:grid;gap:7px;margin-top:8px}.context-source-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:start;border:1px solid var(--line);border-radius:10px;padding:9px}.context-source-info{display:grid;gap:3px;min-width:0}.context-source-info strong{font-size:13px}.context-source-info span,.context-source-info code,.context-source-empty{font-size:11px;color:var(--muted)}.context-source-info code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-source-actions{display:flex;gap:5px}.context-source-empty{padding:9px;border:1px dashed var(--line);border-radius:10px}@media(max-width:520px){.context-source-add{grid-template-columns:1fr 1fr}.context-source-add input:first-child{grid-column:1/-1}.context-source-row{grid-template-columns:22px minmax(0,1fr)}.context-source-actions{grid-column:2}}
 .row{display:flex;gap:8px;justify-content:flex-end;margin-top:6px;flex-wrap:wrap}
 
 @media (max-width:520px){
@@ -589,6 +590,11 @@ html[lang='en'] .card.recomputed::after{content:'Recomputed after transcript edi
   <div class="field" id="f-base" hidden><label>Base URL</label><input type="text" id="s-base" placeholder="例如 https://ark.cn-beijing.volces.com/api/v3"></div>
   <input type="hidden" id="s-quick"><input type="hidden" id="s-model">
   <div class="field"><label data-i18n="f_ctx">项目上下文（只喂给会中分析）</label><textarea id="s-ctx" rows="5" placeholder="可选：填写本场背景，不需要预先整理。"></textarea><div class="hint" id="s-ctx-hint"></div></div>
+  <div class="field" id="s-context-manager"><label>项目 ID 与本场来源</label><input type="text" id="s-project" maxlength="80" placeholder="例如 Chansey；用于隔离不同项目的上下文">
+    <div class="hint" id="s-context-overview">来源表未读取</div>
+    <div class="context-source-add" style="margin-top:8px"><input type="text" id="s-context-path" placeholder="本机文件或目录路径，可用 ~/Documents/…"><input type="text" id="s-context-title" placeholder="显示名称（可选）"><select id="s-context-type" aria-label="来源类型"><option value="file">文件</option><option value="directory">目录</option></select><select id="s-context-scope" aria-label="来源范围"><option value="project">当前项目</option><option value="global">所有项目</option></select><button type="button" class="btn" id="s-context-add">添加</button></div>
+    <div class="hint" id="s-context-msg" aria-live="polite"></div><div class="context-source-list" id="s-context-sources"></div>
+  </div>
   <div class="field"><label data-i18n="f_relay">Mac 中转口令</label><input type="password" id="s-relay" autocomplete="off" placeholder="本机自动配置"></div>
   <div class="field"><label data-i18n="f_hot">热词（逗号分隔）</label><input type="text" id="s-hot" placeholder="例如产品名、人名"></div>
   <div class="field"><label data-i18n="f_auto">浏览器识别：无新转写多少分钟后结束</label><input type="number" id="s-auto" min="3" max="60" placeholder="12"><div class="hint">火山转写不使用此项；收音连接中断 12 分钟后保存并结束。 / Cloud ASR ends after 12 minutes without audio data.</div></div>

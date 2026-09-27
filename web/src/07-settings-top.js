@@ -77,7 +77,7 @@
     const b=$('#s-save');if(b.disabled)return;b.disabled=true;
     try{const form=readForm();await saveModelDraft(form);
       cfg={...form,key:'',relayToken:window.THT_BOOT?.relayToken||form.relayToken||cfg.relayToken||''};   // 远端窗口手填的口令要收下（09-22 手机 401）
-      localStorage.setItem('tht-settings',JSON.stringify(cfg));ctx=$('#s-ctx').value.trim();localStorage.setItem('tht-ctx',ctx);
+      localStorage.setItem('tht-settings',JSON.stringify(cfg));ctx=$('#s-ctx').value.trim();localStorage.setItem('tht-ctx',ctx);persistContextPreferences();
       await loadServerSettings();dlg.close();checkMac().then(()=>{viewerConnect();updateStatusIdle();});note('设置已保存。');
     }catch(e){note('保存未完成：'+e.message,true);}finally{b.disabled=false;}
   };

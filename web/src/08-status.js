@@ -24,7 +24,7 @@
       catch(e2){ note('本机存储满了，请导出后清空旧场次。', true); }
     } };
   function normalizeSession(s){const start=typeof s.start==='number'?s.start:Date.parse(s.start)||Date.now();return {...s,start,end:s.end?(typeof s.end==='number'?s.end:Date.parse(s.end)):null,transcript:(s.transcript||[]).map(x=>({...x,at:Number(x.at)>1e11?Number(x.at):start+Number(x.at||0)*1000,spk:x.spk||x.speaker||x.who||''})),todos:s.todos||[],highlights:s.highlights||[],factchecks:s.factchecks||[],ownerQuestions:s.ownerQuestions||[]};}
-  const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, transcript: [], highlights: [], todos: [], factchecks: [], ownerQuestions: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
+  const newSession = (mode, lang) => ({id: Date.now().toString(36)+Math.random().toString(36).slice(2,6), title:'', start: Date.now(), end: null, lang, mode, projectId:contextProjectId, contextSourceIds:[...contextSourceIds], transcript: [], highlights: [], todos: [], factchecks: [], ownerQuestions: [], summary: '', uiLang:ui, names:{}, fixes:parseFixes(briefFix), transcriptEdits:[]});
 
   // Meeting assistant: local profile, per-session rules, guarded field patches.
   // L-18：「以后也记住」以前只写进这个浏览器的 localStorage，底栏「它记住的」是服务端记忆，两套东西。

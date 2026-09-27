@@ -154,7 +154,7 @@
     const mine = () => (gen === asrGen && asrWs === ws);
     ws.onopen = () => { if (!mine()) { try { ws.close(); } catch(e){} return; }
       asrRetry = 0; note('');
-      ws.send(JSON.stringify({type:'start', sessionId: cur.id, title: cur.title||'', source: /Mobile|Android|iPhone/.test(navigator.userAgent)?'手机':'电脑', lang: relayLang(), uiLang: ui, rate: asrCtx ? asrCtx.sampleRate : 16000, hotwords: allHotwords(), brief: effectiveBrief(cur), fixes: parseFixes(briefFix), transcriptEdits:cur.transcriptEdits||[], names: cur.names||{}}));
+      ws.send(JSON.stringify({type:'start', sessionId: cur.id, title: cur.title||'', source: /Mobile|Android|iPhone/.test(navigator.userAgent)?'手机':'电脑', lang: relayLang(), uiLang: ui, rate: asrCtx ? asrCtx.sampleRate : 16000, hotwords: allHotwords(), brief: effectiveBrief(cur), fixes: parseFixes(briefFix), transcriptEdits:cur.transcriptEdits||[], names: cur.names||{}, ...meetingContextPayload(cur)}));
     };
     ws.onmessage = ev => {
       const cur = recordingSession;

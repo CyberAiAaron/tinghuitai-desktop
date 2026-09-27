@@ -413,7 +413,7 @@ function loadSelectedSources(spec, { dataDir, session }) {
 }
 
 // ============================ 组装 ============================
-function loadPart(spec, { env, dataDir, memoryBlock, session, meetingId }) {
+function loadPart(spec, { env, dataDir, memoryBlock, session, meetingId, visualNames }) {
   const cap = Number(spec.cap) || 0, perFile = Number(spec.perFile) || 0;
   switch (spec.key) {
     case 'project-state': {
@@ -456,7 +456,7 @@ function loadPart(spec, { env, dataDir, memoryBlock, session, meetingId }) {
     case 'memory-files': { const r = loadMemoryFiles(spec, { env, dataDir }); return { key: r.key, text: r.text, parts: r.parts, configured: r.configured }; }
     case 'kb-latest': { const r = loadKbLatest(spec, { env }); return { key: r.key, text: r.text, parts: r.parts }; }
     case 'visual-events': {
-      const r = require('./visual-events').context(dataDir, meetingId);
+      const r = require('./visual-events').context(dataDir, meetingId, 4, visualNames);
       return { text: r.text, parts: [r.part], images: r.images, configured: r.images.length > 0 };
     }
     default: return { text: '', parts: [] };
@@ -472,7 +472,7 @@ const meta = r => (r.missing
 //   parts      这次带了哪些资料、各是哪一版、截没截断；缺的那份留一条 {missing:true, reason}
 //   hash       整个 text 的 sha256 前 12 位，落进用量账，用来事后对「这次看了什么」
 //   configured 表里声明的资料项有没有被配置过（处理台的风险 / 项目重点靠它决定要不要跑这一步）
-function build(env, { purpose, dataDir, session, meetingId, memoryBlock, budget } = {}) {
+function build(env, { purpose, dataDir, session, meetingId, memoryBlock, budget, visualNames } = {}) {
   const spec = TABLE[purpose];
   if (!spec) throw new Error('没有这个用途：' + purpose + '（可用：' + PURPOSES.join('、') + '）');
   const dir = dataDir || (env && env.__dataDir) || require('./config').dataDir;
@@ -480,7 +480,7 @@ function build(env, { purpose, dataDir, session, meetingId, memoryBlock, budget 
   const pieces = {}, parts = [], images = [];
   let configured = spec.parts.length === 0;
   for (const p of spec.parts) {
-    const one = loadPart(p, { env: env || {}, dataDir: dir, memoryBlock: mem, session, meetingId });
+    const one = loadPart(p, { env: env || {}, dataDir: dir, memoryBlock: mem, session, meetingId, visualNames });
     pieces[one.key || p.key] = one.text || '';   // 同一种资料在一个用途里可以出现两次（各带 label），按块名登记
     parts.push(...one.parts);
     images.push(...(one.images || []));

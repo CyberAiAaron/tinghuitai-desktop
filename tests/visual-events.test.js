@@ -30,3 +30,18 @@ test('visual context pack only exposes current meeting images and event metadata
   assert.equal(pack.images.length, 1); assert.equal(pack.images[0].path, path.join(d, 'frame.png'));
   assert.equal(pack.parts[0].key, 'visual-events');
 });
+
+test('visual context pack honors an explicit four-image batch instead of silently substituting the newest files', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tht-visual-batch-')), id = 'batch', d = visual.dir(dataDir, id);
+  try {
+    fs.mkdirSync(d, { recursive: true });
+    for (let i = 0; i < 6; i++) {
+      const name = `photo-${i}.jpg`; fs.writeFileSync(path.join(d, name), Buffer.from([i]));
+      visual.create(dataDir, id, { name, source: 'photo', mime: 'image/jpeg' });
+    }
+    const names = ['photo-0.jpg', 'photo-1.jpg', 'photo-2.jpg', 'photo-3.jpg'];
+    const pack = contextPack.build({}, { purpose: 'visual', dataDir, meetingId: id, visualNames: names });
+    assert.deepEqual(pack.images.map(x => path.basename(x.path)), names);
+    assert.doesNotMatch(pack.text, /photo-4|photo-5/);
+  } finally { fs.rmSync(dataDir, { recursive: true, force: true }); }
+});
