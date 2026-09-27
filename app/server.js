@@ -250,6 +250,10 @@ const SERVER_VERSION = (() => {
 })();
 
 const SESSIONS = new Map();  // sessionId -> Session
+function broadcastAssets(id) {
+  const live = SESSIONS.get(String(id || ''));
+  if (live && !live.finalized) live.broadcast({ type: 'assets', items: assetList(id) });
+}
 
   // 纯语气词的一行（嗯 / 啊 / 哦 / um…）：真实会议里占 14%–21%，不发给模型。「对 / 好 / 是 / 行」是表态，不算。
   // 正则只有一份，在 app/shared/filler.json（Python 会后管线读的是同一份，见 app/filler.js）。
@@ -1833,18 +1837,21 @@ async function handleRequest(req, res) {
             if(!text)throw Error(trace.errorCode||'模型未返回结果');
             let parsed;try{parsed=JSON.parse(String(text).trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch(e){throw Error('模型没有返回可用 JSON');}
             for(const x of chosen){const hit=(parsed.files||[]).find(f=>String(f.name)===x.name);visualEvents.update(DATA,id,x.id,{status:'ready',provider:trace.provider||'',error:'',analysis:hit&&hit.summary||''});}
+            broadcastAssets(id);
             res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true,text:JSON.stringify(parsed),provider:trace.provider||'',items:assetList(id)}));
           }catch(e){chosen.forEach(x=>visualEvents.update(DATA,id,x.id,{status:'failed',provider:(trace&&trace.provider)||'',error:String(e.message||e)}));throw e;}
         }
         if(j.eventId&&j.status){
           const event=visualEvents.update(DATA,id,String(j.eventId),j);
           if(!event)throw Error('没有这条照片事件');
+          broadcastAssets(id);
           res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true,event,items:assetList(id)}));
         }
         if(j.remove){   // 删一个
           const name=String(j.remove);
           if(/[\/\\]|\.\./.test(name))throw Error('文件名不合法');
           visualEvents.remove(DATA,id,name);
+          broadcastAssets(id);
           log('asset removed '+id+' '+name);
           res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify({ok:true,items:assetList(id)}));
         }
@@ -1861,6 +1868,7 @@ async function handleRequest(req, res) {
         fs.writeFileSync(path.join(dir,name),buf);
         try{visualEvents.create(DATA,id,{name,source:j.source,capturedAt:j.capturedAt,mime:m[1].toLowerCase(),size:buf.length});}
         catch(e){try{fs.unlinkSync(path.join(dir,name));}catch(_){}throw e;}
+        broadcastAssets(id);
         log('asset saved '+id+' '+name+' '+buf.length+'B');
         res.writeHead(200,{'Content-Type':'application/json'});
         return res.end(JSON.stringify({ok:true,name,items:assetList(id)}));
