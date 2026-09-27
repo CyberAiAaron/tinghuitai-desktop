@@ -1598,7 +1598,7 @@ async function calendarMatch(sess) {
 async function handleRequest(req, res) {
   const env0 = loadEnv(); const u = new URL(req.url, 'http://localhost'); const authed = isLocalReq(req) || tokenOk(env0, u.searchParams.get('token')); const p = u.pathname;
   if(await handleTopicDocHttp(req,res,u,authed))return;
-  if(await contextSourcesHttp.route(req,res,u,{authed,dataDir:DATA,log}))return;
+  if(p.endsWith('/context-sources')&&await contextSourcesHttp.route(req,res,u,{authed,dataDir:DATA,log}))return;
   // 「这次整理用了哪些资料」：只读，给以后界面上那一栏用（本轮不做界面）。
   // 默认只回元数据（哪几块、哪一版、多少字、截没截），要全文得显式 &full=1——
   // 资料原文里有项目内部内容，不该因为一次随手 GET 就整段吐出来。
