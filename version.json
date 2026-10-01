@@ -2,9 +2,9 @@
   "version": "0.7.0",
   "released": "2026-10-01",
   "zip": "tinghuitai-desktop-v0.7.0.zip",
-  "notes": "边开会，边长出工作台。按议题整理要点，把计划与待办留在同一处；评论就能继续修改，支持中英文界面及 Markdown、HTML、XMind 兼容导出。",
+  "notes": "边开会，边把事情做出来。AI 总结按话题展开，方案、图解、计划随讨论生长；点一句就能评论修改，多任务显示真实进度。设置和历史会议保留，支持中英文界面与文档导出。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "95e6fa2c61395ded19b7794fb6c13c13c3fee860a1c1df66c9b5406328b79255",
-  "size": 1589639
+  "sha256": "691f0bd79778a11bd84cf8d80494366f3a7b7915d81ef419586b30147fd022ff",
+  "size": 1603609
 }
