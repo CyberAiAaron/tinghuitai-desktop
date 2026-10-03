@@ -1,10 +1,10 @@
 {
-  "version": "0.7.1",
-  "released": "2026-10-01",
-  "zip": "tinghuitai-desktop-v0.7.1.zip",
-  "notes": "从会议里点一句，就能让 AI 继续做。工作区任务可查资料、准备消息、待办或日程；核对完整内容后执行，进度与结果留在同一处。修复重复确认、重启后误重发和英文回复问题。",
+  "version": "0.8.0",
+  "released": "2026-10-03",
+  "zip": "tinghuitai-desktop-v0.8.0.zip",
+  "notes": "从开会到推进工作，在同一处继续。MyAgent 随时可用，独立任务并行；过时事项自动退到后台，重要承诺仍保留。",
   "min_macos": 13,
   "stable_zip": "tinghuitai-desktop.zip",
-  "sha256": "61a4b0344d27cd607c45e27903f42d8b34cfda4fa3768816a3165152803a36f7",
-  "size": 1610364
+  "sha256": "22bb47e2b63ea2e4770172f24158116b0621a5127618a367f50c93d3aed6c297",
+  "size": 1681863
 }

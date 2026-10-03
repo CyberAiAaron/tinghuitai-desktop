@@ -1,0 +1,20 @@
+node_modules
+__pycache__/
+*.pyc
+.DS_Store
+.env
+*.env
+settings.json
+state/
+audio/
+pending/
+archives/
+*.log
+*.zip
+preset.json
+开始用.md
+
+# 发行产物不进源码树
+*.zip
+.tmp/
+.wt-port
