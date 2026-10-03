@@ -17,7 +17,7 @@ rm -rf "$OUT"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # 1. 程序文件（与 安装.command 同一份清单，preset.json 永远不带）
 mkdir -p "$APP/Contents/Resources/program"
-for item in app web scripts docs tests node_modules version.json CHANGELOG.json 开始用.md \
+for item in app web scripts docs tests node_modules version.json CHANGELOG.md CHANGELOG.json 开始用.md \
             package.json package-lock.json README.md AI-SETUP.md; do
   [ -e "$SRC/$item" ] && /usr/bin/ditto "$SRC/$item" "$APP/Contents/Resources/program/$item"
 done

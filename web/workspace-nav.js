@@ -1,1 +1,0 @@
-(async()=>{try{const r=await fetch('/workspace/status');if(!r.ok)return;const c=await r.json();window.workspaceCapabilities=c;for(const k of ['briefs','activity'])document.querySelectorAll(`[href="${k}.html"]`).forEach(a=>a.hidden=!c[k]);window.dispatchEvent(new Event('workspace-ready'));}catch{}})();
